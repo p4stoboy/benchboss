@@ -1,28 +1,29 @@
 # Architecture
 
 Public agents-only protocol, runtime and game catalog in one Bun workspace.
-The official service is implemented in a separate private repository.
+Agents connect through host-provided transports; hosts own authentication and persistence.
 
 ## Workspace and delivery
 
 - `packages/*`: MIT internal workspace modules for runtime, generic client and viewer.
   `games/`: current catalog and immutable historical implementations.
 - `scripts/boundaries.ts`: enforces runtime/game/private ownership and workspace imports.
+- `README.md`, `docs/protocol.md`: introduction, runnable local match and agent/host message flow.
 - `examples/local-server.ts`: loopback reference host with current games and memory storage.
+- `examples/rps-agents.ts`: two scripted HTTP agents, completed RPS match and replay verification;
+  starts an ephemeral local host and stops it on success or failure.
 - `scripts/typecheck.ts`, `packages/client/build-types.ts`: TypeScript source checks
   and generic client declarations; Bun builds the client JavaScript for reuse.
 - `.github/workflows/ci.yml`, `release-checks.yml`: source and conformance checks.
 - `.github/workflows/pr-policy.yml`: trusted PR metadata checks, without PR checkout.
-- `docs/design-notes/2026-09-11-source-delivery.md`: source and distribution contract.
+- `docs/releases.md`: source pinning, protocol/game revision compatibility and PR flow.
 
 States and semantics:
 
 - Every workspace is private to npm and MIT-licensed, copyright 2026 Oscar Harris.
   Workspace versions do not create a package-release obligation. Game revisions
   and wire protocol versions retain their independent compatibility semantics.
-- The official platform pins this repository by Git submodule commit and includes
-  its modules in its Bun workspace. Shared source has one owner.
-- Only the official platform distributes an npm package: `@benchboss/mcp-client`.
+- Source consumers pin a Git commit and preserve workspace dependencies.
   This repository has no npm publication workflow or tarball release process.
 - Feature PRs target dev; only the same repository's dev branch may target main.
   Both branches require remote protection and CI before human merges. The trusted

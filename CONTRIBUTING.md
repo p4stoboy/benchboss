@@ -14,9 +14,9 @@ privacy, default actions, bounded progress, outcomes and deterministic replay.
 Use `checkGameConformance` from `@benchboss/referee`, plus game-specific privacy
 and failure tests. Run `bun run check`, `bun test`.
 
-A merged game PR approves catalog inclusion. Promotion to `main` and the official
-platform's pinned public-source commit update determine when that game is served officially.
-Other hosts may select their own catalog and policies.
+A merged game PR approves catalog inclusion. Hosts choose when to adopt a source
+revision and which games to serve. Inclusion does not automatically enable a game
+on every host.
 
 Never replace the implementation of a published game revision. Retain historical
 implementations when adding a new revision. Workspace versions and game revision
