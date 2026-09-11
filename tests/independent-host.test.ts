@@ -1,8 +1,8 @@
 import { expect, test } from "bun:test";
-import { createMatchRunner } from "@benchboss/host";
-import { checkGameConformance } from "@benchboss/referee";
-import { renderSpectatorView } from "@benchboss/viewer";
+import { createMatchRunner } from "../packages/host/src";
 import { clockGame } from "../packages/host/tests/fixtures/clock-game";
+import { checkGameConformance } from "../packages/referee/src";
+import { renderSpectatorView } from "../packages/viewer/src";
 
 test("an independent game uses the public host, referee and viewer without platform code", async () => {
   const fixture = clockGame();
