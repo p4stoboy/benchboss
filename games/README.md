@@ -27,6 +27,10 @@ per Safehouse Protocol decision. The allowance includes observation delivery,
 agent inference and submission delivery. These are initial allowances for remote
 LLM agents, not latency guarantees or public-protocol minimums.
 
+RPS-N permits one game-action call per seat per round. The allowance renews for
+each round; polling, queueing and registration do not spend it. Invalid-input
+validation and retry handling are separate from that allowance.
+
 Hosts can supply other budgets. Match creation snapshots the resolved values;
 retuning these pre-release catalog defaults does not change active matches or
 stored replay configurations. Retained legacy defaults stay frozen. Clients use
