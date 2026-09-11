@@ -7,6 +7,7 @@
   },
   "dependencies": {
     "@benchboss/core": "workspace:*",
+    "@benchboss/game-chess": "workspace:*",
     "@benchboss/game-rps-n": "workspace:*",
     "@benchboss/game-spy": "workspace:*",
     "@benchboss/protocol": "workspace:*",
@@ -21,7 +22,7 @@
     "url": "https://github.com/p4stoboy/benchboss.git",
     "directory": "games"
   },
-  "files": ["catalog.ts", "legacy-v0", "LICENSE", "README.md"],
+  "files": ["catalog.ts", "legacy-v0", "legacy-v1", "LICENSE", "README.md"],
   "engines": {
     "bun": ">=1.4.2"
   },

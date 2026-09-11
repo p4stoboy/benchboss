@@ -2,25 +2,17 @@ import { expect, test } from "bun:test";
 import { mkSeatId } from "@benchboss/core";
 import { validateSchema } from "@benchboss/protocol";
 import { CATALOG, GAMES, LEGACY_REVISION } from "../catalog";
+import { gameConfig } from "./config";
 
 test("every advertised seat count initializes and defaults progress to explicit terminal outcomes", () => {
   for (const plugin of GAMES) {
     expect(validateSchema(plugin.manifest.rulesSchema, plugin.manifest.defaultRules).ok).toBe(true);
     expect(plugin.manifest.seatCounts).toContain(plugin.defaultSeats);
-    expect(plugin.manifest.defaultBudgets).toEqual(plugin.defaultBudgets);
+    if (plugin.manifest.protocolVersion !== 2) throw Error("current catalog must use v2");
     for (const count of plugin.manifest.seatCounts) {
       const seats = Array.from({ length: count }, (_, i) => mkSeatId(i));
       const game = plugin.makeGame();
-      let state = game.newMatch(
-        {
-          matchId: "catalog",
-          gameId: plugin.id,
-          seats,
-          rules: plugin.manifest.defaultRules,
-          budgets: plugin.manifest.defaultBudgets,
-        },
-        "catalog-seed",
-      );
+      let state = game.newMatch(gameConfig(plugin.manifest, "catalog", seats), "catalog-seed");
       for (let guard = 0; guard < 100 && !game.isTerminal(state); guard++) {
         for (const seat of seats) {
           const actions = game.legalActions(state, seat);
@@ -55,14 +47,18 @@ test("catalog preserves distinct explicit legacy and latest revision identities"
     expect(revisions.filter((entry) => entry.isLatest).map((entry) => entry.revision)).toEqual([
       plugin.manifest.revision,
     ]);
-    expect(revisions.find((entry) => entry.isLegacy)?.plugin.manifest.revision).toBe(
-      LEGACY_REVISION,
-    );
-    expect(revisions.find((entry) => entry.isLegacy)?.isLatest).toBe(false);
-    expect(revisions.find((entry) => entry.isLegacy)?.plugin.makeGame).not.toBe(plugin.makeGame);
-    expect(revisions.find((entry) => entry.isLegacy)?.plugin.publicView).not.toBe(
-      plugin.publicView,
-    );
+  }
+  // Only these games existed before revisions were introduced. A new game must
+  // not manufacture legacy execution merely to enter the current catalog.
+  for (const gameId of ["rps-n", "safehouse-protocol"]) {
+    const current = GAMES.find((plugin) => plugin.id === gameId);
+    const legacy = CATALOG.find((entry) => entry.plugin.id === gameId && entry.isLegacy);
+    if (!current || !legacy) throw Error(`Missing retained revisions for ${gameId}`);
+    expect(legacy.revision).toBe(LEGACY_REVISION);
+    expect(legacy.plugin.manifest.revision).toBe(LEGACY_REVISION);
+    expect(legacy.isLatest).toBe(false);
+    expect(legacy.plugin.makeGame).not.toBe(current.makeGame);
+    expect(legacy.plugin.publicView).not.toBe(current.publicView);
   }
 });
 
@@ -76,6 +72,7 @@ test("replacing a current implementation cannot replace the retained legacy exec
       throw new Error("new incompatible implementation");
     };
     const seats = [mkSeatId(0), mkSeatId(1)];
+    if (!legacy.defaultBudgets) throw Error("missing legacy budgets");
     const state = legacy.makeGame().newMatch(
       {
         matchId: "historical",

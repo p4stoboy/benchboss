@@ -1,4 +1,12 @@
-import type { GameRevision } from "@benchboss/protocol";
+import type {
+  CurrentGameRevision,
+  LegacyBudgetConfig,
+  LegacyGameRevision,
+  MeteringPolicy,
+  ResourceAllowances,
+  TimingPolicy,
+} from "@benchboss/protocol";
+export type { LegacyBudgetConfig } from "@benchboss/protocol";
 export type SeatId = string & { readonly __brand: "SeatId" };
 export type MatchId = string;
 export type ActionId = string;
@@ -6,21 +14,35 @@ export type Phase = string;
 
 export const mkSeatId = (n: number): SeatId => `seat:${n}` as SeatId;
 
-export interface MatchConfig {
-  identity?: GameRevision;
+export interface MatchConfigBase {
   matchId: MatchId;
   gameId: string;
   seats: SeatId[];
   rules: Record<string, unknown>;
-  budgets: BudgetConfig;
 }
 
-export interface BudgetConfig {
-  wallClockMsPerDecision: number;
-  toolCallsPerTurn: number;
-  intelOrScoutPoints: number;
-  simRolloutsPerTurn: number;
-  invalidRetries: number;
+export interface CurrentMatchConfig extends MatchConfigBase {
+  identity: CurrentGameRevision;
+  timing: TimingPolicy;
+  resources: ResourceAllowances;
+  metering: MeteringPolicy;
+  budgets?: never;
+}
+
+export interface LegacyMatchConfig extends MatchConfigBase {
+  identity?: LegacyGameRevision;
+  budgets: LegacyBudgetConfig;
+  timing?: never;
+  resources?: never;
+  metering?: never;
+}
+
+export type MatchConfig = CurrentMatchConfig | LegacyMatchConfig;
+/** Historical v1 compatibility only; current configurations use named resources. */
+export type BudgetConfig = LegacyBudgetConfig;
+
+export function isCurrentMatchConfig(config: MatchConfig): config is CurrentMatchConfig {
+  return config.identity?.protocolVersion === 2;
 }
 
 export interface LegalActionSpec {

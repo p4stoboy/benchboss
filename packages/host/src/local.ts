@@ -1,8 +1,9 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { parseJsonl, verifyReplay } from "@benchboss/core";
-import type { SubmissionIdentity } from "@benchboss/protocol";
+import { parseJsonl } from "@benchboss/core";
+import { SERVER_CAPABILITIES, type SubmissionIdentity } from "@benchboss/protocol";
+import { verifyPluginReplay } from "@benchboss/referee";
 import { createLobby } from "./lobby";
 import type { GameRegistry } from "./registry";
 import { type MatchArtifact, createMatchRunner } from "./runner";
@@ -62,7 +63,7 @@ export function buildLocalServer(opts: {
       if (req.method === "GET") {
         if (path === "/health") return json({ ok: true, mode: "local" });
         if (path === "/games") return json(registry.list());
-        if (path === "/capabilities") return json({ protocolVersion: 1 });
+        if (path === "/capabilities") return json(SERVER_CAPABILITIES);
         const view = path.match(/^\/match\/([^/]+)\/view$/);
         if (view) {
           const id = decodeURIComponent(view[1] as string);
@@ -96,10 +97,8 @@ export function buildLocalServer(opts: {
           if (!a) return json({ error: "not_found" }, 404);
           try {
             return json(
-              verifyReplay({
-                game: registry.resolve(a.record.config).makeGame(),
-                projectResult: (state) =>
-                  registry.resolve(a.record.config).publicView(state).result,
+              verifyPluginReplay({
+                plugin: registry.resolve(a.record.config),
                 publishedResult: a.record.presentation
                   ? (a.record.presentation.frames.at(-1)?.view.result ?? null)
                   : undefined,
@@ -148,9 +147,18 @@ export function buildLocalServer(opts: {
       }
       const token = req.headers.get("x-bb-seat");
       if (!token) return json({ error: "unauthenticated" }, 401);
-      if (path === "/match/next") return json(await runner.next(token));
+      if (path === "/match/next") {
+        const envelope = await runner.next(token);
+        return json(envelope.kind === "idle" ? { protocolVersion: 2, ...envelope } : envelope);
+      }
       if (path === "/match/submit") {
-        if (typeof body.matchId !== "string" || typeof body.tool !== "string")
+        if (
+          Object.keys(body).some(
+            (key) => !["matchId", "tool", "input", "decisionId", "requestId"].includes(key),
+          ) ||
+          typeof body.matchId !== "string" ||
+          typeof body.tool !== "string"
+        )
           return json({ error: "bad_request" }, 400);
         let identity: SubmissionIdentity | undefined;
         if (body.decisionId !== undefined || body.requestId !== undefined) {

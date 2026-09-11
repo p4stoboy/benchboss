@@ -35,11 +35,12 @@ async function play(client: BenchBossClient, move: "rock" | "paper"): Promise<st
   const stopAt = Date.now() + 10_000;
   while (Date.now() < stopAt) {
     const next = (await client.next()) as NextEnvelope;
-    if (next.kind === "idle") {
+    if (next.kind === "idle" || next.kind === "waiting") {
       await Bun.sleep(25);
       continue;
     }
     if (next.kind === "match_aborted") throw Error(`Match aborted: ${next.reason}`);
+    if (next.kind === "seat_finished") return next.matchId;
     if (next.kind === "match_over") return next.matchId;
     // The client carries the observation's decision ID into the submission.
     const submitted = (await client.submit(next.matchId, "match.throw", {

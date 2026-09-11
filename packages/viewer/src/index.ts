@@ -1,4 +1,10 @@
-import type { GameResult, SpectatorBlock, SpectatorView } from "@benchboss/protocol";
+import {
+  type ClockSnapshot,
+  type GameResult,
+  type SpectatorBlock,
+  type SpectatorView,
+  validateClockSnapshot,
+} from "@benchboss/protocol";
 
 const MAX_BLOCKS = 100;
 const MAX_ITEMS = 500;
@@ -79,7 +85,20 @@ export const isSpectatorView = (value: unknown): value is SpectatorView =>
   Array.isArray(value.blocks) &&
   value.blocks.length <= MAX_BLOCKS &&
   value.blocks.every(isBlock) &&
-  isResult(value.result);
+  isResult(value.result) &&
+  (value.clocks === undefined ||
+    (isRecord(value.clocks) &&
+      Object.keys(value.clocks).length <= MAX_ITEMS &&
+      Object.values(value.clocks).every((clock) => validateClockSnapshot(clock).ok))) &&
+  (value.resources === undefined ||
+    (isRecord(value.resources) &&
+      Object.keys(value.resources).length <= MAX_ITEMS &&
+      Object.values(value.resources).every(
+        (balances) =>
+          isRecord(balances) &&
+          Object.keys(balances).length <= MAX_ITEMS &&
+          Object.values(balances).every((amount) => isNumber(amount) && amount >= 0),
+      )));
 
 const renderBlock = (block: SpectatorBlock): string => {
   const title = `<h3 class="bb-view-title">${escapeHtml(block.title)}</h3>`;
@@ -99,11 +118,33 @@ const renderBlock = (block: SpectatorBlock): string => {
   return `<section class="bb-view-block">${title}<ul>${block.items.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul></section>`;
 };
 
+const renderClock = (seat: string, clock: ClockSnapshot): string =>
+  `<tr><th>${escapeHtml(seat)}</th><td>${clock.remainingMs === null ? "Unlimited" : `${escapeHtml(clock.remainingMs)} ms`}</td><td>${clock.running ? "running" : "paused"}</td><td>${clock.deadline === null ? "None" : escapeHtml(clock.deadline)}</td></tr>`;
+
 export const renderSpectatorView = (view: SpectatorView): string => {
   if (!isSpectatorView(view)) throw new TypeError("Unsupported or malformed spectator view");
+  const clocks = view.clocks
+    ? `<section class="bb-view-block"><h3 class="bb-view-title">Clocks</h3><table><thead><tr><th>Seat</th><th>Remaining</th><th>Status</th><th>Deadline</th></tr></thead><tbody>${Object.entries(
+        view.clocks,
+      )
+        .map(([seat, clock]) => renderClock(seat, clock))
+        .join("")}</tbody></table></section>`
+    : "";
+  const resources = view.resources
+    ? `<section class="bb-view-block"><h3 class="bb-view-title">Resources</h3><table><thead><tr><th>Seat</th><th>Resource</th><th>Remaining</th></tr></thead><tbody>${Object.entries(
+        view.resources,
+      )
+        .flatMap(([seat, balances]) =>
+          Object.entries(balances).map(
+            ([resource, amount]) =>
+              `<tr><th>${escapeHtml(seat)}</th><td>${escapeHtml(resource)}</td><td>${escapeHtml(amount)}</td></tr>`,
+          ),
+        )
+        .join("")}</tbody></table></section>`
+    : "";
   const result =
     view.result === null
       ? ""
       : `<footer class="bb-view-result"><strong>Result</strong> ${escapeHtml(view.result.summary)}</footer>`;
-  return `<div class="bb-spectator-view" data-view-version="1"><header class="bb-view-header"><span>${escapeHtml(view.progress.label)}</span><span>${escapeHtml(view.progress.phase)}</span></header>${view.blocks.map(renderBlock).join("")}${result}</div>`;
+  return `<div class="bb-spectator-view" data-view-version="1"><header class="bb-view-header"><span>${escapeHtml(view.progress.label)}</span><span>${escapeHtml(view.progress.phase)}</span></header>${view.blocks.map(renderBlock).join("")}${clocks}${resources}${result}</div>`;
 };

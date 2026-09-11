@@ -197,3 +197,54 @@ describe("replay verifier", () => {
     expect(res.divergenceSeq).toBe(3);
   });
 });
+
+describe("replay version boundary", () => {
+  test("refuses v2 configuration whose time and host events require exact referee replay", () => {
+    const config = {
+      matchId: cfg.matchId,
+      gameId: cfg.gameId,
+      seats: cfg.seats,
+      rules: cfg.rules,
+      identity: {
+        protocolVersion: 2 as const,
+        runtimeVersion: "0.2.0",
+        gameId: cfg.gameId,
+        revision: "2.0.0",
+      },
+      timing: {
+        playerTotalMs: 1000,
+        decisionLimitMs: null,
+        phaseLimits: {},
+        clockVisibility: "private" as const,
+      },
+      resources: {},
+      metering: {},
+    };
+    const result = verifyReplay({ game: counterGame, config, seed: "s", log: goodLog() });
+    expect(result.ok).toBe(false);
+    expect(result.detail).toContain("verifyPluginReplay");
+  });
+});
+
+test("legacy replay refuses v2 accounting events even when configuration was downgraded", () => {
+  for (const kind of [
+    "command",
+    "command.result",
+    "clock.advance",
+    "clock.state",
+    "host.event",
+    "resource.spend",
+    "phase.begin",
+  ]) {
+    const clean = goodLog();
+    const template = clean[0];
+    if (!template) throw Error("missing fixture event");
+    const log = [{ ...template, kind, payload: {} }, ...clean].map((event, seq) => ({
+      ...event,
+      seq,
+    }));
+    const result = verifyReplay({ game: counterGame, config: cfg, seed: "s", log });
+    expect(result.ok).toBe(false);
+    expect(result.detail).toContain("verifyPluginReplay");
+  }
+});

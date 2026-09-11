@@ -41,11 +41,9 @@ describe("spy full-match replay", () => {
     expect(verify.divergenceSeq).toBeDefined();
   });
 
-  test("replay_ignores_sense_serve_events_so_sensing_is_replay_irrelevant", () => {
-    // Sensing invariant (Core ReplayVerifier): `sense.serve` events are NOT
-    // re-applied during replay — sensing mutates only privateState
-    // (state.intelResults), never scored/terminal state. Inject a synthetic
-    // sense.serve mid-log and confirm byte-identical replay still verifies.
+  test("replay_rejects_injected_sensing_events_even_when_the_outcome_is_unchanged", () => {
+    // V2 verifies the complete deterministic transcript, so invented resource
+    // consumption must fail even when the final game score remains unchanged.
     const { jsonl } = runSpyMatch({ seed: "match-seed-1" });
     const lines = jsonl.trim().split("\n");
     const idx = lines.findIndex((l) => l.includes('"action.submit"'));
@@ -71,8 +69,8 @@ describe("spy full-match replay", () => {
       jsonl: `${lines.join("\n")}\n`,
       seed: "match-seed-1",
     });
-    expect(verify.ok).toBe(true);
-    expect(verify.divergenceSeq).toBeUndefined();
+    expect(verify.ok).toBe(false);
+    expect(verify.divergenceSeq).toBeDefined();
   });
 
   test("intel_and_comms_phases_recur_across_multiple_op_cycles", () => {

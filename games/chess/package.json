@@ -1,0 +1,30 @@
+{
+  "name": "@benchboss/game-chess",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "src/index.ts",
+  "dependencies": {
+    "@benchboss/core": "workspace:*",
+    "@benchboss/protocol": "workspace:*",
+    "@benchboss/referee": "workspace:*"
+  },
+  "license": "MIT",
+  "author": "Oscar Harris",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/p4stoboy/benchboss.git",
+    "directory": "games/chess"
+  },
+  "files": ["src", "LICENSE", "README.md"],
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "engines": {
+    "bun": ">=1.4.2"
+  },
+  "private": true,
+  "devDependencies": {
+    "@benchboss/host": "workspace:*",
+    "@benchboss/viewer": "workspace:*"
+  }
+}

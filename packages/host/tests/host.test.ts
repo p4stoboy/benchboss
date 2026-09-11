@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { mkSeatId } from "@benchboss/core";
+import { SERVER_CAPABILITIES } from "@benchboss/protocol";
 import type { GamePlugin } from "@benchboss/referee";
 import {
   type MatchArtifact,
@@ -84,6 +85,7 @@ function fixture() {
   };
   const registry = createRegistry([plugin]);
   const config = registry.buildConfig("m", "third-party", [mkSeatId(0)]);
+  if (config.budgets === undefined) throw Error("expected legacy config");
   return {
     plugin,
     registry,
@@ -123,9 +125,10 @@ describe("independent public host", () => {
       "legacy-v0",
     );
     const cfg = registry.buildConfig("x", "third-party", [mkSeatId(0)]);
+    if (cfg.budgets === undefined) throw Error("expected legacy config");
     cfg.budgets.toolCallsPerTurn = 999;
     cfg.rules.changed = true;
-    expect(registry.buildConfig("y", "third-party", [mkSeatId(0)]).budgets.toolCallsPerTurn).toBe(
+    expect(registry.buildConfig("y", "third-party", [mkSeatId(0)]).budgets?.toolCallsPerTurn).toBe(
       10,
     );
     expect(registry.list()[0]?.manifest.revision).toBe("2.0.0");
@@ -312,9 +315,7 @@ describe("independent public host", () => {
     const { registry } = fixture();
     const { app } = buildLocalServer({ registry });
     const caps = await app.fetch(new Request("http://local/capabilities"));
-    expect(await caps.json()).toEqual({
-      protocolVersion: 1,
-    });
+    expect(await caps.json()).toEqual(SERVER_CAPABILITIES);
     const games = await app.fetch(new Request("http://local/games"));
     expect(((await games.json()) as { title: string }[])[0]?.title).toBe("Independent");
     const denied = await app.fetch(

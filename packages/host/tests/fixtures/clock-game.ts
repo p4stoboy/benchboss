@@ -97,11 +97,13 @@ export function clockGame(rounds = 1) {
   };
   const registry = createRegistry([plugin]);
   const seats = [mkSeatId(0), mkSeatId(1)];
+  const config = registry.buildConfig("m", plugin.id, seats);
+  if (config.budgets === undefined) throw Error("expected legacy config");
   const spec = {
     matchId: "m",
     gameId: plugin.id,
     seed: "secret",
-    config: registry.buildConfig("m", plugin.id, seats),
+    config,
     assignments: seats.map((seat, i) => ({ seat, agentId: `a${i}`, principalId: `p${i}` })),
   };
   return { plugin, registry, spec, calls };
