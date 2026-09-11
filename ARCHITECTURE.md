@@ -5,32 +5,28 @@ The official service is implemented in a separate private repository.
 
 ## Workspace and delivery
 
-- `packages/*`: reusable runtime and MCP/viewer packages; no game or platform imports.
-- `games/`: current catalog and immutable historical implementations; depends on
-  public package exports. `scripts/boundaries.ts` checks source and dependency boundaries.
-- `examples/local-server.ts`: loopback port 3000 reference host using current games,
-  in-memory artifacts and the public local host's seat-token policy.
-- `scripts/typecheck.ts`: native TypeScript 7 checks each project.
-- `packages/client/build-types.ts`, `tsconfig.client-build.json`: Rolldown/native
-  TypeScript declaration bundling; Bun builds JavaScript for the MCP client.
-- `scripts/packages.ts`, `scripts/pack.ts`: allowlisted tarballs, exact workspace
-  dependencies, stripped development metadata, hashes and a candidate manifest.
-- `scripts/test-packages.ts`: outside consumers install tarballs, including an
-  independent game/host/viewer, retained catalog and an MCP-only remote agent.
-- `.github/workflows/release-checks.yml`: source and installed-package gates; retains
-  the checked candidate. `publish-npm.yml` publishes that artifact using npm OIDC.
+- `packages/*`: MIT internal workspace modules for runtime, generic client and viewer.
+  `games/`: current catalog and immutable historical implementations.
+- `scripts/boundaries.ts`: enforces runtime/game/private ownership and workspace imports.
+- `examples/local-server.ts`: loopback reference host with current games and memory storage.
+- `scripts/typecheck.ts`, `packages/client/build-types.ts`: TypeScript source checks
+  and generic client declarations; Bun builds the client JavaScript for reuse.
+- `.github/workflows/ci.yml`, `release-checks.yml`: source and conformance checks.
+- `.github/workflows/pr-policy.yml`: trusted PR metadata checks, without PR checkout.
+- `docs/design-notes/2026-09-11-source-delivery.md`: source and distribution contract.
 
 States and semantics:
 
-- Local public history starts at a clean source export. Source and packages are MIT,
-  copyright 2026 Oscar Harris. Initial npm versions are independently versioned 0.1.0.
-- Publishing requires explicit workflow dispatch on main; ordinary merges only run CI.
-  Unknown/duplicate package selections fail; selected dependencies publish first.
-  Existing versions must have matching tarball integrity before a retry skips them.
-- The private platform installs exact released versions, never sibling source paths.
-- Candidate schema version 1 contains package name, version, tarball filename,
-  SHA-256, npm SHA-512 integrity and runtime dependencies. Unknown schema versions,
-  mismatched identities or checksums fail before consumption/publication.
+- Every workspace is private to npm and MIT-licensed, copyright 2026 Oscar Harris.
+  Workspace versions do not create a package-release obligation. Game revisions
+  and wire protocol versions retain their independent compatibility semantics.
+- The official platform pins this repository by Git submodule commit and includes
+  its modules in its Bun workspace. Shared source has one owner.
+- Only the official platform distributes an npm package: `@benchboss/mcp-client`.
+  This repository has no npm publication workflow or tarball release process.
+- Feature PRs target dev; only the same repository's dev branch may target main.
+  Both branches require remote protection and CI before human merges. The trusted
+  policy workflow rejects wrong-base and fork-dev promotion attempts.
 
 ## Protocol and engine
 

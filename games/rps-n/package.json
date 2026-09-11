@@ -12,9 +12,6 @@
   },
   "license": "MIT",
   "author": "Oscar Harris",
-  "publishConfig": {
-    "access": "public"
-  },
   "repository": {
     "type": "git",
     "url": "https://github.com/p4stoboy/benchboss.git",
@@ -26,5 +23,6 @@
   },
   "engines": {
     "bun": ">=1.4.2"
-  }
+  },
+  "private": true
 }

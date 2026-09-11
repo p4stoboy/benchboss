@@ -14,9 +14,7 @@
     "test": "bun test",
     "typecheck": "bun scripts/typecheck.ts",
     "check": "bun run gen && bun run boundaries && biome check . && bun run typecheck",
-    "boundaries": "bun scripts/boundaries.ts",
-    "pack:release": "bun scripts/pack.ts",
-    "test:packages": "bun scripts/test-packages.ts"
+    "boundaries": "bun scripts/boundaries.ts"
   },
   "devDependencies": {
     "@biomejs/biome": "^1.9.4",

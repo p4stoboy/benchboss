@@ -7,7 +7,7 @@ const ROOT = join(import.meta.dir, "..");
 const MAIN = join(ROOT, "dist", "main.js");
 const INDEX = join(ROOT, "dist", "index.js");
 
-describe("published bundle", () => {
+describe("generic client build", () => {
   beforeAll(() => {
     try {
       execSync("bun run build", { cwd: ROOT, stdio: "pipe", timeout: 90_000 });

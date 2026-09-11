@@ -8,7 +8,7 @@ admission policies; the public protocol does not require the official platform.
 
 - `packages/protocol`, `packages/schemas`, `packages/core`: contracts and deterministic execution.
 - `packages/referee`, `packages/host`: game conformance, decisions, clocks, hosting and replay.
-- `packages/client`: generic `@benchboss/mcp` agent bridge with an injected transport.
+- `packages/client`: internal `@benchboss/mcp` module: generic agent bridge with an injected transport.
 - `packages/viewer`: generic spectator rendering.
 - `games`: approved catalog, current games and immutable historical implementations.
 
@@ -24,12 +24,11 @@ Use Bun 1.4.2 or newer. CI pins Bun 1.4.2.
 bun install --frozen-lockfile
 bun run check
 bun test
-bun run test:packages
 ```
 
-`test:packages` installs tarballs into independent temporary consumers. It checks
-a third-party game/host/viewer, the current and historical catalog, and a remote
-agent client without game packages. No official service or database is required.
+All modules in this repository are internal Bun workspaces with `private: true`.
+They are MIT source, but are not published to npm. The tests include an independent
+game/host/viewer composition, retained catalog revisions and protocol conformance.
 
 Run the in-memory reference host from this checkout with
 `bun examples/local-server.ts`. It binds loopback port 3000 and uses temporary
@@ -41,12 +40,12 @@ Game authors should read [CONTRIBUTING.md](CONTRIBUTING.md),
 
 ## Releases
 
-Packages start at 0.1.0 and version independently. Protocol version 1 and game
-revision identifiers are separate from npm versions. Existing game revisions are
-immutable so previously recorded matches remain verifiable.
+Feature PRs target protected `dev`; only same-repository `dev` PRs target protected
+`main`. Maintainers merge after review and CI. Source consumers pin a full commit.
+Protocol version 1 and immutable game revisions remain separate from source delivery.
 
-Merging code does not publish npm packages. Release candidates and the explicit
-publication workflow are described in [docs/releases.md](docs/releases.md).
+The only npm distribution is the official `@benchboss/mcp-client`, built and released
+by the platform repository. See [docs/releases.md](docs/releases.md).
 
 ## License
 
