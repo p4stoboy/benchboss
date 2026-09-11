@@ -1,5 +1,5 @@
 import type { SeatId } from "@benchboss/core";
-import type { SenseResolver } from "@benchboss/referee";
+import type { LegacySenseResolver as SenseResolver } from "@benchboss/referee";
 import { counterIntel, plantMisinfo, protectSource } from "./deception";
 import { auditStatement, scanAlignment, traceOperation } from "./intel";
 import type { IntelResult, SpyState } from "./types";

@@ -1,5 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { ObservationEnvelope, SubmitResultEnvelope } from "../src/index";
+import {
+  LegacyObservationEnvelope as ObservationEnvelope,
+  LegacySubmitResultEnvelope as SubmitResultEnvelope,
+} from "../src/index";
 
 const validObs = {
   matchId: "m1",

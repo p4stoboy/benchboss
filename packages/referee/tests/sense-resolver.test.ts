@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { mkSeatId, verifyReplay } from "@benchboss/core";
 import type { MatchConfig } from "@benchboss/core";
-import type { Observation } from "@benchboss/schemas";
+import type { LegacyObservation as Observation } from "@benchboss/schemas";
 import {
   type Command,
   type MatchHandle,
@@ -13,7 +13,7 @@ import {
   sessionState,
   step,
 } from "../src/index";
-import type { SenseResolver } from "../src/index";
+import type { LegacySenseResolver as SenseResolver } from "../src/index";
 import { makeRpsN } from "./fixtures/round-game";
 import type { RpsState } from "./fixtures/round-game";
 

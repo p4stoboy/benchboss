@@ -21,11 +21,13 @@ the agent still has to understand each game's rules and choose a strategy.
 
 `GET /games` on the reference host returns the available games and their manifests.
 A **manifest** describes a game's ID and revision, rules, player counts, phases,
-win conditions, default settings and decision budgets. For example, RPS-N has ID
+win conditions, timing, named resource allowances and metering defaults. For example, RPS-N has ID
 `rps-n`, supports 2–10 players, and defaults to two players and three rounds.
 
-`GET /capabilities` reports the host's protocol version. The current version is `1`.
-Check it before integrating a host; a different version needs a compatible client.
+`GET /capabilities` reports protocol version `2`, supported versions `[1,2]` and
+features for player-total timing, decision limits, fixed phase deadlines,
+participation and named resources. Check compatibility before play. Version 1
+remains available for historical game revisions; its shapes are explicitly legacy.
 The [protocol types](../packages/protocol/src/index.ts) define these structures.
 
 ## Join, observe, act
@@ -42,18 +44,21 @@ On this host, enqueue returns a `seatToken`. Subsequent requests send it in the
 `x-bb-seat` header. This token scheme is specific to the reference host. The
 [local example](../examples/rps-agents.ts) implements it in a small client transport.
 
-A `next` response has one of four `kind` values:
+A v2 `next` response has `protocolVersion: 2` and one of these `kind` values:
 
 | Kind | What the agent does |
 | --- | --- |
-| `idle` | Wait and poll again; there is no actionable decision yet. |
+| `idle` | Wait and poll again; no unacknowledged assignment is available. |
+| `waiting` | No game decision is due. Use any offered sensing tools or poll again. |
+| `seat_finished` | This player has permanently finished; other players may still continue. |
 | `turn` | Read the observation and submit an offered action before the deadline. |
 | `match_over` | Read the result; the match has finished. |
 | `match_aborted` | Stop playing this match; it ended without a result. |
 
-A `turn` contains `matchId`, `seat`, `observation` and `deadline`. The observation
-contains game-specific information, remaining budgets, `decisionId`, and
-`actionOffers`. Every offer has a tool name, description, phase and JSON Schema
+A `turn` contains `matchId`, `seat`, `observation` and `deadline` (null when there
+is no active time limit). A `waiting` response carries the same context. The
+observation contains game-specific information, named `resources`, `participation`,
+a `clock` snapshot, `phaseId`, `decisionId`, and `actionOffers`. Every offer has a tool name, description, phase and JSON Schema
 for its input. RPS-N offers `match.throw`; its submission body looks like this:
 
 ```json
@@ -70,14 +75,65 @@ Replace the placeholder IDs with the values for your match and request.
 
 Use the current offers rather than assuming actions are available in every phase.
 Games may use simultaneous decisions: after submitting, an agent can receive
-`idle` while opponents are still choosing. A rejected submission reports
-`ok: false` and a reason; it does not establish that a move was accepted.
+`waiting` while opponents are still choosing. A rejected submission reports
+`protocolVersion: 2, ok: false` and a reason; it does not establish that a move was accepted.
 
 The deadline is an absolute Unix time in milliseconds, set by the host. Time spent
-receiving an observation, running model inference and delivering a submission all
-counts toward it. Polling does not extend it. When a decision expires, the referee
-uses the game's declared default action. Current catalog defaults are 15 seconds
-for RPS-N and 90 seconds for Safehouse Protocol; hosts can choose other budgets.
+receiving observations, running inference and delivering submissions counts while
+the player is acting. Waiting and finished players spend no time. Polling, sensing,
+rejections and retries never replenish time. If a move arrives at the deadline,
+expiry is processed first.
+
+Each match has an explicit timing policy:
+
+```ts
+timing: {
+  playerTotalMs: 600_000,
+  decisionLimitMs: null,
+  phaseLimits: {},
+  clockVisibility: "public",
+}
+```
+
+This gives every player a cumulative ten-minute allowance, with no per-decision
+cap. Multiple acting players spend time concurrently. Positive integer millisecond
+limits may be combined; the earliest expiry applies. `null` disables a limit.
+Chess uses this policy. RPS uses a 15-second decision limit; Safehouse uses a
+90-second decision limit plus a fixed 90-second `comms` phase cutoff.
+
+`phaseLimits` maps phase names to `{durationMs, close}`. The cutoff belongs to one
+`phaseId` and cannot be extended by actions. `ready_or_deadline` allows everyone
+finishing to close early; `deadline` keeps the phase open until expiry. Repeated
+phase names receive new IDs. Timed phases can expire with no acting players.
+
+`clock` contains `sampledAt`, `remainingMs`, `running`, `deadline`, `phaseId` and
+`phaseDeadline`. The server derives snapshots without adding log events for every
+poll. Public clock disclosure is explicitly configured; hidden-role clocks stay
+private. The host uses monotonic elapsed time and records authoritative expiry.
+
+Resource allowances are game-declared names, for example:
+
+```ts
+resources: {
+  actions: { amount: 8, reset: "phase", visibility: "private" },
+  research: { amount: 3, reset: "match", visibility: "private" },
+},
+metering: { action: { resource: "actions", cost: 1 } },
+```
+
+Observations return remaining numbers under those names. `match` never resets,
+`phase` resets for each phase occurrence, and `decision` resets after accepted game
+actions. Sensing names its own resource; polling/sensing/rejections do not renew
+allowances. Zero is exhausted. Invalid names, unknown references and fractional, unsafe, negative or
+nonfinite amounts/costs fail validation. Schema-invalid input spends no resources;
+active time still counts. The optional `invalidAction` metering reference controls
+semantic retries. Exhaustion invokes a forced default with a structured cause.
+
+Decision, total-player, shared-phase and retry exhaustion are trusted host events.
+Games determine their consequences; agents cannot submit these events. A finite
+player-total policy requires a game exhaustion handler that finishes affected
+players or the match. In chess, timeout and voluntary resignation have different
+result causes.
 
 `decisionId` identifies the decision being answered. `requestId` identifies one
 submission attempt. Keep both IDs and the payload unchanged when retrying after a
@@ -97,7 +153,7 @@ The [generic client module](../packages/client/src/index.ts) provides these tool
 | MCP tool | Client operation |
 | --- | --- |
 | `benchboss_enqueue` | Join a game's queue. |
-| `benchboss_next` | Receive an observation, finished result or cancellation. |
+| `benchboss_next` | Receive a decision, waiting state, player completion, result or cancellation. |
 | `benchboss_submit` | Submit a game action by its offered tool name and input. |
 
 An action such as `match.throw` is passed to `benchboss_submit`; it is not a
@@ -127,10 +183,23 @@ The reference host exposes:
   seed and game revision.
 
 Match and replay routes other than the public view become available after the
-match finishes. Verification re-executes the recorded game actions and checks the
-log and terminal result; it does not call an LLM or prove that private intelligence
-responses were accurate. A stored replay retains its game revision so later rule
+match finishes. V2 verification re-executes deterministic recorded commands, including host time,
+resource charges and expiry, and compares the entire regenerated log and outcome.
+It does not call an LLM or consult the current clock. It verifies the host's recorded
+accounting, not whether reported physical elapsed time was truthful. V1 artifacts
+use their original action/result verifier. A stored replay retains its game revision so later rule
 changes do not silently reinterpret it.
 
 For implementing games, continue with the [game contract](../games/README.md).
 For module boundaries and implementation details, see [ARCHITECTURE.md](../ARCHITECTURE.md).
+
+## Embedding the runtime
+
+Use `verifyPluginReplay` from `@benchboss/referee` for versioned game verification;
+it dispatches to the correct verifier. The legacy core `verifyReplay` rejects v2
+records, so timing events cannot silently escape verification. Both the in-process
+and process runners use the same referee and shared message contracts.
+
+Active sessions and request receipts are still in memory. A restart aborts active
+matches; durable terminal artifacts remain readable. This protocol does not add
+pause/resume or durable active-match recovery.

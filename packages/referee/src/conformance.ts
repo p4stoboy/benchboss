@@ -1,14 +1,15 @@
-import {
-  type MatchConfig,
-  type Rng,
-  type SeatId,
-  createRng,
-  mkSeatId,
-  verifyReplay,
-} from "@benchboss/core";
+import { type MatchConfig, type Rng, type SeatId, createRng, mkSeatId } from "@benchboss/core";
 import { type ActionInvocation, validateSchema } from "@benchboss/protocol";
 import type { GamePlugin } from "./game-plugin";
-import { isTerminal, newSession, publicFrames, sessionLog, step } from "./match-server";
+import {
+  clockSnapshot,
+  isTerminal,
+  newSession,
+  publicFrames,
+  sessionLog,
+  step,
+} from "./match-server";
+import { verifyPluginReplay } from "./replay-verifier";
 
 export interface ConformanceOptions<State> {
   seeds: readonly string[];
@@ -51,19 +52,36 @@ export function checkGameConformance<State>(
             validateSchema(plugin.manifest.rulesSchema, rule).ok,
             "invalid rule case",
           );
-          const config: MatchConfig = {
+          const base = {
             matchId: "conformance",
             gameId: plugin.id,
-            identity: {
-              protocolVersion: 1,
-              runtimeVersion: "0.1.0",
-              gameId: plugin.id,
-              revision: plugin.manifest.revision,
-            },
             seats: Array.from({ length: seatCount }, (_, i) => mkSeatId(i)),
             rules: structuredClone(rule),
-            budgets: structuredClone(plugin.defaultBudgets),
           };
+          const config: MatchConfig =
+            plugin.manifest.protocolVersion === 2
+              ? {
+                  ...base,
+                  identity: {
+                    protocolVersion: 2,
+                    runtimeVersion: "0.2.0",
+                    gameId: plugin.id,
+                    revision: plugin.manifest.revision,
+                  },
+                  timing: structuredClone(plugin.manifest.defaultTiming),
+                  resources: structuredClone(plugin.manifest.defaultResources),
+                  metering: structuredClone(plugin.manifest.defaultMetering),
+                }
+              : {
+                  ...base,
+                  identity: {
+                    protocolVersion: 1,
+                    runtimeVersion: "0.1.0",
+                    gameId: plugin.id,
+                    revision: plugin.manifest.revision,
+                  },
+                  budgets: structuredClone(plugin.manifest.defaultBudgets),
+                };
           const run = () => {
             const game = plugin.makeGame();
             let session = newSession({
@@ -77,7 +95,11 @@ export function checkGameConformance<State>(
               safeDefault: (state, seat) => plugin.safeDefault(state, seat).input,
               defaultAction: plugin.safeDefault,
               senseResolvers: plugin.senseResolvers?.(seed),
+              participation: plugin.participation,
+              onHostEvent: plugin.onHostEvent,
             });
+            if (config.identity?.protocolVersion === 2)
+              session = step(session, { kind: "advanceTime", at: 0 }).session;
             const rng = createRng(`actions:${seed}`);
             let commands = 0;
             while (!isTerminal(session)) {
@@ -120,7 +142,23 @@ export function checkGameConformance<State>(
                 session = advanced.session;
                 progressed = true;
               }
-              assertConformance(progressed, "nonterminal game has no actionable seats");
+              if (!progressed && config.identity?.protocolVersion === 2) {
+                const deadlines = config.seats.flatMap((seat) => {
+                  const clock = clockSnapshot(session, seat);
+                  return [clock?.deadline, clock?.phaseDeadline].filter(
+                    (value): value is number => value !== null && value !== undefined,
+                  );
+                });
+                if (deadlines.length) {
+                  assertConformance(++commands <= maxCommands, "game exceeded command bound");
+                  session = step(session, {
+                    kind: "advanceTime",
+                    at: Math.min(...deadlines),
+                  }).session;
+                  progressed = true;
+                }
+              }
+              assertConformance(progressed, "nonterminal game has no actionable seats or deadline");
             }
             const outcome = plugin.publicView(session.state).result;
             assertConformance(
@@ -143,16 +181,15 @@ export function checkGameConformance<State>(
               "invalid terminal scores",
             );
             const log = sessionLog(session);
-            const verification = verifyReplay({
-              game: plugin.makeGame(),
+            const verification = verifyPluginReplay({
+              plugin,
               config,
               seed,
               log,
-              projectResult: (state) => plugin.publicView(state).result,
             });
             assertConformance(verification.ok, `replay failed: ${verification.detail}`);
             assertConformance(
-              !verifyReplay({ game: plugin.makeGame(), config, seed, log: log.slice(0, -1) }).ok,
+              !verifyPluginReplay({ plugin, config, seed, log: log.slice(0, -1) }).ok,
               "truncated replay accepted",
             );
             return JSON.stringify({ log, frames: publicFrames(session) });

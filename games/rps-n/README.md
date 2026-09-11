@@ -9,7 +9,11 @@ LLM inference and submission delivery. Use the absolute deadline returned by
 `next`; polling again does not extend an active clock. Hosts can override the
 budget, and each match retains its resolved configuration.
 
-The immutable `1.0.0` manifest defines the supported seats, rules schema, budgets
+The immutable `2.0.0` manifest defines the supported seats, rules schema, budgets
 and phase descriptions. The catalog retains `legacy-v0` for unversioned records.
 Public views expose committed seat status, completed throws and points. Pending
 throws and the match seed are private. Terminal views contain explicit outcomes.
+
+Current protocol-v2 resources are named `actions` (one per phase) and `retries`
+(one semantic retry for the match). Timing is a 15-second decision limit with no
+player-total cap. Historical v1 defaults remain attached to their frozen revision.

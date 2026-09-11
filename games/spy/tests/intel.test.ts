@@ -242,7 +242,7 @@ describe("intel sensing resolvers", () => {
       "intel.scan_alignment",
       "intel.trace_operation",
     ]);
-    for (const r of spySenseResolvers("z")) expect(r.budgetKey).toBe("intelOrScoutPoints");
+    for (const r of spySenseResolvers("z")) expect(r.resource).toBe("research");
   });
 
   test("scan appends a private intel result for the caller only", () => {

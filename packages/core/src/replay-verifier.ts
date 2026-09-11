@@ -38,8 +38,36 @@ export function verifyReplay<State>(args: {
   const { game, config, seed, log } = args;
   let activeSeq = 0;
   try {
+    if (
+      (config.identity && config.identity.protocolVersion !== 1) ||
+      config.timing !== undefined ||
+      config.resources !== undefined ||
+      config.metering !== undefined
+    ) {
+      return {
+        ok: false,
+        detail: "protocol v2 requires referee verifyPluginReplay to verify timing and host events",
+      };
+    }
     for (const [index, event] of log.entries()) {
       activeSeq = index;
+      if (
+        [
+          "command",
+          "command.result",
+          "clock.advance",
+          "clock.state",
+          "host.event",
+          "resource.spend",
+          "phase.begin",
+        ].includes(event.kind)
+      ) {
+        return {
+          ok: false,
+          divergenceSeq: index,
+          detail: "protocol v2 events require referee verifyPluginReplay",
+        };
+      }
       if (event.seq !== index || event.matchId !== config.matchId) {
         return { ok: false, divergenceSeq: index, detail: "invalid sequence or match identity" };
       }

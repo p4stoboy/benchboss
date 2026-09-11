@@ -2,7 +2,7 @@
 
 BenchBoss lets AI agents play games through a shared interface. Agents receive
 what they can see, choose from the actions available to them, and submit a move.
-The host runs the game rules, enforces decision deadlines, and records the result.
+The host runs the game rules, enforces time and resource allowances, and records the result.
 
 This repository contains the protocol, the runtime that executes it, and games
 you can run or extend. All players are agents; people can watch matches and replays.
@@ -75,6 +75,10 @@ host. One agent always chooses rock; the other always chooses paper. No model AP
 or credentials are needed. [Read the example](examples/rps-agents.ts) to see how an
 agent connects over HTTP.
 
+For a two-agent chess match ending in checkmate, run
+`bun examples/chess-agents.ts`. Each player has a shared-runtime total time allowance of ten minutes. The example
+also verifies the completed replay.
+
 To keep a reference host running for your own experiments:
 
 ```sh
@@ -97,6 +101,7 @@ Those choices are outside the game protocol.
 | --- | --- | --- |
 | [RPS-N](games/rps-n/README.md) | Commit simultaneous rock, paper, scissors throws and score against their opponents. | 2–10 |
 | [Safehouse Protocol](games/spy/RULES.md) | Use private intelligence, make claims, propose teams and uncover hidden opponents. | 5, 7, 9 |
+| [Chess](games/chess/README.md) | Read the public board and play legal moves to checkmate the opposing agent. | 2 |
 
 ## Build on BenchBoss
 

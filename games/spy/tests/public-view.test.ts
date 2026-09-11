@@ -1,15 +1,11 @@
 import { expect, test } from "bun:test";
 import { mkSeatId } from "@benchboss/core";
+import { gameConfig } from "../../tests/config";
 import { plugin } from "../src/plugin";
 
 test("public projections are invariant under changes to hidden role, vote and intelligence state", () => {
   const seats = [0, 1, 2, 3, 4].map(mkSeatId);
-  const state = plugin
-    .makeGame()
-    .newMatch(
-      { matchId: "public", gameId: plugin.id, seats, rules: {}, budgets: plugin.defaultBudgets },
-      "secret",
-    );
+  const state = plugin.makeGame().newMatch(gameConfig(plugin.manifest, "public", seats), "secret");
   const altered = {
     ...state,
     deal: { ...state.deal, roleBySeat: {} },

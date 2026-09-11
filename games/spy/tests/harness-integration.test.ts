@@ -88,10 +88,10 @@ describe("I2: M3 deception wired through the production runner", () => {
       input: { target },
     });
     expect(warmup.ok).toBe(true);
-    const before = (warmup.observation as { budgets: Record<string, number> }).budgets;
-    expect(before.intelOrScoutPoints).toBeDefined();
-    expect(before.toolCallsPerTurn).toBeDefined();
-    if (before.intelOrScoutPoints === undefined || before.toolCallsPerTurn === undefined)
+    const before = (warmup.observation as { resources: Record<string, number> }).resources;
+    expect(before.research).toBeDefined();
+    expect(before.actions).toBeDefined();
+    if (before.research === undefined || before.actions === undefined)
       throw new Error("budget keys missing before");
 
     const r = server.advance({
@@ -101,16 +101,16 @@ describe("I2: M3 deception wired through the production runner", () => {
       input: { target },
     });
     expect(r.ok).toBe(true);
-    const after = (observe(server.get(), token) as { budgets: Record<string, number> }).budgets;
-    expect(after.intelOrScoutPoints).toBeDefined();
-    expect(after.toolCallsPerTurn).toBeDefined();
-    if (after.intelOrScoutPoints === undefined || after.toolCallsPerTurn === undefined)
+    const after = (observe(server.get(), token) as { resources: Record<string, number> }).resources;
+    expect(after.research).toBeDefined();
+    expect(after.actions).toBeDefined();
+    if (after.research === undefined || after.actions === undefined)
       throw new Error("budget keys missing after");
 
-    // M3 deception sensing spends the SENSING budget, never toolCallsPerTurn,
+    // M3 deception sensing spends the SENSING budget, never actions,
     // and never advances the phase.
-    expect(after.intelOrScoutPoints).toBe(before.intelOrScoutPoints - 1);
-    expect(after.toolCallsPerTurn).toBe(before.toolCallsPerTurn);
+    expect(after.research).toBe(before.research - 1);
+    expect(after.actions).toBe(before.actions);
     expect(currentPhase(sessionState(server.get()))).toBe("intel");
     // The plant landed privately in the mole's state.
     expect(sessionState(server.get()).misinfoFlags[target]).toBe(true);

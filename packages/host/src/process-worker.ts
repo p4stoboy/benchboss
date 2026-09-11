@@ -1,6 +1,7 @@
 import { createInterface } from "node:readline";
-import { type MatchConfig, parseJsonl, verifyReplay } from "@benchboss/core";
+import { type MatchConfig, parseJsonl } from "@benchboss/core";
 import type { GameResult, SpectatorView, SubmissionIdentity } from "@benchboss/protocol";
+import { verifyPluginReplay } from "@benchboss/referee";
 import type { MatchSpec } from "./games";
 import type { GameRegistry } from "./registry";
 import {
@@ -10,13 +11,15 @@ import {
   type OpsMatch,
   type SubmitResult,
   createMatchRunner,
+  monotonicEpochMs,
 } from "./runner";
 
 export type WorkerCommand =
-  | { kind: "start"; spec: MatchSpec }
-  | { kind: "reap" }
+  | { kind: "start"; spec: MatchSpec; at?: number }
+  | { kind: "reap"; at?: number }
   | {
       kind: "submit";
+      at?: number;
       principalId: string;
       matchId: string;
       tool: string;
@@ -45,11 +48,13 @@ export interface WorkerReply {
 // Invoked only in the child entry point. The parent owns all durable side effects.
 export async function runMatchWorker(registry: GameRegistry): Promise<void> {
   let spec: MatchSpec | undefined;
+  let sampledAt = monotonicEpochMs();
   let artifact: MatchArtifact | undefined;
   let abortion: MatchAbortion | undefined;
   const runner = createMatchRunner({
     registry,
     maxHoldMs: 0,
+    now: () => sampledAt,
     persist: async (value) => {
       artifact = value;
     },
@@ -64,15 +69,15 @@ export async function runMatchWorker(registry: GameRegistry): Promise<void> {
       id = request.id;
       if (!Number.isSafeInteger(id)) throw Error("invalid worker request");
       const command = request.payload;
+      if (command.kind !== "verify") sampledAt = command.at ?? monotonicEpochMs();
       let value: unknown;
       if (command.kind === "verify") {
         const plugin = registry.resolve(command.config);
-        value = verifyReplay({
-          game: plugin.makeGame(),
+        value = verifyPluginReplay({
+          plugin,
           config: command.config,
           seed: command.seed,
           log: parseJsonl(command.jsonl),
-          projectResult: (state) => plugin.publicView(state).result,
           publishedResult: command.publishedResult,
         });
       } else {
@@ -97,7 +102,7 @@ export async function runMatchWorker(registry: GameRegistry): Promise<void> {
         const turns: Record<string, NextEnvelope> = {};
         if (!inspection.over)
           for (const seat of spec.assignments)
-            turns[seat.principalId] = runner.poll(seat.principalId);
+            turns[seat.principalId] = runner.poll(seat.principalId, { acknowledge: false });
         value = {
           result,
           snapshot: { inspection, view: runner.view(spec.matchId), turns, artifact, abortion },

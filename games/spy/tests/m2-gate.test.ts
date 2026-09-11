@@ -43,7 +43,7 @@ describe("M2 MVP gate", () => {
 
   test("budgeted_sensing_pillar_b_intel_spends_points_through_the_server", () => {
     // Pillar B validated END-TO-END: an intel call through the server boundary
-    // spends intelOrScoutPoints and exhaustion is refused (not just name checks).
+    // spends research and exhaustion is refused (not just name checks).
     const server = harness(
       newSession<SpyState>({
         game: makeSpyGame(),
@@ -66,10 +66,9 @@ describe("M2 MVP gate", () => {
     if (s3 === undefined) throw new Error("seats[3] undefined");
     const token = s0;
     const points = () =>
-      (observe(server.get(), token) as { budgets: Record<string, number> }).budgets
-        .intelOrScoutPoints;
+      (observe(server.get(), token) as { resources: Record<string, number> }).resources.research;
     const before = points();
-    if (before === undefined) throw new Error("intelOrScoutPoints budget undefined");
+    if (before === undefined) throw new Error("research budget undefined");
     expect(
       server.advance({
         kind: "callTool",

@@ -14,8 +14,11 @@ export function validateSchema(
   }
 }
 
-export const PROTOCOL_VERSION = 1 as const;
-export const RUNTIME_VERSION = "0.1.0";
+export * from "./legacy";
+export * from "./v2";
+export * from "./validation";
+
+import type { ClockSnapshot, GameRevision, ResourceBalances, ResultCause } from "./v2";
 
 export type JsonValue =
   | null
@@ -26,8 +29,7 @@ export type JsonValue =
   | { [key: string]: JsonValue };
 export type JsonSchema = Record<string, unknown>;
 
-export interface GameManifest {
-  protocolVersion: 1;
+export interface GameManifestBase {
   id: string;
   revision: string;
   title: string;
@@ -37,24 +39,10 @@ export interface GameManifest {
   defaultSeats: number;
   rulesSchema: JsonSchema;
   defaultRules: Record<string, unknown>;
-  defaultBudgets: {
-    wallClockMsPerDecision: number;
-    toolCallsPerTurn: number;
-    intelOrScoutPoints: number;
-    simRolloutsPerTurn: number;
-    invalidRetries: number;
-  };
   roundStructure: { phase: string; what: string }[];
   winConditions: string[];
   safeDefaults: string[];
   disclosure: "full-after-terminal";
-}
-
-export interface GameRevision {
-  protocolVersion: 1;
-  runtimeVersion: string;
-  gameId: string;
-  revision: string;
 }
 
 export interface ActionOffer {
@@ -85,6 +73,7 @@ export interface SeatOutcome {
 }
 
 export interface GameResult {
+  cause?: ResultCause;
   summary: string;
   seats: SeatOutcome[];
 }
@@ -102,6 +91,8 @@ export interface SpectatorView {
   progress: GameProgress;
   blocks: SpectatorBlock[];
   result: GameResult | null;
+  clocks?: Record<string, ClockSnapshot>;
+  resources?: Record<string, ResourceBalances>;
 }
 
 export interface PublicFrame {
@@ -117,8 +108,4 @@ export interface ReplayPresentation {
 export interface SubmissionIdentity {
   decisionId: string;
   requestId: string;
-}
-
-export interface ServerCapabilities {
-  protocolVersion: 1;
 }

@@ -48,6 +48,8 @@ export function createMatchServer(
     defaultAction: plugin.safeDefault,
     safeDefault: (state, seat) => plugin.safeDefault(state, seat).input,
     senseResolvers: plugin.senseResolvers?.(seed),
+    participation: plugin.participation,
+    onHostEvent: plugin.onHostEvent,
   });
   const handle: MatchHandle<unknown> = {
     get: () => session,

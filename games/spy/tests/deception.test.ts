@@ -97,11 +97,11 @@ describe("M3 handler and deep cover", () => {
     const loyalObs = observe(server.get(), plainLoyal) as {
       privateState: { knownMoles: SeatId[]; ownRole: string };
       legalTools: string[];
-      budgets: Record<string, number>;
+      resources: Record<string, number>;
     };
     expect(loyalObs.privateState.knownMoles).toEqual([]);
     expect(Array.isArray(loyalObs.legalTools)).toBe(true);
-    expect(typeof loyalObs.budgets.intelOrScoutPoints).toBe("number");
+    expect(typeof loyalObs.resources.research).toBe("number");
     const loyalSerialized = JSON.stringify(loyalObs);
     expect(loyalSerialized).not.toContain("handlerSeat");
     expect(loyalSerialized).not.toContain("deepCoverSeat");
@@ -283,7 +283,7 @@ describe("deception tools", () => {
     expect(sizes).toEqual(new Set([1, 2]));
   });
 
-  test("deception_resolvers_spend_intelOrScoutPoints_not_toolCallsPerTurn", () => {
+  test("deception_resolvers_spend_research_not_action_allowance", () => {
     const server = harness(
       newSession<SpyState>({
         game: makeSpyGame(),
@@ -315,10 +315,10 @@ describe("deception tools", () => {
       input: { target: seat0 },
     });
     expect(warmup.ok).toBe(true);
-    const before = (warmup.observation as { budgets: Record<string, number> }).budgets;
-    expect(before.intelOrScoutPoints).toBeDefined();
-    expect(before.toolCallsPerTurn).toBeDefined();
-    if (before.intelOrScoutPoints === undefined || before.toolCallsPerTurn === undefined)
+    const before = (warmup.observation as { resources: Record<string, number> }).resources;
+    expect(before.research).toBeDefined();
+    expect(before.actions).toBeDefined();
+    if (before.research === undefined || before.actions === undefined)
       throw new Error("budget keys missing");
 
     const r = server.advance({
@@ -328,14 +328,14 @@ describe("deception tools", () => {
       input: {},
     });
     expect(r.ok).toBe(true);
-    const after = (observe(server.get(), token) as { budgets: Record<string, number> }).budgets;
-    expect(after.intelOrScoutPoints).toBeDefined();
-    expect(after.toolCallsPerTurn).toBeDefined();
-    if (after.intelOrScoutPoints === undefined || after.toolCallsPerTurn === undefined)
+    const after = (observe(server.get(), token) as { resources: Record<string, number> }).resources;
+    expect(after.research).toBeDefined();
+    expect(after.actions).toBeDefined();
+    if (after.research === undefined || after.actions === undefined)
       throw new Error("budget keys missing after");
 
-    expect(after.intelOrScoutPoints).toBe(before.intelOrScoutPoints - 1);
-    expect(after.toolCallsPerTurn).toBe(before.toolCallsPerTurn); // sensing never spends tool calls
+    expect(after.research).toBe(before.research - 1);
+    expect(after.actions).toBe(before.actions); // sensing never spends tool calls
   });
 
   test("deception_effects_are_private_and_do_not_leak_to_other_seats", () => {
