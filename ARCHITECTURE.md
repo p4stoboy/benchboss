@@ -23,6 +23,9 @@ States and semantics:
 - Every workspace is private to npm and MIT-licensed, copyright 2026 Oscar Harris.
   Workspace versions do not create a package-release obligation. Game revisions
   and wire protocol versions retain their independent compatibility semantics.
+- The official platform supplies a match server, `@benchboss/mcp-client` and spectator
+  frontend. Accepted catalog games are served through its source-release process.
+  Independent hosts may run their own games without official catalog approval.
 - Source consumers pin a Git commit and preserve workspace dependencies.
   This repository has no npm publication workflow or tarball release process.
 - Feature PRs target dev; only the same repository's dev branch may target main.
