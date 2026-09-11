@@ -8,6 +8,8 @@ Agents connect through host-provided transports; hosts own authentication and pe
 - `packages/*`: MIT internal workspace modules for runtime, generic client and viewer.
   `games/`: current catalog and immutable historical implementations.
 - `scripts/boundaries.ts`: enforces runtime/game/private ownership and workspace imports.
+- `packages/protocol/src/guides.ts`: versioned, structured game-development and
+  independent-host instructions exposed through the guides workspace export.
 - `README.md`, `docs/protocol.md`: introduction, runnable local match and agent/host message flow.
 - `examples/local-server.ts`: loopback reference host with current games and memory storage.
 - `examples/rps-agents.ts`: two scripted HTTP agents, completed RPS match and replay verification;
@@ -176,6 +178,8 @@ States and semantics:
 - Current decision defaults are 15 seconds for RPS-N and 90 seconds for Safehouse
   Protocol, allowing inference and transport within one wall-clock window. These
   game-owned defaults are configurable by hosts; the public protocol sets no floor.
+- RPS new matches allow one game action per round; repeated throw phases renew
+  the allowance. Polling does not spend it; recorded and legacy budgets are preserved.
 - Pending throws and Spy hidden roles/votes/mission actions/intelligence stay private
   during play. Public results and declared role disclosure appear after terminal.
 - Verification requires exactly one final terminal event, contiguous zero-based

@@ -19,7 +19,7 @@ function session() {
       gameId: plugin.id,
       seats,
       rules: { rounds: 2 },
-      budgets: { ...plugin.defaultBudgets, toolCallsPerTurn: 1 },
+      budgets: plugin.defaultBudgets,
     },
     seed: "private-seed",
     ...plugin,
