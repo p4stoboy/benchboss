@@ -48,5 +48,7 @@ repository's `dev` branch. Both branches require PRs, CI and the `PR branch poli
 check. Maintainers review and merge; use a merge commit for dev-to-main promotions
 to preserve their shared ancestry.
 
-A merge publishes no npm package. Hosts choose when to adopt a source revision
-and which games to serve.
+Accepted game contributions are served by the official match server when their
+source revision is released there. A source merge does not itself deploy the server
+or publish an npm package. Independent hosts choose their own games and release
+timing, including games that are not in the official catalog.
