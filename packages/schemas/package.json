@@ -1,0 +1,27 @@
+{
+  "name": "@benchboss/schemas",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "zod": "^3.23",
+    "zod-to-json-schema": "^3.23"
+  },
+  "license": "MIT",
+  "author": "Oscar Harris",
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/p4stoboy/benchboss.git",
+    "directory": "packages/schemas"
+  },
+  "files": ["src", "LICENSE", "README.md", "RULES.md"],
+  "engines": {
+    "bun": ">=1.4.2"
+  }
+}
