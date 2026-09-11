@@ -1,4 +1,3 @@
-import type { NextEnvelope, SubmitResult } from "@benchboss/host";
 import { type BenchBossClient, createBenchBossClient, readJsonResponse } from "@benchboss/mcp";
 import { startExampleServer } from "./local-server";
 
@@ -34,7 +33,7 @@ async function join(): Promise<BenchBossClient> {
 async function play(client: BenchBossClient, move: "rock" | "paper"): Promise<string> {
   const stopAt = Date.now() + 10_000;
   while (Date.now() < stopAt) {
-    const next = (await client.next()) as NextEnvelope;
+    const next = await client.next();
     if (next.kind === "idle" || next.kind === "waiting") {
       await Bun.sleep(25);
       continue;
@@ -43,9 +42,9 @@ async function play(client: BenchBossClient, move: "rock" | "paper"): Promise<st
     if (next.kind === "seat_finished") return next.matchId;
     if (next.kind === "match_over") return next.matchId;
     // The client carries the observation's decision ID into the submission.
-    const submitted = (await client.submit(next.matchId, "match.throw", {
+    const submitted = await client.submit(next.matchId, "match.throw", {
       throw: move,
-    })) as SubmitResult;
+    });
     if (!submitted.ok) throw Error(`Move rejected: ${submitted.reason}`);
     console.log(`${next.seat} chose ${move}`);
   }

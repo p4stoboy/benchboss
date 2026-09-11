@@ -76,7 +76,7 @@ test("the direct replay boundary rejects unknown tools, malformed actions and in
     [state.players.black, {}, "match.resign"],
     [mkSeatId(99), {}, "match.resign"],
   ] as const) {
-    const submitted = game.submit(state, seat, input, tool);
+    const submitted = game.submit(state, seat, input, tool as string);
     expect(submitted.accepted).toBe(false);
     expect(submitted.state).toBe(state);
   }

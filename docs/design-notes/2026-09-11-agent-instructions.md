@@ -14,8 +14,8 @@ Authentication remains host policy. No new npm distributions or game-engine clie
 - RPS new matches allow one game action per round. Polling is outside the action
   meter; invalid input keeps the existing validation/retry rules. Each round renews
   the allowance. The decision window stays 15 seconds.
-- Recorded configurations and legacy implementations retain their original budgets.
-  This retunes pre-release defaults without changing retained execution semantics.
+- Match configurations record resolved timing, named resources and metering.
+  The single v1 runtime executes the exact configuration recorded for the match.
 
 ## Threat model
 Guide content is reviewed source. Game observations and contributions remain untrusted;
@@ -34,5 +34,5 @@ Source consumers explicitly update their pin. Revert the source pin to roll back
 Existing matches and replay configuration do not depend on current defaults.
 
 ## Test plan
-Exercise default-budget multi-round play, input rejection, privacy and replay.
+Exercise multi-round play with default allowances, input rejection, privacy and replay.
 Check guide identities and supported block rendering through platform consumer tests.

@@ -3,7 +3,7 @@ import { validateObservation, validateSubmitEnvelope } from "@benchboss/protocol
 import { ObservationEnvelope, SubmitResultEnvelope } from "@benchboss/schemas";
 
 const valid = {
-  protocolVersion: 2,
+  protocolVersion: 1,
   matchId: "match",
   phase: "move",
   phaseId: "match:0",
@@ -26,7 +26,7 @@ const valid = {
 };
 
 describe("observation schema and protocol agreement", () => {
-  it("accepts current observations in both public validators", () => {
+  it("accepts protocol observations in both public validators", () => {
     expect(validateObservation(valid).ok).toBe(true);
     expect(ObservationEnvelope.safeParse(valid).success).toBe(true);
   });
@@ -47,7 +47,7 @@ describe("observation schema and protocol agreement", () => {
   });
 });
 
-describe("current envelope plain-data boundaries", () => {
+describe("envelope plain-data boundaries", () => {
   it("rejects inherited, hidden, symbol and accessor properties at every observation record boundary", () => {
     let reads = 0;
     const inherited = Object.create({ fuel: 1 });
@@ -102,7 +102,7 @@ describe("current envelope plain-data boundaries", () => {
   });
 
   it("rejects nonplain submit records and explicitly undefined optional fields in both validators", () => {
-    const submit = { protocolVersion: 2, ok: true, reason: "ok" };
+    const submit = { protocolVersion: 1, ok: true, reason: "ok" };
     for (const value of [
       Object.create(submit),
       { ...submit, result: Object.create({ secret: 1 }) },

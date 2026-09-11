@@ -1,8 +1,8 @@
-import { type LogEvent, type MatchConfig, verifyReplay } from "@benchboss/core";
+import { type LogEvent, type MatchConfig, validateMatchConfig } from "@benchboss/core";
 import type { GameResult } from "@benchboss/protocol";
 import type { GamePlugin } from "./game-plugin";
-import { type Command, type SessionOptions, newSession, step } from "./match-server";
-import { canonical } from "./v2-match-server";
+import type { Command, SessionOptions } from "./match-server";
+import { canonical, newSession, step } from "./match-server";
 
 interface Verification {
   ok: boolean;
@@ -35,17 +35,6 @@ export function verifySessionReplay<State>(args: {
   publishedResult?: GameResult | null;
 }): Verification {
   const { options, log } = args;
-  if (options.config.identity?.protocolVersion !== 2)
-    return verifyReplay({
-      game: options.game,
-      config: options.config,
-      seed: options.seed,
-      log,
-      ...(options.publicView
-        ? { projectResult: (state: State) => options.publicView?.(state).result ?? null }
-        : {}),
-      ...(args.publishedResult !== undefined ? { publishedResult: args.publishedResult } : {}),
-    });
   let activeSeq = 0;
   try {
     if (
@@ -89,6 +78,12 @@ export function verifyPluginReplay<State>(args: {
   publishedResult?: GameResult | null;
 }): Verification {
   const { plugin, config, seed, log, publishedResult } = args;
+  const validation = validateMatchConfig(config, {
+    gameId: plugin.id,
+    manifest: plugin.manifest,
+    hasHostEventHandler: typeof plugin.onHostEvent === "function",
+  });
+  if (!validation.ok) return { ok: false, detail: validation.reason };
   return verifySessionReplay({
     options: {
       game: plugin.makeGame(),
@@ -98,7 +93,6 @@ export function verifyPluginReplay<State>(args: {
       phaseToTools: plugin.phaseToTools,
       currentPhase: plugin.currentPhase,
       isReady: plugin.isReady,
-      safeDefault: (state, seat) => plugin.safeDefault(state, seat).input,
       defaultAction: plugin.safeDefault,
       senseResolvers: plugin.senseResolvers?.(seed),
       participation: plugin.participation,

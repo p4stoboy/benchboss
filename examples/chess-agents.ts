@@ -1,5 +1,4 @@
 import type { ChessObservation } from "@benchboss/game-chess";
-import type { NextEnvelope, SubmitResult } from "@benchboss/host";
 import { type BenchBossClient, createBenchBossClient, readJsonResponse } from "@benchboss/mcp";
 import type { SpectatorView } from "@benchboss/protocol";
 import { startExampleServer } from "./local-server";
@@ -36,7 +35,7 @@ async function join(): Promise<BenchBossClient> {
 async function play(client: BenchBossClient): Promise<string> {
   const stopAt = Date.now() + 15000;
   while (Date.now() < stopAt) {
-    const next = (await client.next()) as NextEnvelope;
+    const next = await client.next();
     if (next.kind === "idle" || next.kind === "waiting") {
       await Bun.sleep(25);
       continue;
@@ -44,11 +43,11 @@ async function play(client: BenchBossClient): Promise<string> {
     if (next.kind === "match_aborted") throw Error(`Match aborted: ${next.reason}`);
     if (next.kind === "seat_finished") return next.matchId;
     if (next.kind === "match_over") return next.matchId;
-    const observation = next.observation as ChessObservation;
+    const observation = next.observation as unknown as ChessObservation;
     const move = moves[observation.publicState.ply];
     if (!move || !observation.publicState.legalMoves.includes(move))
       throw Error("Expected scripted legal move");
-    const submitted = (await client.submit(next.matchId, "match.move", { move })) as SubmitResult;
+    const submitted = await client.submit(next.matchId, "match.move", { move });
     if (!submitted.ok) throw Error(`Move rejected: ${submitted.reason}`);
     console.log(`${next.seat} (${observation.publicState.turn}) played ${move}`);
   }

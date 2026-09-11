@@ -8,32 +8,24 @@ const resources = {
   messages: { amount: 3, reset: "phase", visibility: "public" },
   searches: { amount: 2, reset: "decision", visibility: "private" },
 } as const;
-const legacy = {
-  wallClockMsPerDecision: 1000,
-  toolCallsPerTurn: 1,
-  intelOrScoutPoints: 1,
-  simRolloutsPerTurn: 1,
-  invalidRetries: 1,
-};
-
 describe("safe named allowances", () => {
   it("rejects costs that mint allowance or poison the balance", () => {
-    const book = core.initBudgetBook([seat], legacy);
+    const book = core.initResourceBook([seat], resources);
     for (const cost of [-1, Number.NaN, Number.POSITIVE_INFINITY]) {
-      const result = core.spend(book, seat, "toolCallsPerTurn", cost);
+      const result = core.spendResource(book, seat, "fuel", cost);
       expect(result.ok).toBe(false);
       expect(result.book).toBe(book);
-      expect(core.remaining(book, seat, "toolCallsPerTurn")).toBe(1);
+      expect(core.remainingResource(book, seat, "fuel")).toBe(4);
     }
   });
 
   it("never spends undeclared or inherited keys including a zero-cost request", () => {
-    const book = core.initBudgetBook([seat], legacy);
+    const book = core.initResourceBook([seat], resources);
     for (const key of ["unknown", "constructor", "__proto__", "toString"]) {
-      expect(core.remaining(book, seat, key)).toBe(0);
-      expect(core.spend(book, seat, key, 0)).toEqual({ book, ok: false });
+      expect(core.remainingResource(book, seat, key)).toBe(0);
+      expect(core.spendResource(book, seat, key, 0)).toEqual({ book, ok: false });
     }
-    expect(core.spend(book, "constructor" as core.SeatId, "toolCallsPerTurn", 0)).toEqual({
+    expect(core.spendResource(book, "constructor" as core.SeatId, "fuel", 0)).toEqual({
       book,
       ok: false,
     });
@@ -49,22 +41,22 @@ describe("safe named allowances", () => {
       expect(result.ok).toBe(true);
       book = result.book;
     }
-    expect(core.remaining(book, seat, "fuel")).toBe(0);
-    expect(core.remaining(book, otherSeat, "fuel")).toBe(4);
-    expect(core.remaining(original, seat, "fuel")).toBe(4);
-    expect(core.spend(book, seat, "fuel", 1).ok).toBe(false);
+    expect(core.remainingResource(book, seat, "fuel")).toBe(0);
+    expect(core.remainingResource(book, otherSeat, "fuel")).toBe(4);
+    expect(core.remainingResource(original, seat, "fuel")).toBe(4);
+    expect(core.spendResource(book, seat, "fuel", 1).ok).toBe(false);
   });
 
   it("renews only the requested reset scope and never match allowances", () => {
     const initial = core.initResourceBook([seat, otherSeat], resources);
     expect(initial).toBeDefined();
     if (!initial) return;
-    let book = core.spend(initial, seat, "fuel", 4).book;
-    book = core.spend(book, seat, "messages", 3).book;
-    book = core.spend(book, seat, "searches", 2).book;
+    let book = core.spendResource(initial, seat, "fuel", 4).book;
+    book = core.spendResource(book, seat, "messages", 3).book;
+    book = core.spendResource(book, seat, "searches", 2).book;
     book = core.resetResources(book, seat, resources, "decision");
     expect(book[seat]).toEqual({ fuel: 0, messages: 0, searches: 2 });
-    book = core.spend(book, seat, "searches", 1).book;
+    book = core.spendResource(book, seat, "searches", 1).book;
     book = core.resetResources(book, seat, resources, "phase");
     expect(book[seat]).toEqual({ fuel: 0, messages: 3, searches: 1 });
     expect(book[otherSeat]).toEqual({ fuel: 4, messages: 3, searches: 2 });
@@ -117,35 +109,25 @@ describe("exact integer resource units", () => {
         const next = core.spendResource(book, seat, "fuel", 1);
         expect(next.ok).toBe(true);
         book = next.book;
-        expect(core.remaining(book, seat, "fuel")).toBe(amount - consumed);
+        expect(core.remainingResource(book, seat, "fuel")).toBe(amount - consumed);
       }
-      expect(core.remaining(book, seat, "fuel")).toBe(0);
-      expect(core.spend(book, seat, "fuel", 1).ok).toBe(false);
+      expect(core.remainingResource(book, seat, "fuel")).toBe(0);
+      expect(core.spendResource(book, seat, "fuel", 1).ok).toBe(false);
     }
     const book = core.initResourceBook([seat], {
       fuel: { ...resources.fuel, amount: Number.MAX_SAFE_INTEGER },
     });
     const first = core.spendResource(book, seat, "fuel", 1);
     expect(first.ok).toBe(true);
-    expect(core.remaining(first.book, seat, "fuel")).toBe(Number.MAX_SAFE_INTEGER - 1);
+    expect(core.remainingResource(first.book, seat, "fuel")).toBe(Number.MAX_SAFE_INTEGER - 1);
     const last = core.spendResource(first.book, seat, "fuel", Number.MAX_SAFE_INTEGER - 1);
     expect(last.ok).toBe(true);
-    expect(core.remaining(last.book, seat, "fuel")).toBe(0);
+    expect(core.remainingResource(last.book, seat, "fuel")).toBe(0);
   });
 });
 
-describe("current and historical accounting boundaries", () => {
-  it("preserves finite fractional legacy balances and costs", () => {
-    const book = core.initBudgetBook([seat], { ...legacy, toolCallsPerTurn: 1.5 });
-    const first = core.spend(book, seat, "toolCallsPerTurn", 1);
-    expect(first.ok).toBe(true);
-    expect(core.remaining(first.book, seat, "toolCallsPerTurn")).toBe(0.5);
-    const second = core.spend(first.book, seat, "toolCallsPerTurn", 0.5);
-    expect(second.ok).toBe(true);
-    expect(core.remaining(second.book, seat, "toolCallsPerTurn")).toBe(0);
-  });
-
-  it("rejects malformed current costs without changing balances", () => {
+describe("resource accounting boundaries", () => {
+  it("rejects malformed costs without changing balances", () => {
     const book = core.initResourceBook([seat], resources);
     for (const cost of [
       -1,

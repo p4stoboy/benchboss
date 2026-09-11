@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { type MatchConfig, type SeatId, mkSeatId } from "@benchboss/core";
 import type { HostEvent, Participation, TimingPolicy } from "@benchboss/protocol";
+import type { GamePlugin } from "../src/game-plugin";
 import {
-  type GamePlugin,
   clockSnapshot,
   newSession,
   observe,
@@ -10,8 +10,8 @@ import {
   phaseId,
   publicView,
   step,
-  verifyPluginReplay,
-} from "../src";
+} from "../src/match-server";
+import { verifyPluginReplay } from "../src/replay-verifier";
 
 const seats: [SeatId, SeatId] = [mkSeatId(0), mkSeatId(1)];
 interface State {
@@ -53,9 +53,9 @@ function fixture(
     id: "clock-fixture",
     defaultSeats: 2,
     manifest: {
-      protocolVersion: 2,
+      protocolVersion: 1,
       id: "clock-fixture",
-      revision: "2",
+      revision: "1.0.0",
       title: "Clock fixture",
       description: "Fixture",
       rulesSource: "test",
@@ -192,12 +192,12 @@ function fixture(
   const config: MatchConfig = {
     matchId: "timing",
     gameId: plugin.id,
-    identity: { protocolVersion: 2, runtimeVersion: "0.2.0", gameId: plugin.id, revision: "2" },
+    identity: { protocolVersion: 1, runtimeVersion: "0.1.0", gameId: plugin.id, revision: "1.0.0" },
     seats,
     rules: {},
     timing,
-    resources: plugin.manifest.protocolVersion === 2 ? plugin.manifest.defaultResources : {},
-    metering: plugin.manifest.protocolVersion === 2 ? plugin.manifest.defaultMetering : {},
+    resources: plugin.manifest.defaultResources,
+    metering: plugin.manifest.defaultMetering,
   };
   const session = newSession({
     game: plugin.makeGame(),
@@ -207,7 +207,6 @@ function fixture(
     phaseToTools: plugin.phaseToTools,
     currentPhase: plugin.currentPhase,
     isReady: plugin.isReady,
-    safeDefault: (s) => plugin.safeDefault(s, seats[0]).input,
     defaultAction: plugin.safeDefault,
     participation: plugin.participation,
     onHostEvent: plugin.onHostEvent,
@@ -220,7 +219,7 @@ const time = <S>(session: Parameters<typeof step<S>>[0], at: number) =>
 const act = <S>(session: Parameters<typeof step<S>>[0], seat = seats[0], input: unknown = {}) =>
   step(session, { kind: "callTool", seat, tool: "match.act", input }).session;
 
-describe("protocol v2 referee", () => {
+describe("protocol v1 referee", () => {
   test("total time survives actions and only active seats spend elapsed time", () => {
     let { session } = fixture();
     session = time(session, 1000);
@@ -277,11 +276,17 @@ describe("protocol v2 referee", () => {
       tool: "match.scan",
       input: {},
     }).session;
-    expect(session.budgets[seats[0]]?.scans).toBe(1);
+    expect(session.resources[seats[0]]?.scans).toBe(1);
     expect(clockSnapshot(session, seats[0])?.remainingMs).toBe(80);
     session = time(session, 100);
     const args = { plugin: data.plugin, config: data.config, seed: "clock", log: session.log };
     expect(verifyPluginReplay(args)).toEqual({ ok: true });
+    expect(
+      verifyPluginReplay({
+        ...args,
+        plugin: { ...data.plugin, manifest: { ...data.plugin.manifest, revision: "unknown" } },
+      }),
+    ).toEqual({ ok: false, detail: "plugin identity mismatch" });
     for (const kind of [
       "command",
       "resource.spend",
@@ -315,7 +320,7 @@ describe("protocol v2 referee", () => {
   });
 });
 
-describe("protocol v2 timing and accounting boundaries", () => {
+describe("protocol v1 timing and accounting boundaries", () => {
   test("rejections and sensing retain the original decision deadline, with expiry winning equality", () => {
     let { session } = fixture({ actionCost: 0, timing: { decisionLimitMs: 50 } });
     session = time(session, 1000);
@@ -326,7 +331,7 @@ describe("protocol v2 timing and accounting boundaries", () => {
       tool: "match.scan",
       input: {},
     }).session;
-    const before = structuredClone(session.budgets);
+    const before = structuredClone(session.resources);
     session = step(session, {
       kind: "callTool",
       seat: seats[0],
@@ -334,9 +339,9 @@ describe("protocol v2 timing and accounting boundaries", () => {
       input: {},
     }).session;
     session = act(session, seats[0], { extra: true });
-    expect(session.budgets).toEqual(before);
+    expect(session.resources).toEqual(before);
     session = act(session, seats[0], { reject: true });
-    expect(session.budgets[seats[0]]?.retries).toBe(0);
+    expect(session.resources[seats[0]]?.retries).toBe(0);
     expect(clockSnapshot(session, seats[0])?.deadline).toBe(1050);
     session = time(session, 1050);
     expect(session.log.filter((e) => e.kind === "host.event").map((e) => e.payload.kind)).toEqual([
@@ -414,13 +419,13 @@ describe("protocol v2 timing and accounting boundaries", () => {
     }).session;
     session = act(session);
     const firstPhase = phaseId(session);
-    expect(session.budgets[seats[0]]?.calls).toBe(0);
+    expect(session.resources[seats[0]]?.calls).toBe(0);
     session = time(session, 50);
     expect(phaseId(session)).not.toBe(firstPhase);
     expect(session.state.phase).toBe("play");
     expect(clockSnapshot(session, seats[0])?.phaseDeadline).toBe(100);
-    expect(session.budgets[seats[0]]?.calls).toBe(1);
-    expect(session.budgets[seats[0]]?.scans).toBe(1);
+    expect(session.resources[seats[0]]?.calls).toBe(1);
+    expect(session.resources[seats[0]]?.scans).toBe(1);
     expect(time(session, 150).state.phase).toBe("terminal");
   });
   test("public projections cannot expose private clocks, allowances or sensing answers", () => {
@@ -516,11 +521,11 @@ test("negative, nonfinite and undeclared sensing charges cannot mint resources",
     { senseResource: "__proto__" },
   ]) {
     const { session } = fixture(options);
-    const before = structuredClone(session.budgets);
+    const before = structuredClone(session.resources);
     expect(() =>
       step(session, { kind: "callTool", seat: seats[0], tool: "match.scan", input: {} }),
     ).toThrow("invalid resource charge");
-    expect(session.budgets).toEqual(before);
+    expect(session.resources).toEqual(before);
   }
 });
 

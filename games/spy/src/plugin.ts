@@ -23,9 +23,9 @@ const METERING = {
 
 export const plugin = {
   manifest: {
-    protocolVersion: 2,
+    protocolVersion: 1,
     id: SPY_GAME_ID,
-    revision: "2.0.0",
+    revision: "1.0.0",
     title: "Safehouse Protocol",
     description:
       "Hidden-role agents gather intelligence, debate teams and resolve covert operations.",

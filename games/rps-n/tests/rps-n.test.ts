@@ -1,23 +1,18 @@
 import { describe, expect, test } from "bun:test";
-import { appendEvent, mkSeatId, verifyReplay } from "@benchboss/core";
-import type { LogEvent, MatchConfig, SeatId } from "@benchboss/core";
-import { RPS_PHASE_TOOLS, makeRpsN } from "../src";
-import type { RpsState, Throw } from "../src";
+import { mkSeatId } from "@benchboss/core";
+import type { MatchConfig } from "@benchboss/core";
+import { gameConfig } from "../../tests/config";
+import { makeRpsN } from "../src";
+import type { Throw } from "../src";
+import { plugin } from "../src/plugin";
 
 function cfg(rounds: number, n = 2): MatchConfig {
-  return {
-    matchId: "m1",
-    gameId: "rps-n",
-    seats: Array.from({ length: n }, (_, i) => mkSeatId(i)),
-    rules: { rounds },
-    budgets: {
-      wallClockMsPerDecision: 5000,
-      toolCallsPerTurn: 3,
-      intelOrScoutPoints: 0,
-      simRolloutsPerTurn: 0,
-      invalidRetries: 1,
-    },
-  };
+  return gameConfig(
+    plugin.manifest,
+    "m1",
+    Array.from({ length: n }, (_, i) => mkSeatId(i)),
+    { rounds },
+  );
 }
 
 describe("rps-n reference game", () => {
@@ -40,13 +35,23 @@ describe("rps-n reference game", () => {
     expect(first.jsonSchema.additionalProperties).toBe(false);
   });
 
+  test("a valid throw cannot execute under a different or missing tool", () => {
+    const game = makeRpsN();
+    const state = game.newMatch(cfg(1), "tools");
+    for (const tool of ["unknown", undefined]) {
+      const submitted = game.submit(state, mkSeatId(0), { throw: "rock" }, tool as string);
+      expect(submitted.accepted).toBe(false);
+      expect(submitted.state).toBe(state);
+    }
+  });
+
   test("submit_records_throw_and_rejects_second_commit", () => {
     const g = makeRpsN();
     let s = g.newMatch(cfg(3), "seed");
-    const r1 = g.submit(s, mkSeatId(0), { throw: "rock" });
+    const r1 = g.submit(s, mkSeatId(0), { throw: "rock" }, "match.throw");
     expect(r1.accepted).toBe(true);
     s = r1.state;
-    const r2 = g.submit(s, mkSeatId(0), { throw: "paper" });
+    const r2 = g.submit(s, mkSeatId(0), { throw: "paper" }, "match.throw");
     expect(r2.accepted).toBe(false);
     expect(r2.reason).toContain("already");
   });
@@ -54,18 +59,18 @@ describe("rps-n reference game", () => {
   test("submit_rejects_when_not_in_throw_phase", () => {
     const g = makeRpsN();
     let s = g.newMatch(cfg(1), "seed");
-    s = g.submit(s, mkSeatId(0), { throw: "rock" }).state;
-    s = g.submit(s, mkSeatId(1), { throw: "scissors" }).state;
+    s = g.submit(s, mkSeatId(0), { throw: "rock" }, "match.throw").state;
+    s = g.submit(s, mkSeatId(1), { throw: "scissors" }, "match.throw").state;
     s = g.step(s); // resolves to terminal
-    const r = g.submit(s, mkSeatId(0), { throw: "rock" });
+    const r = g.submit(s, mkSeatId(0), { throw: "rock" }, "match.throw");
     expect(r.accepted).toBe(false);
   });
 
   test("step_scores_rock_beats_scissors_pairwise", () => {
     const g = makeRpsN();
     let s = g.newMatch(cfg(1), "seed");
-    s = g.submit(s, mkSeatId(0), { throw: "rock" }).state;
-    s = g.submit(s, mkSeatId(1), { throw: "scissors" }).state;
+    s = g.submit(s, mkSeatId(0), { throw: "rock" }, "match.throw").state;
+    s = g.submit(s, mkSeatId(1), { throw: "scissors" }, "match.throw").state;
     s = g.step(s);
     expect(g.isTerminal(s)).toBe(true);
     expect(g.score(s)[mkSeatId(0)]).toBe(1);
@@ -76,8 +81,8 @@ describe("rps-n reference game", () => {
     // Seat 0 throws rock; seat 1 has committed scissors but not revealed.
     const g = makeRpsN();
     let s = g.newMatch(cfg(3), "seed");
-    s = g.submit(s, mkSeatId(0), { throw: "rock" }).state;
-    s = g.submit(s, mkSeatId(1), { throw: "scissors" }).state;
+    s = g.submit(s, mkSeatId(0), { throw: "rock" }, "match.throw").state;
+    s = g.submit(s, mkSeatId(1), { throw: "scissors" }, "match.throw").state;
     const obsForA = g.observe(s, mkSeatId(0));
     // A may see ONLY its own throw; B's throw must not appear anywhere in A's observation.
     const serialized = JSON.stringify(obsForA);
@@ -98,7 +103,7 @@ describe("rps-n reference game", () => {
     const g = makeRpsN();
     let s = g.newMatch(cfg(3), "seed");
     // Seat 0 commits its throw; seat 1 has not yet committed.
-    const r = g.submit(s, mkSeatId(0), { throw: "rock" });
+    const r = g.submit(s, mkSeatId(0), { throw: "rock" }, "match.throw");
     expect(r.accepted).toBe(true);
     s = r.state;
     // Committed seat gets no legal actions.
@@ -114,59 +119,29 @@ describe("rps-n reference game", () => {
     expect(action.tool).toBe("match.throw");
   });
 
-  test("full_match_replays_to_byte_identical_terminal_state", () => {
-    // Drive a 2-round match, log every action+resolve+terminal, then verify.
-    const g = makeRpsN();
+  test("the same action script produces identical terminal game state", () => {
+    const game = makeRpsN();
     const config = cfg(2);
-    let events: readonly LogEvent[] = [];
-    let s: RpsState = g.newMatch(config, "seed-xyz");
-    const script: Array<[number, Throw]> = [
-      [0, "rock"],
-      [1, "scissors"],
-      [0, "paper"],
-      [1, "rock"],
+    const script: Throw[][] = [
+      ["rock", "scissors"],
+      ["paper", "rock"],
     ];
-    let i = 0;
-    while (!g.isTerminal(s)) {
-      for (const seat of config.seats) {
-        const row = script[i++];
-        expect(row).toBeDefined();
-        if (row === undefined) throw new Error("script ran out of rows");
-        const [, t] = row;
-        const res = g.submit(s, seat, { throw: t });
-        expect(res.accepted).toBe(true);
-        s = res.state;
-        events = appendEvent(events, {
-          matchId: "m1",
-          phase: "throw",
-          seat,
-          kind: "action.submit",
-          payload: { action: { throw: t } },
-        });
+    function play() {
+      let state = game.newMatch(config, "seed-xyz");
+      for (const round of script) {
+        for (const [index, seat] of config.seats.entries()) {
+          const move = round[index];
+          if (!move) throw Error("missing scripted throw");
+          const submitted = game.submit(state, seat, { throw: move }, "match.throw");
+          expect(submitted.accepted).toBe(true);
+          state = submitted.state;
+        }
+        state = game.step(state);
       }
-      s = g.step(s);
-      events = appendEvent(events, {
-        matchId: "m1",
-        phase: "throw",
-        seat: null,
-        kind: "phase.resolve",
-        payload: {},
-      });
+      expect(game.isTerminal(state)).toBe(true);
+      expect(game.score(state)).toEqual({ [mkSeatId(0)]: 2, [mkSeatId(1)]: 0 });
+      return state;
     }
-    events = appendEvent(events, {
-      matchId: "m1",
-      phase: "terminal",
-      seat: null,
-      kind: "match.terminal",
-      payload: { score: g.score(s) },
-    });
-
-    const res = verifyReplay({
-      game: g,
-      config,
-      seed: "seed-xyz",
-      log: [...events],
-    });
-    expect(res.ok).toBe(true);
+    expect(play()).toEqual(play());
   });
 });

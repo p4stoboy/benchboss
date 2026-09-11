@@ -10,6 +10,7 @@ import {
 } from "@benchboss/referee";
 import { makeSpyGame } from "../src/game";
 import { SPY_PHASE_TOOLS, currentPhase, isReady, spySafeDefault } from "../src/phases";
+import { plugin } from "../src/plugin";
 import { spySenseResolvers } from "../src/sensing";
 import type { SpyState } from "../src/types";
 import { runSpyMatch, verifySpyReplay } from "./harness";
@@ -52,7 +53,7 @@ describe("M2 MVP gate", () => {
         phaseToTools: SPY_PHASE_TOOLS,
         currentPhase,
         isReady,
-        safeDefault: spySafeDefault,
+        defaultAction: plugin.safeDefault,
         senseResolvers: spySenseResolvers("gate-intel"),
       }),
     );

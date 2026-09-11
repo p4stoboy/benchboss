@@ -110,6 +110,7 @@ describe("decision deadlines", () => {
     time = 1000;
     await runner.reap();
     expect(runner.poll("p0")).toEqual({
+      protocolVersion: 1,
       kind: "match_aborted",
       matchId: "m",
       reason: "game_error",
@@ -136,6 +137,7 @@ describe("decision deadlines", () => {
     offline = false;
     await runner.reap();
     expect(runner.poll("p0")).toEqual({
+      protocolVersion: 1,
       kind: "match_aborted",
       matchId: "m",
       reason: "server_shutdown",
@@ -173,6 +175,7 @@ describe("decision deadlines", () => {
     await runner.submit("p1", "m", "choose", {});
     await runner.reap();
     expect(runner.poll("p0")).toEqual({
+      protocolVersion: 1,
       kind: "match_aborted",
       matchId: "m",
       reason: "game_error",

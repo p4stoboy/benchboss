@@ -9,7 +9,7 @@ import {
   type MatchArtifact,
   type NextEnvelope,
   type OpsMatch,
-  type SubmitResult,
+  type SubmitEnvelope,
   createMatchRunner,
   monotonicEpochMs,
 } from "./runner";
@@ -42,7 +42,7 @@ export interface WorkerSnapshot {
 }
 export interface WorkerReply {
   snapshot: WorkerSnapshot;
-  result?: SubmitResult;
+  result?: SubmitEnvelope;
 }
 
 // Invoked only in the child entry point. The parent owns all durable side effects.
@@ -81,7 +81,7 @@ export async function runMatchWorker(registry: GameRegistry): Promise<void> {
           publishedResult: command.publishedResult,
         });
       } else {
-        let result: SubmitResult | undefined;
+        let result: SubmitEnvelope | undefined;
         if (command.kind === "start") {
           if (spec) throw Error("worker already assigned");
           spec = command.spec;

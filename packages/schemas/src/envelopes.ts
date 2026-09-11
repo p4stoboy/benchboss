@@ -1,39 +1,5 @@
 import { z } from "zod";
 
-export const LegacyObservationEnvelope = z
-  .object({
-    matchId: z.string(),
-    phase: z.string(),
-    seat: z.string(),
-    publicState: z.record(z.unknown()),
-    privateState: z.record(z.unknown()),
-    legalTools: z.array(z.string()),
-    decisionId: z.string().optional(),
-    actionOffers: z
-      .array(
-        z.object({
-          tool: z.string(),
-          phase: z.string(),
-          description: z.string(),
-          jsonSchema: z.record(z.unknown()),
-        }),
-      )
-      .optional(),
-    budgets: z.record(z.number()),
-  })
-  .strict();
-
-export const LegacySubmitResultEnvelope = z
-  .object({
-    accepted: z.boolean(),
-    reason: z.string(),
-    committedActionId: z.string().optional(),
-  })
-  .strict();
-
-export type LegacyObservation = z.infer<typeof LegacyObservationEnvelope>;
-export type LegacySubmitResultDto = z.infer<typeof LegacySubmitResultEnvelope>;
-
 // Keep this plain-data gate in parity with protocol validation; schemas has no protocol dependency.
 function isPlainDataRecord(value: unknown): value is Record<string, unknown> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
@@ -89,7 +55,7 @@ export const ResourceBalancesSchema = plainRecord(z.record(resourceName, resourc
 export const ObservationEnvelope = plainRecord(
   z
     .object({
-      protocolVersion: z.literal(2),
+      protocolVersion: z.literal(1),
       matchId: name,
       phase: name,
       phaseId: name,
@@ -120,7 +86,7 @@ export const ObservationEnvelope = plainRecord(
 export const SubmitResultEnvelope = plainRecord(
   z
     .object({
-      protocolVersion: z.literal(2),
+      protocolVersion: z.literal(1),
       ok: z.boolean(),
       reason: z.string(),
       observation: ObservationEnvelope.optional(),

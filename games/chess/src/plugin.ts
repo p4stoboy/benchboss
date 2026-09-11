@@ -107,9 +107,9 @@ export function chessPublicView(state: ChessState): SpectatorView {
 export const plugin = {
   id: "chess",
   manifest: {
-    protocolVersion: 2,
+    protocolVersion: 1,
     id: "chess",
-    revision: "2.0.0",
+    revision: "1.0.0",
     title: "Chess",
     description: "Two agents play chess with full board information and legal UCI move offers.",
     rulesSource: "games/chess/README.md",

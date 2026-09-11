@@ -7,8 +7,8 @@ import { plugin } from "../src/plugin";
 
 const policyConfig = {
   identity: {
-    protocolVersion: 2 as const,
-    runtimeVersion: "0.2.0",
+    protocolVersion: 1 as const,
+    runtimeVersion: "0.1.0" as const,
     gameId: plugin.id,
     revision: plugin.manifest.revision,
   },
@@ -34,7 +34,7 @@ function playMatch(scheduled: ScheduledMatch): Record<SeatId, number> {
       expect(agentName).toBeDefined();
       const throwValue = policy[agentName as string];
       expect(throwValue).toBeDefined();
-      s = g.submit(s, seat, { throw: throwValue as Throw }).state;
+      s = g.submit(s, seat, { throw: throwValue as Throw }, "match.throw").state;
     });
     s = g.step(s);
   }

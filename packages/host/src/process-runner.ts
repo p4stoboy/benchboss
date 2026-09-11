@@ -16,7 +16,7 @@ import type {
   NextEnvelope,
   OpsMatch,
   RunnerDeps,
-  SubmitResult,
+  SubmitEnvelope,
 } from "./runner";
 
 export interface ProcessRunnerOptions extends ProcessLimits {
@@ -53,7 +53,7 @@ export function createProcessMatchRunner(
   const held = new Map<string, HeldMatch>();
   const receipts = new Map<
     string,
-    { body: string; expires: number; response: Promise<SubmitResult> }
+    { body: string; expires: number; response: Promise<SubmitEnvelope> }
   >();
   const over = (m: HeldMatch) => !!m.abortion || m.snapshot?.inspection.over === true;
   const settled = (m: HeldMatch) =>
@@ -118,8 +118,11 @@ export function createProcessMatchRunner(
       throw error;
     }
   }
-  async function dispatch(m: HeldMatch, command: WorkerCommand): Promise<SubmitResult | undefined> {
-    let result: SubmitResult | undefined;
+  async function dispatch(
+    m: HeldMatch,
+    command: WorkerCommand,
+  ): Promise<SubmitEnvelope | undefined> {
+    let result: SubmitEnvelope | undefined;
     if (!over(m)) {
       try {
         if (!m.process) throw Error("missing worker");
@@ -139,13 +142,13 @@ export function createProcessMatchRunner(
         result = response.result;
       } catch {
         cancel(m, "game_error");
-        result = { ok: false, reason: "match_aborted" };
+        result = { protocolVersion: 1, ok: false, reason: "match_aborted" };
       }
     }
     try {
       await finish(m);
     } catch {
-      if (!m.persisted) return { ok: false, reason: "persistence_pending" };
+      if (!m.persisted) return { protocolVersion: 1, ok: false, reason: "persistence_pending" };
     }
     return result;
   }
@@ -165,29 +168,26 @@ export function createProcessMatchRunner(
     abortReason: m.abortion?.reason,
     endedAt: m.abortion?.endedAt ?? m.snapshot?.inspection.endedAt ?? null,
     result: m.persisted ? (m.snapshot?.inspection.result ?? null) : null,
-    perDecisionMs:
-      m.spec.config.budgets?.wallClockMsPerDecision ?? m.spec.config.timing?.decisionLimitMs ?? 0,
+    perDecisionMs: m.spec.config.timing.decisionLimitMs,
     acknowledgedOver: [...m.acknowledged],
   });
   const poll = (principal: string, options: { acknowledge?: boolean } = {}): NextEnvelope => {
     sweep();
-    let versioned = false;
     for (const m of held.values()) {
       const seat = m.spec.assignments.find((s) => s.principalId === principal)?.seat;
       if (!seat) continue;
-      versioned ||= m.spec.config.timing !== undefined;
       if (over(m)) {
         if (!m.persisted || m.acknowledged.has(seat)) continue;
         if (options.acknowledge !== false) m.acknowledged.add(seat);
         return m.abortion
           ? {
-              ...(m.spec.config.timing !== undefined ? { protocolVersion: 2 as const } : {}),
+              protocolVersion: 1,
               kind: "match_aborted",
               matchId: m.spec.matchId,
               reason: m.abortion.reason,
             }
           : {
-              ...(m.spec.config.timing !== undefined ? { protocolVersion: 2 as const } : {}),
+              protocolVersion: 1,
               kind: "match_over",
               matchId: m.spec.matchId,
               result: m.snapshot?.inspection.result ?? {},
@@ -202,7 +202,7 @@ export function createProcessMatchRunner(
       if (turn?.kind === "turn" || turn?.kind === "waiting")
         return sampleNext(structuredClone(turn), now());
     }
-    return versioned ? { protocolVersion: 2, kind: "idle" } : { kind: "idle" };
+    return { protocolVersion: 1, kind: "idle" };
   };
   return {
     async start(input) {
@@ -237,9 +237,11 @@ export function createProcessMatchRunner(
     submit(principalId, matchId, tool, input, identity) {
       sweep();
       const m = held.get(matchId);
-      if (!m) return Promise.resolve({ ok: false, reason: "unknown_match" });
-      const reply = (response: SubmitResult): SubmitResult =>
-        m.spec.config.timing !== undefined ? { ...response, protocolVersion: 2 } : response;
+      if (!m) return Promise.resolve({ protocolVersion: 1, ok: false, reason: "unknown_match" });
+      const reply = (response: Omit<SubmitEnvelope, "protocolVersion">): SubmitEnvelope => ({
+        ...response,
+        protocolVersion: 1,
+      });
       if (!m.spec.assignments.some((s) => s.principalId === principalId))
         return Promise.resolve(reply({ ok: false, reason: "not_in_match" }));
       const body = JSON.stringify([tool, input, identity?.decisionId]);

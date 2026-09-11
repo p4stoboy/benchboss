@@ -58,30 +58,18 @@ export function checkGameConformance<State>(
             seats: Array.from({ length: seatCount }, (_, i) => mkSeatId(i)),
             rules: structuredClone(rule),
           };
-          const config: MatchConfig =
-            plugin.manifest.protocolVersion === 2
-              ? {
-                  ...base,
-                  identity: {
-                    protocolVersion: 2,
-                    runtimeVersion: "0.2.0",
-                    gameId: plugin.id,
-                    revision: plugin.manifest.revision,
-                  },
-                  timing: structuredClone(plugin.manifest.defaultTiming),
-                  resources: structuredClone(plugin.manifest.defaultResources),
-                  metering: structuredClone(plugin.manifest.defaultMetering),
-                }
-              : {
-                  ...base,
-                  identity: {
-                    protocolVersion: 1,
-                    runtimeVersion: "0.1.0",
-                    gameId: plugin.id,
-                    revision: plugin.manifest.revision,
-                  },
-                  budgets: structuredClone(plugin.manifest.defaultBudgets),
-                };
+          const config: MatchConfig = {
+            ...base,
+            identity: {
+              protocolVersion: 1,
+              runtimeVersion: "0.1.0",
+              gameId: plugin.id,
+              revision: plugin.manifest.revision,
+            },
+            timing: structuredClone(plugin.manifest.defaultTiming),
+            resources: structuredClone(plugin.manifest.defaultResources),
+            metering: structuredClone(plugin.manifest.defaultMetering),
+          };
           const run = () => {
             const game = plugin.makeGame();
             let session = newSession({
@@ -92,14 +80,12 @@ export function checkGameConformance<State>(
               phaseToTools: plugin.phaseToTools,
               currentPhase: plugin.currentPhase,
               isReady: plugin.isReady,
-              safeDefault: (state, seat) => plugin.safeDefault(state, seat).input,
               defaultAction: plugin.safeDefault,
               senseResolvers: plugin.senseResolvers?.(seed),
               participation: plugin.participation,
               onHostEvent: plugin.onHostEvent,
             });
-            if (config.identity?.protocolVersion === 2)
-              session = step(session, { kind: "advanceTime", at: 0 }).session;
+            session = step(session, { kind: "advanceTime", at: 0 }).session;
             const rng = createRng(`actions:${seed}`);
             let commands = 0;
             while (!isTerminal(session)) {
@@ -128,7 +114,7 @@ export function checkGameConformance<State>(
                 });
                 assertConformance(
                   !invalid.output.ok && JSON.stringify(invalid.session) === before,
-                  "unknown seat changed execution or budgets",
+                  "unknown seat changed execution or resources",
                 );
                 const action =
                   options.choose?.(structuredClone(session.state), seat, rng) ?? fallback;
@@ -142,7 +128,7 @@ export function checkGameConformance<State>(
                 session = advanced.session;
                 progressed = true;
               }
-              if (!progressed && config.identity?.protocolVersion === 2) {
+              if (!progressed) {
                 const deadlines = config.seats.flatMap((seat) => {
                   const clock = clockSnapshot(session, seat);
                   return [clock?.deadline, clock?.phaseDeadline].filter(

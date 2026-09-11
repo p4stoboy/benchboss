@@ -36,7 +36,7 @@ describe("spy resolution", () => {
         opIndex: 0,
       },
     };
-    const res = game.submit(st, loyal, { sabotage: true });
+    const res = game.submit(st, loyal, { sabotage: true }, "match.mission_action");
     expect(res.accepted).toBe(false);
     expect(res.reason).toBe("loyal-cannot-sabotage");
   });
@@ -54,8 +54,8 @@ describe("spy resolution", () => {
         opIndex: 0,
       },
     };
-    st = game.submit(st, mole, { sabotage: true }).state;
-    st = game.submit(st, loyal, { sabotage: false }).state;
+    st = game.submit(st, mole, { sabotage: true }, "match.mission_action").state;
+    st = game.submit(st, loyal, { sabotage: false }, "match.mission_action").state;
     st = game.step(st);
     const op = st.opResults[0];
     expect(op).toBeDefined();
@@ -80,11 +80,16 @@ describe("spy resolution", () => {
     for (let i = 0; i < 5; i++) {
       st = { ...st, phase: "proposal" };
       const leader = seatAt(st, st.leaderIdx);
-      st = game.submit(st, leader, {
-        team: [leader, seatAt(st, (st.leaderIdx + 1) % 5)],
-      }).state;
+      st = game.submit(
+        st,
+        leader,
+        {
+          team: [leader, seatAt(st, (st.leaderIdx + 1) % 5)],
+        },
+        "match.propose_team",
+      ).state;
       st = game.step(st); // proposal -> vote
-      for (const s of st.seats) st = game.submit(st, s, { vote: "reject" }).state;
+      for (const s of st.seats) st = game.submit(st, s, { vote: "reject" }, "match.vote").state;
       st = game.step(st); // vote resolves -> reject
     }
     expect(game.isTerminal(st)).toBe(true);
@@ -105,7 +110,12 @@ describe("spy resolution", () => {
   test("non_leader_proposing_is_rejected", () => {
     const st = { ...game.newMatch(baseConfig(), "r-seed"), phase: "proposal" as const };
     const nonLeader = seatAt(st, (st.leaderIdx + 1) % st.seats.length);
-    const res = game.submit(st, nonLeader, { team: [seatAt(st, 0), seatAt(st, 1)] });
+    const res = game.submit(
+      st,
+      nonLeader,
+      { team: [seatAt(st, 0), seatAt(st, 1)] },
+      "match.propose_team",
+    );
     expect(res.accepted).toBe(false);
     expect(res.reason).toBe("leader-only-proposes");
   });
@@ -114,7 +124,7 @@ describe("spy resolution", () => {
     const st = { ...game.newMatch(baseConfig(), "r-seed"), phase: "proposal" as const };
     const leader = seatAt(st, st.leaderIdx);
     // op 0 for 5 seats wants a team of 2; submit a single-member team.
-    const res = game.submit(st, leader, { team: [seatAt(st, 0)] });
+    const res = game.submit(st, leader, { team: [seatAt(st, 0)] }, "match.propose_team");
     expect(res.accepted).toBe(false);
     expect(res.reason).toBe("wrong-team-size");
   });
@@ -123,7 +133,7 @@ describe("spy resolution", () => {
     // A vote arriving during the proposal phase matches no proposal branch.
     const st = { ...game.newMatch(baseConfig(), "r-seed"), phase: "proposal" as const };
     const leader = seatAt(st, st.leaderIdx);
-    const res = game.submit(st, leader, { vote: "approve" });
+    const res = game.submit(st, leader, { vote: "approve" }, "match.vote");
     expect(res.accepted).toBe(false);
     expect(res.reason).toBe("unknown-action");
   });
@@ -142,7 +152,7 @@ describe("spy resolution", () => {
         opIndex: 0,
       },
     };
-    const res = game.submit(st, offTeam, { sabotage: false });
+    const res = game.submit(st, offTeam, { sabotage: false }, "match.mission_action");
     expect(res.accepted).toBe(false);
     expect(res.reason).toBe("not-on-team");
   });
@@ -150,7 +160,7 @@ describe("spy resolution", () => {
   test("approved_vote_moves_to_operation_and_clears_reject_streak", () => {
     let st = game.newMatch(baseConfig(), "r-seed");
     st = { ...st, phase: "vote", rejectStreak: 2 };
-    for (const s of st.seats) st = game.submit(st, s, { vote: "approve" }).state;
+    for (const s of st.seats) st = game.submit(st, s, { vote: "approve" }, "match.vote").state;
     st = game.step(st);
     expect(st.phase).toBe("operation");
     expect(st.rejectStreak).toBe(0);
@@ -161,7 +171,7 @@ describe("spy resolution", () => {
     let st = game.newMatch(baseConfig(), "r-seed");
     const startLeader = st.leaderIdx;
     st = { ...st, phase: "vote", rejectStreak: 0 };
-    for (const s of st.seats) st = game.submit(st, s, { vote: "reject" }).state;
+    for (const s of st.seats) st = game.submit(st, s, { vote: "reject" }, "match.vote").state;
     st = game.step(st);
     expect(st.phase).toBe("proposal");
     expect(st.rejectStreak).toBe(1);
@@ -180,8 +190,8 @@ describe("spy resolution", () => {
       phase: "operation",
       proposal: { proposalId: "p0", leader: seatAt(st, 0), team: [loyal, loyal2], opIndex: 0 },
     };
-    st = game.submit(st, loyal, { sabotage: false }).state;
-    st = game.submit(st, loyal2, { sabotage: false }).state;
+    st = game.submit(st, loyal, { sabotage: false }, "match.mission_action").state;
+    st = game.submit(st, loyal2, { sabotage: false }, "match.mission_action").state;
     st = game.step(st);
     const op = st.opResults[0];
     expect(op).toBeDefined();
@@ -211,7 +221,7 @@ describe("spy resolution", () => {
         case "intel":
         case "comms":
         case "debrief": {
-          for (const s of st.seats) st = game.submit(st, s, {}).state;
+          for (const s of st.seats) st = game.submit(st, s, {}, "match.submit_phase_end").state;
           st = game.step(st);
           break;
         }
@@ -221,12 +231,13 @@ describe("spy resolution", () => {
           const team: SeatId[] = [];
           for (let i = 0; i < size; i++)
             team.push(seatAt(st, (st.leaderIdx + i) % st.seats.length));
-          st = game.submit(st, leader, { team }).state;
+          st = game.submit(st, leader, { team }, "match.propose_team").state;
           st = game.step(st);
           break;
         }
         case "vote": {
-          for (const s of st.seats) st = game.submit(st, s, { vote: "approve" }).state;
+          for (const s of st.seats)
+            st = game.submit(st, s, { vote: "approve" }, "match.vote").state;
           st = game.step(st);
           break;
         }
@@ -234,7 +245,7 @@ describe("spy resolution", () => {
           const team = st.proposal === null ? [] : st.proposal.team;
           for (const s of team) {
             const isMole = st.deal.alignmentBySeat[s] === "mole";
-            st = game.submit(st, s, { sabotage: isMole }).state;
+            st = game.submit(st, s, { sabotage: isMole }, "match.mission_action").state;
           }
           st = game.step(st);
           break;

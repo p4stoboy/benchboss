@@ -80,6 +80,9 @@ test("rejects malformed public clock or resource metadata", () => {
   for (const extra of [
     { clocks: { "seat:0": { remainingMs: -1 } } },
     { resources: { "seat:0": { fuel: -1 } } },
+    { resources: { "seat:0": { fuel: 0.5 } } },
+    { resources: { "seat:0": { fuel: Number.MAX_SAFE_INTEGER + 1 } } },
+    { resources: { "seat:0": { "": 1 } } },
     { clocks: [] },
   ])
     expect(isSpectatorView({ ...unfamiliar, ...extra })).toBe(false);

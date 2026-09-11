@@ -1,4 +1,4 @@
-import { CAPABILITY_FEATURES } from "./v2";
+import { CAPABILITY_FEATURES } from "./contracts";
 
 export interface ValidationResult {
   ok: boolean;
@@ -199,7 +199,7 @@ export function validateObservation(value: unknown): ValidationResult {
   )
     return invalid("invalid observation fields");
   if (
-    value.protocolVersion !== 2 ||
+    value.protocolVersion !== 1 ||
     ![value.matchId, value.phase, value.phaseId, value.seat, value.decisionId].every(isName) ||
     !isRecord(value.publicState) ||
     !isRecord(value.privateState) ||
@@ -231,7 +231,7 @@ export function validateObservation(value: unknown): ValidationResult {
 }
 
 export function validateNextEnvelope(value: unknown): ValidationResult {
-  if (!isRecord(value) || value.protocolVersion !== 2)
+  if (!isRecord(value) || value.protocolVersion !== 1)
     return invalid("unsupported next envelope version");
   const base = ["protocolVersion", "kind"];
   if (value.kind === "idle") return hasFields(value, base) ? valid : invalid("invalid idle fields");
@@ -280,7 +280,7 @@ export function validateNextEnvelope(value: unknown): ValidationResult {
 export function validateSubmitEnvelope(value: unknown): ValidationResult {
   if (
     !isRecord(value) ||
-    value.protocolVersion !== 2 ||
+    value.protocolVersion !== 1 ||
     !hasFields(value, ["protocolVersion", "ok", "reason"], ["observation", "result"]) ||
     typeof value.ok !== "boolean" ||
     typeof value.reason !== "string"
@@ -296,10 +296,10 @@ export function validateCapabilities(value: unknown): ValidationResult {
   if (
     !isRecord(value) ||
     !hasFields(value, ["protocolVersion", "supportedProtocolVersions", "features"]) ||
-    value.protocolVersion !== 2 ||
+    value.protocolVersion !== 1 ||
     !Array.isArray(value.supportedProtocolVersions) ||
-    !value.supportedProtocolVersions.includes(2) ||
-    !value.supportedProtocolVersions.every((version) => version === 1 || version === 2) ||
+    value.supportedProtocolVersions.length !== 1 ||
+    value.supportedProtocolVersions[0] !== 1 ||
     value.supportedProtocolVersions.some(
       (version, index, versions) => versions.indexOf(version) !== index,
     )

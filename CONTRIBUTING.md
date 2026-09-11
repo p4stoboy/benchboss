@@ -19,6 +19,7 @@ serves accepted games when their source revision is released there. You can also
 write and run games on your own host without submitting them here or obtaining
 official catalog approval. Independent hosts choose their own games and release timing.
 
-Never replace the implementation of a published game revision. Retain historical
-implementations when adding a new revision. Workspace versions and game revision
-identifiers have different purposes; source updates must not rewrite retained replay rules.
+Declare the exact game revision used by match configurations. The pre-release
+catalog contains one implementation per game; unavailable identities fail.
+Pin source commits for reproducible experiments. See [source versions and match
+identity](docs/releases.md).

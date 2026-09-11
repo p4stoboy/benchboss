@@ -1,4 +1,4 @@
-import type { CurrentMatchConfig, SeatId } from "@benchboss/core";
+import type { MatchConfig, SeatId } from "@benchboss/core";
 import type { GameManifest } from "@benchboss/protocol";
 
 export function gameConfig(
@@ -6,11 +6,11 @@ export function gameConfig(
   matchId: string,
   seats: SeatId[],
   rules = manifest.defaultRules,
-): CurrentMatchConfig {
+): MatchConfig {
   return {
     identity: {
-      protocolVersion: 2,
-      runtimeVersion: "0.2.0",
+      protocolVersion: 1,
+      runtimeVersion: "0.1.0",
       gameId: manifest.id,
       revision: manifest.revision,
     },

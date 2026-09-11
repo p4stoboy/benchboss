@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { createBenchBossClient } from "../src/api";
+import { capabilities, submitted as submitEnvelope, turn } from "./fixtures/envelopes";
 
 describe("versioned submissions", () => {
   test("retains a decision and request ID across a lost-response retry", async () => {
@@ -7,11 +8,11 @@ describe("versioned submissions", () => {
     const client = createBenchBossClient({
       transport: {
         async request(_method, path, body) {
-          if (path === "/match/next")
-            return { kind: "turn", matchId: "m", observation: { decisionId: "d1" } };
+          if (path === "/capabilities") return capabilities;
+          if (path === "/match/next") return turn("d1");
           bodies.push(body as Record<string, unknown>);
           if (bodies.length === 1) throw Error("response lost after commit");
-          return { ok: true, observation: { decisionId: "d2" } };
+          return submitEnvelope("d2");
         },
       },
     });
@@ -30,10 +31,10 @@ describe("versioned submissions", () => {
     const client = createBenchBossClient({
       transport: {
         async request(_method, path, body) {
-          if (path === "/match/next")
-            return { kind: "turn", matchId: "m", observation: { decisionId: "newest" } };
+          if (path === "/capabilities") return capabilities;
+          if (path === "/match/next") return turn("newest");
           bodies.push(body as Record<string, unknown>);
-          return { ok: true, observation: { decisionId: "older-result" } };
+          return submitEnvelope("older-result");
         },
       },
     });
@@ -61,13 +62,11 @@ describe("versioned submissions", () => {
       const client = createBenchBossClient({
         transport: {
           async request(_method, path, body) {
-            if (path === "/match/next")
-              return ++polls === 1
-                ? { matchId: "m", observation: { decisionId: "d1" } }
-                : pendingNext;
+            if (path === "/capabilities") return capabilities;
+            if (path === "/match/next") return ++polls === 1 ? turn("d1") : pendingNext;
             bodies.push(body as Record<string, unknown>);
             if (bodies.length === 1) return pendingSubmit;
-            return { ok: true };
+            return submitEnvelope();
           },
         },
       });
@@ -81,15 +80,15 @@ describe("versioned submissions", () => {
         submitted = client.submit("m", "move", {});
         delayed = client.next();
       }
-      deliverSubmit({ ok: true, observation: { decisionId: "d2" } });
+      deliverSubmit(submitEnvelope("d2"));
       await submitted;
-      deliverNext({ matchId: "m", observation: { decisionId: "d1" } });
+      deliverNext(turn("d1"));
       await expect(delayed).rejects.toThrow("stale_observation");
       await client.submit("m", "move", {});
       expect(bodies.map((body) => body.decisionId)).toEqual(["d1", "d2"]);
     },
   );
-  test("does not retry explicit HTTP errors or unversioned lost responses", async () => {
+  test("does not retry explicit HTTP errors or lost responses without request identity", async () => {
     for (const error of [Object.assign(Error("denied"), { kind: "http_error" }), Error("lost")]) {
       let calls = 0;
       const client = createBenchBossClient({

@@ -27,11 +27,10 @@ function session(maxPlies = 80) {
     config,
     seed,
     defaultAction: plugin.safeDefault,
-    safeDefault: (state, seat) => plugin.safeDefault(state, seat).input,
   });
 }
 
-test("referee rejects illegal offers and inactive-seat commands before spending budgets", () => {
+test("referee rejects illegal offers and inactive-seat commands before spending resources", () => {
   const initial = session();
   const { white, black } = initial.state.players;
   for (const input of [
@@ -45,7 +44,7 @@ test("referee rejects illegal offers and inactive-seat commands before spending 
     const result = step(initial, { kind: "callTool", seat: white, tool: "match.move", input });
     expect(result.output.ok).toBe(false);
     expect(result.session.state).toEqual(initial.state);
-    expect(result.session.budgets).toEqual(initial.budgets);
+    expect(result.session.resources).toEqual(initial.resources);
     expect(decisionId(result.session, white)).toBe(decisionId(initial, white));
   }
   for (const seat of [black, mkSeatId(99)]) {
@@ -58,7 +57,7 @@ test("referee rejects illegal offers and inactive-seat commands before spending 
   expect((observe(initial, black) as { actionOffers: unknown[] }).actionOffers).toEqual([]);
 });
 
-test("repeated move phases renew decisions and action budgets for returning seats", () => {
+test("repeated move phases renew decisions and action allowances for returning seats", () => {
   let current = session();
   const { white, black } = current.state.players;
   const original = decisionId(current, white);
@@ -130,7 +129,8 @@ describe("host turn deadlines", () => {
   test("only the active color spends time and expiry persists a replayable timeout", async () => {
     const registry = createRegistry([plugin]);
     const config = registry.buildConfig("clock-chess", "chess", seats);
-    if (config.identity?.protocolVersion !== 2 || !config.timing) throw Error("expected v2 config");
+    if (config.identity?.protocolVersion !== 1 || !config.timing)
+      throw Error("expected versioned config");
     config.timing.playerTotalMs = 1000;
     const colors = plugin.makeGame().newMatch(config, seed).players;
     const artifacts: MatchArtifact[] = [];
@@ -168,7 +168,7 @@ describe("host turn deadlines", () => {
     const second = runner.poll(colors.black);
     if (second.kind !== "turn") throw Error("Expected Black's turn");
     expect(second.deadline).toBe(1999);
-    expect((second.observation as ChessObservation).publicState.moves).toEqual(["e2e4"]);
+    expect((second.observation as unknown as ChessObservation).publicState.moves).toEqual(["e2e4"]);
     time = 1000;
     await runner.reap();
     expect(artifacts).toHaveLength(0);
@@ -223,18 +223,4 @@ test("long matches remain renderable and their frames fit the host message budge
     plugin.makeGame().observe({ ...initial, moves: fullHistory }, initial.players.white).publicState
       .moves,
   ).toEqual(fullHistory);
-});
-
-test("the captured v1 two-agent checkmate still verifies against its frozen revision", () => {
-  const fixture = require("./fixtures/v1-replay.json");
-  const historical = require("../../legacy-v1/chess/plugin").plugin;
-  expect(
-    verifyPluginReplay({
-      plugin: historical,
-      config: fixture.config,
-      seed: fixture.seed,
-      log: fixture.log,
-      publishedResult: fixture.result,
-    }),
-  ).toEqual({ ok: true });
 });
