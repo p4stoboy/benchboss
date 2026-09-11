@@ -6,7 +6,7 @@ import { RPS_PHASE_TOOLS, type RpsState, makeRpsN } from "./rps-n";
 const RPS_BUDGETS: BudgetConfig = {
   // Includes observation delivery, inference and submission delivery.
   wallClockMsPerDecision: 15_000,
-  toolCallsPerTurn: 8,
+  toolCallsPerTurn: 1,
   intelOrScoutPoints: 0,
   simRolloutsPerTurn: 0,
   invalidRetries: 1,
