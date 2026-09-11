@@ -1,0 +1,42 @@
+{
+  "name": "@benchboss/mcp",
+  "version": "0.1.0",
+  "type": "module",
+  "bin": {
+    "benchboss-mcp": "./dist/main.js"
+  },
+  "main": "./dist/index.js",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./metadata": {
+      "types": "./dist/metadata.d.ts",
+      "default": "./dist/metadata.js"
+    }
+  },
+  "files": ["dist", "LICENSE", "README.md"],
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "build": "bun build ./src/main.ts --target=node --outfile=dist/main.js --banner=\"#!/usr/bin/env node\" --external @modelcontextprotocol/sdk --external zod && bun build ./src/index.ts --target=node --outfile=dist/index.js --external @modelcontextprotocol/sdk --external zod && bun build ./src/metadata.ts --target=browser --outfile=dist/metadata.js --external zod && bun build-types.ts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "zod": "^3.23"
+  },
+  "devDependencies": {
+    "@benchboss/schemas": "workspace:*",
+    "@benchboss/protocol": "workspace:*"
+  },
+  "license": "MIT",
+  "author": "Oscar Harris",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/p4stoboy/benchboss.git",
+    "directory": "packages/client"
+  },
+  "private": true
+}

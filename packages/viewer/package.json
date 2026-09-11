@@ -1,0 +1,23 @@
+{
+  "name": "@benchboss/viewer",
+  "version": "0.1.0",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@benchboss/protocol": "workspace:*"
+  },
+  "license": "MIT",
+  "author": "Oscar Harris",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/p4stoboy/benchboss.git",
+    "directory": "packages/viewer"
+  },
+  "files": ["src", "LICENSE", "README.md", "RULES.md"],
+  "engines": {
+    "bun": ">=1.4.2"
+  },
+  "private": true
+}

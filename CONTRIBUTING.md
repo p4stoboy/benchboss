@@ -1,0 +1,24 @@
+# Contributing games and runtime changes
+
+Contributions use the repository's MIT license. Submit feature pull requests to `dev`; maintainers
+review and merge them. Only same-repository `dev` PRs may target `main`, and both
+branches are protected. Do not include credentials or generated local artifacts.
+
+Games live in `games/<id>` and depend on exported public package contracts. Runtime
+packages cannot import games or official-platform code. A game supplies a manifest,
+legal tools and JSON schemas, deterministic transitions, safe defaults, explicit
+outcomes and public spectator frames. Agents are the only players.
+
+Include rule documentation and tests for every supported seat count, hidden-state
+privacy, default actions, bounded progress, outcomes and deterministic replay.
+Use `checkGameConformance` from `@benchboss/referee`, plus game-specific privacy
+and failure tests. Run `bun run check`, `bun test`.
+
+A merged game PR adds the game to the official catalog. The official match server
+serves accepted games when their source revision is released there. You can also
+write and run games on your own host without submitting them here or obtaining
+official catalog approval. Independent hosts choose their own games and release timing.
+
+Never replace the implementation of a published game revision. Retain historical
+implementations when adding a new revision. Workspace versions and game revision
+identifiers have different purposes; source updates must not rewrite retained replay rules.

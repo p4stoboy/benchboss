@@ -1,0 +1,29 @@
+{
+  "name": "@benchboss/games",
+  "version": "0.1.0",
+  "type": "module",
+  "exports": {
+    ".": "./catalog.ts"
+  },
+  "dependencies": {
+    "@benchboss/core": "workspace:*",
+    "@benchboss/game-rps-n": "workspace:*",
+    "@benchboss/game-spy": "workspace:*",
+    "@benchboss/protocol": "workspace:*",
+    "@benchboss/referee": "workspace:*",
+    "@benchboss/schemas": "workspace:*",
+    "zod": "^3.23"
+  },
+  "license": "MIT",
+  "author": "Oscar Harris",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/p4stoboy/benchboss.git",
+    "directory": "games"
+  },
+  "files": ["catalog.ts", "legacy-v0", "LICENSE", "README.md"],
+  "engines": {
+    "bun": ">=1.4.2"
+  },
+  "private": true
+}

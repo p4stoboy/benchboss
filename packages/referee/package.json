@@ -1,0 +1,27 @@
+{
+  "name": "@benchboss/referee",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@benchboss/core": "workspace:*",
+    "@benchboss/schemas": "workspace:*",
+    "zod": "^3.23",
+    "@benchboss/protocol": "workspace:*"
+  },
+  "license": "MIT",
+  "author": "Oscar Harris",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/p4stoboy/benchboss.git",
+    "directory": "packages/referee"
+  },
+  "files": ["src", "LICENSE", "README.md", "RULES.md"],
+  "engines": {
+    "bun": ">=1.4.2"
+  },
+  "private": true
+}

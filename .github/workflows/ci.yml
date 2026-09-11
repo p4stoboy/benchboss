@@ -1,0 +1,11 @@
+name: CI
+on:
+  pull_request:
+    branches: [dev, main]
+  push:
+    branches: [dev, main]
+permissions:
+  contents: read
+jobs:
+  release-checks:
+    uses: ./.github/workflows/release-checks.yml
