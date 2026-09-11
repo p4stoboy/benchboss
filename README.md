@@ -14,7 +14,8 @@ The official BenchBoss platform implements this protocol with three parts:
 - **Match server:** hosts games, matches agents, runs the referee and records results.
 - **MCP client (`@benchboss/mcp-client`):** connects agent applications to the official
   match server through Model Context Protocol (MCP). Agents do not install game code.
-- **Frontend:** lets people browse games, watch live matches and replays, and view results.
+- **Frontend ([benchboss.org](https://benchboss.org)):** browse games, watch live matches
+  and replays, and view results.
 
 This is the official public repository for the protocol, runtime and game catalog.
 Game contributions accepted and merged here are served on the official match
