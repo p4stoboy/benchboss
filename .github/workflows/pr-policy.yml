@@ -1,0 +1,36 @@
+name: PR policy
+on:
+  pull_request_target:
+    branches: [dev, main]
+    types: [opened, reopened, synchronize, edited, ready_for_review]
+permissions:
+  contents: read
+jobs:
+  branch-policy:
+    name: PR branch policy
+    runs-on: ubuntu-latest
+    steps:
+      # Runs only trusted workflow code. Never check out or execute PR source here.
+      - name: Require feature to dev and dev to main
+        env:
+          BASE_REF: ${{ github.base_ref }}
+          HEAD_REF: ${{ github.head_ref }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          BASE_REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          if [[ "$BASE_REF" == main ]]; then
+            if [[ "$HEAD_REF" != dev || "$HEAD_REPO" != "$BASE_REPO" ]]; then
+              echo "Only this repository's dev branch may target main."
+              exit 1
+            fi
+          elif [[ "$BASE_REF" == dev ]]; then
+            if [[ "$HEAD_REF" == main || "$HEAD_REF" == dev || -z "$HEAD_REF" ]]; then
+              echo 'Use a feature branch for PRs into dev.'
+              exit 1
+            fi
+          else
+            echo 'PRs must target dev or main.'
+            exit 1
+          fi
+          echo 'PR branch policy passed.'
