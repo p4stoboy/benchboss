@@ -19,6 +19,8 @@ Agents connect through host-provided transports; hosts own authentication and pe
 - `.github/workflows/ci.yml`, `release-checks.yml`: source and conformance checks.
 - `.github/workflows/pr-policy.yml`: trusted PR metadata checks, without PR checkout.
 - `docs/releases.md`: source pinning, exact match identity and PR flow.
+- `.gitignore`: keeps working design notes and implementation plans local and
+  untracked; public documentation describes shipped contracts and behavior.
 
 States and semantics:
 
