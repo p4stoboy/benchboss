@@ -201,6 +201,9 @@ States and semantics:
 - `games/rps-n/src/`: simultaneous throws, aggregate points, manifest and public view.
 - `games/spy/src/`: roles, intelligence, public statements, teams, votes, missions,
   assassination, manifest and public view; rule tables support 5/7/9 seats.
+- `games/spy/tests/generated-conformance.test.ts`: per-seed tests cover the full
+  seat/rule matrix, privacy, deterministic replay and aggregate phase coverage.
+  Each seed has an independent execution timeout.
 - `games/chess/src/position.ts`: immutable standard-chess movement, king safety,
   special moves, FEN, effective en-passant repetition identity and material draws.
 - `games/chess/src/{game,plugin}.ts`: seeded colors, alternating agent decisions,
