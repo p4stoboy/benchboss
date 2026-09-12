@@ -4,6 +4,10 @@ Contributions use the repository's MIT license. Submit feature pull requests to 
 review and merge them. Only same-repository `dev` PRs may target `main`, and both
 branches are protected. Do not include credentials or generated local artifacts.
 
+Keep design notes and implementation plans local and untracked. The directories
+`docs/design-notes/`, `docs/plans/` and `docs/superpowers/plans/` are ignored.
+Maintain shipped contracts and behavior in `ARCHITECTURE.md` and the public documentation.
+
 Games live in `games/<id>` and depend on exported public package contracts. Runtime
 packages cannot import games or official-platform code. A game supplies a manifest,
 legal tools and JSON schemas, deterministic transitions, safe defaults, explicit
