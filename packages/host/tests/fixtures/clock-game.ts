@@ -11,12 +11,16 @@ interface State {
 
 export function clockGame(rounds = 1) {
   const calls: string[] = [];
-  const budgets = {
-    wallClockMsPerDecision: 1000,
-    toolCallsPerTurn: 10,
-    intelOrScoutPoints: 10,
-    simRolloutsPerTurn: 0,
-    invalidRetries: 2,
+  const timing = {
+    playerTotalMs: null,
+    decisionLimitMs: 1000,
+    phaseLimits: {},
+    clockVisibility: "public" as const,
+  };
+  const resources = {
+    actions: { amount: 10, reset: "phase" as const, visibility: "private" as const },
+    inspection: { amount: 10, reset: "match" as const, visibility: "private" as const },
+    retries: { amount: 2, reset: "match" as const, visibility: "private" as const },
   };
   const over = (s: State) => s.round >= s.rounds;
   const plugin: GamePlugin<State> = {
@@ -24,7 +28,7 @@ export function clockGame(rounds = 1) {
     manifest: {
       protocolVersion: 1,
       id: "clock-game",
-      revision: "1",
+      revision: "1.0.0",
       title: "Clock game",
       description: "Independent lifecycle fixture",
       rulesSource: "Choose or inspect",
@@ -32,7 +36,12 @@ export function clockGame(rounds = 1) {
       defaultSeats: 2,
       rulesSchema: { type: "object" },
       defaultRules: {},
-      defaultBudgets: budgets,
+      defaultTiming: timing,
+      defaultResources: resources,
+      defaultMetering: {
+        action: { resource: "actions", cost: 1 },
+        invalidAction: { resource: "retries", cost: 1 },
+      },
       roundStructure: [],
       winConditions: [],
       safeDefaults: [],
@@ -87,21 +96,21 @@ export function clockGame(rounds = 1) {
     senseResolvers: () => [
       {
         tool: "inspect",
-        budgetKey: "intelOrScoutPoints",
+        resource: "inspection",
         cost: () => 1,
         resolve: (s) => ({ result: { inspected: true }, nextState: s }),
       },
     ],
     defaultSeats: 2,
-    defaultBudgets: budgets,
   };
   const registry = createRegistry([plugin]);
   const seats = [mkSeatId(0), mkSeatId(1)];
+  const config = registry.buildConfig("m", plugin.id, seats);
   const spec = {
     matchId: "m",
     gameId: plugin.id,
     seed: "secret",
-    config: registry.buildConfig("m", plugin.id, seats),
+    config,
     assignments: seats.map((seat, i) => ({ seat, agentId: `a${i}`, principalId: `p${i}` })),
   };
   return { plugin, registry, spec, calls };

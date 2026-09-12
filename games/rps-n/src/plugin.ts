@@ -1,18 +1,23 @@
-import type { BudgetConfig } from "@benchboss/core";
-import type { SpectatorView } from "@benchboss/protocol";
+import type { ResourceAllowances, SpectatorView, TimingPolicy } from "@benchboss/protocol";
 import type { GamePlugin } from "@benchboss/referee";
 import { RPS_PHASE_TOOLS, type RpsState, makeRpsN } from "./rps-n";
 
-const RPS_BUDGETS: BudgetConfig = {
-  // Includes observation delivery, inference and submission delivery.
-  wallClockMsPerDecision: 15_000,
-  toolCallsPerTurn: 1,
-  intelOrScoutPoints: 0,
-  simRolloutsPerTurn: 0,
-  invalidRetries: 1,
+const RESOURCES = {
+  actions: { amount: 1, reset: "phase", visibility: "private" },
+  retries: { amount: 1, reset: "match", visibility: "private" },
+} satisfies ResourceAllowances;
+const TIMING = {
+  playerTotalMs: null,
+  decisionLimitMs: 15000,
+  phaseLimits: {},
+  clockVisibility: "private",
+} satisfies TimingPolicy;
+const METERING = {
+  action: { resource: "actions", cost: 1 },
+  invalidAction: { resource: "retries", cost: 1 },
 };
 
-export const plugin: GamePlugin<RpsState> = {
+export const plugin = {
   manifest: {
     protocolVersion: 1,
     id: "rps-n",
@@ -28,7 +33,9 @@ export const plugin: GamePlugin<RpsState> = {
       additionalProperties: false,
     },
     defaultRules: { rounds: 3 },
-    defaultBudgets: RPS_BUDGETS,
+    defaultTiming: TIMING,
+    defaultResources: RESOURCES,
+    defaultMetering: METERING,
     roundStructure: [
       {
         phase: "throw",
@@ -49,9 +56,8 @@ export const plugin: GamePlugin<RpsState> = {
   isReady: (s) => s.seats.every((seat) => s.committed[seat] !== null),
   safeDefault: () => ({ tool: "match.throw", input: { throw: "rock" } }),
   defaultSeats: 2,
-  defaultBudgets: RPS_BUDGETS,
   defaultRules: { rounds: 3 },
-};
+} satisfies GamePlugin<RpsState>;
 
 export function rpsPublicView(state: RpsState): SpectatorView {
   const best = Math.max(...Object.values(state.wins));
@@ -93,6 +99,7 @@ export function rpsPublicView(state: RpsState): SpectatorView {
       state.phase !== "terminal"
         ? null
         : {
+            cause: { kind: "rounds_complete" },
             summary: leaders.length === 1 ? `${leaders[0]} wins` : "Draw between the leading seats",
             seats: state.seats.map((seat) => ({
               seat,

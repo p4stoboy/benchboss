@@ -12,12 +12,13 @@ import {
 import { counterIntel, plantMisinfo, protectSource } from "../src/deception";
 import { makeSpyGame } from "../src/game";
 import { SPY_PHASE_TOOLS, currentPhase, isReady, spySafeDefault } from "../src/phases";
+import { plugin } from "../src/plugin";
 import { dealRolesM3 } from "../src/roles";
 import { assassinateSchema } from "../src/schemas";
 import { spySenseResolvers } from "../src/sensing";
 import type { SpyState } from "../src/types";
 import { evaluateWin } from "../src/win";
-import { handlerConfig } from "./helpers";
+import { baseConfig, handlerConfig } from "./helpers";
 
 const mkRng = createRng;
 
@@ -76,7 +77,7 @@ describe("M3 handler and deep cover", () => {
         phaseToTools: SPY_PHASE_TOOLS,
         currentPhase,
         isReady,
-        safeDefault: spySafeDefault,
+        defaultAction: plugin.safeDefault,
       }),
     );
     const st = sessionState(server.get());
@@ -97,11 +98,11 @@ describe("M3 handler and deep cover", () => {
     const loyalObs = observe(server.get(), plainLoyal) as {
       privateState: { knownMoles: SeatId[]; ownRole: string };
       legalTools: string[];
-      budgets: Record<string, number>;
+      resources: Record<string, number>;
     };
     expect(loyalObs.privateState.knownMoles).toEqual([]);
     expect(Array.isArray(loyalObs.legalTools)).toBe(true);
-    expect(typeof loyalObs.budgets.intelOrScoutPoints).toBe("number");
+    expect(typeof loyalObs.resources.research).toBe("number");
     const loyalSerialized = JSON.stringify(loyalObs);
     expect(loyalSerialized).not.toContain("handlerSeat");
     expect(loyalSerialized).not.toContain("deepCoverSeat");
@@ -144,7 +145,7 @@ describe("M3 handler and deep cover", () => {
         phaseToTools: SPY_PHASE_TOOLS,
         currentPhase,
         isReady,
-        safeDefault: spySafeDefault,
+        defaultAction: plugin.safeDefault,
       }),
     );
     const st = sessionState(server.get());
@@ -173,7 +174,7 @@ describe("M3 handler and deep cover", () => {
         phaseToTools: SPY_PHASE_TOOLS,
         currentPhase,
         isReady,
-        safeDefault: spySafeDefault,
+        defaultAction: plugin.safeDefault,
       }),
     );
     const st = sessionState(server.get());
@@ -283,7 +284,7 @@ describe("deception tools", () => {
     expect(sizes).toEqual(new Set([1, 2]));
   });
 
-  test("deception_resolvers_spend_intelOrScoutPoints_not_toolCallsPerTurn", () => {
+  test("deception_resolvers_spend_research_not_action_allowance", () => {
     const server = harness(
       newSession<SpyState>({
         game: makeSpyGame(),
@@ -292,7 +293,7 @@ describe("deception tools", () => {
         phaseToTools: SPY_PHASE_TOOLS,
         currentPhase,
         isReady,
-        safeDefault: spySafeDefault,
+        defaultAction: plugin.safeDefault,
         senseResolvers: spySenseResolvers("m3-dec-budget"),
       }),
     );
@@ -315,10 +316,10 @@ describe("deception tools", () => {
       input: { target: seat0 },
     });
     expect(warmup.ok).toBe(true);
-    const before = (warmup.observation as { budgets: Record<string, number> }).budgets;
-    expect(before.intelOrScoutPoints).toBeDefined();
-    expect(before.toolCallsPerTurn).toBeDefined();
-    if (before.intelOrScoutPoints === undefined || before.toolCallsPerTurn === undefined)
+    const before = (warmup.observation as { resources: Record<string, number> }).resources;
+    expect(before.research).toBeDefined();
+    expect(before.actions).toBeDefined();
+    if (before.research === undefined || before.actions === undefined)
       throw new Error("budget keys missing");
 
     const r = server.advance({
@@ -328,14 +329,14 @@ describe("deception tools", () => {
       input: {},
     });
     expect(r.ok).toBe(true);
-    const after = (observe(server.get(), token) as { budgets: Record<string, number> }).budgets;
-    expect(after.intelOrScoutPoints).toBeDefined();
-    expect(after.toolCallsPerTurn).toBeDefined();
-    if (after.intelOrScoutPoints === undefined || after.toolCallsPerTurn === undefined)
+    const after = (observe(server.get(), token) as { resources: Record<string, number> }).resources;
+    expect(after.research).toBeDefined();
+    expect(after.actions).toBeDefined();
+    if (after.research === undefined || after.actions === undefined)
       throw new Error("budget keys missing after");
 
-    expect(after.intelOrScoutPoints).toBe(before.intelOrScoutPoints - 1);
-    expect(after.toolCallsPerTurn).toBe(before.toolCallsPerTurn); // sensing never spends tool calls
+    expect(after.research).toBe(before.research - 1);
+    expect(after.actions).toBe(before.actions); // sensing never spends tool calls
   });
 
   test("deception_effects_are_private_and_do_not_leak_to_other_seats", () => {
@@ -347,7 +348,7 @@ describe("deception tools", () => {
         phaseToTools: SPY_PHASE_TOOLS,
         currentPhase,
         isReady,
-        safeDefault: spySafeDefault,
+        defaultAction: plugin.safeDefault,
         senseResolvers: spySenseResolvers("m3-dec-leak"),
       }),
     );
@@ -398,7 +399,7 @@ describe("deception tools", () => {
         phaseToTools: SPY_PHASE_TOOLS,
         currentPhase,
         isReady,
-        safeDefault: spySafeDefault,
+        defaultAction: plugin.safeDefault,
         senseResolvers: spySenseResolvers("m3-loyal-gate"),
       }),
     );
@@ -435,22 +436,7 @@ describe("deception tools", () => {
 
 function m3State(over: Partial<SpyState>): SpyState {
   const game = makeSpyGame();
-  const base = game.newMatch(
-    {
-      matchId: "m",
-      gameId: "safehouse-protocol",
-      seats: [0, 1, 2, 3, 4].map(mkSeatId),
-      rules: { rounds: 5, handler: true },
-      budgets: {
-        wallClockMsPerDecision: 1,
-        toolCallsPerTurn: 8,
-        intelOrScoutPoints: 3,
-        simRolloutsPerTurn: 0,
-        invalidRetries: 2,
-      },
-    },
-    "assassin-seed",
-  );
+  const base = game.newMatch({ ...handlerConfig(), matchId: "m" }, "assassin-seed");
   return { ...base, ...over };
 }
 
@@ -468,9 +454,14 @@ describe("M3 assassin endgame", () => {
     if (assassin === undefined) throw new Error("expected a mole seat");
     expect(st.deal.handlerSeat).not.toBeNull();
     if (st.deal.handlerSeat === null) throw new Error("handlerSeat is null");
-    st = makeSpyGame().submit(st, assassin, {
-      target: st.deal.handlerSeat,
-    }).state;
+    st = makeSpyGame().submit(
+      st,
+      assassin,
+      {
+        target: st.deal.handlerSeat,
+      },
+      "match.assassinate",
+    ).state;
     st = makeSpyGame().step(st);
     expect(st.winner).toBe("mole");
     expect(st.winReason).toBe("assassin");
@@ -486,31 +477,21 @@ describe("M3 assassin endgame", () => {
     );
     expect(wrong).toBeDefined();
     if (wrong === undefined) throw new Error("expected a wrong loyal seat");
-    st = makeSpyGame().submit(st, assassin, {
-      target: wrong,
-    }).state;
+    st = makeSpyGame().submit(
+      st,
+      assassin,
+      {
+        target: wrong,
+      },
+      "match.assassinate",
+    ).state;
     st = makeSpyGame().step(st);
     expect(st.winner).toBe("loyal");
   });
 
   test("m2_no_handler_wins_immediately_on_three_successes", () => {
     const game = makeSpyGame();
-    const base = game.newMatch(
-      {
-        matchId: "m2",
-        gameId: "safehouse-protocol",
-        seats: [0, 1, 2, 3, 4].map(mkSeatId),
-        rules: { rounds: 5 },
-        budgets: {
-          wallClockMsPerDecision: 1,
-          toolCallsPerTurn: 8,
-          intelOrScoutPoints: 3,
-          simRolloutsPerTurn: 0,
-          invalidRetries: 2,
-        },
-      },
-      "m2-seed",
-    );
+    const base = game.newMatch({ ...baseConfig(), matchId: "m2" }, "m2-seed");
     const st = { ...base, successes: 3 };
     const r = evaluateWin(st);
     expect(r.over).toBe(true);
@@ -577,7 +558,7 @@ describe("M3 assassin endgame", () => {
     expect(parsed.target).not.toBe(handler);
 
     // Submitting the safe default resolves the phase.
-    const submitResult = game.submit(st, assassin, { target: parsed.target });
+    const submitResult = game.submit(st, assassin, { target: parsed.target }, "match.assassinate");
     expect(submitResult.accepted).toBe(true);
     st = submitResult.state;
 

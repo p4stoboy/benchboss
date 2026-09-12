@@ -56,3 +56,34 @@ describe("generic spectator renderer", () => {
     expect(() => renderSpectatorView({} as SpectatorView)).toThrow("Unsupported or malformed");
   });
 });
+
+test("renders public clock snapshots and arbitrary resource names with escaping", () => {
+  const view = {
+    ...unfamiliar,
+    clocks: {
+      "seat:0": {
+        sampledAt: 100,
+        remainingMs: 12000,
+        running: true,
+        deadline: 12100,
+        phaseId: "m:0",
+        phaseDeadline: null,
+      },
+    },
+    resources: { "seat:<1>": { fuel: 9 } },
+  };
+  const html = renderSpectatorView(view);
+  for (const text of ["Clocks", "12000", "running", "Resources", "fuel", "9", "seat:&lt;1&gt;"])
+    expect(html).toContain(text);
+});
+test("rejects malformed public clock or resource metadata", () => {
+  for (const extra of [
+    { clocks: { "seat:0": { remainingMs: -1 } } },
+    { resources: { "seat:0": { fuel: -1 } } },
+    { resources: { "seat:0": { fuel: 0.5 } } },
+    { resources: { "seat:0": { fuel: Number.MAX_SAFE_INTEGER + 1 } } },
+    { resources: { "seat:0": { "": 1 } } },
+    { clocks: [] },
+  ])
+    expect(isSpectatorView({ ...unfamiliar, ...extra })).toBe(false);
+});

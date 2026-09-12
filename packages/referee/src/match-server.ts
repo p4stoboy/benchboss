@@ -1,400 +1,717 @@
 import {
+  type GameModule,
+  type LogEvent,
+  type MatchConfig,
+  type PhaseMachine,
+  type ResourceBook,
+  type Rng,
+  type SeatId,
   appendEvent,
   createPhaseMachine,
   createRng,
-  initBudgetBook,
-  remaining,
-  resetTurnBudgets,
-  safeDefaultTriggered,
+  initResourceBook,
+  resetResources,
+  resourceBalances,
   sha256Commit,
-  spend,
+  spendResource as spend,
+  validateMatchConfig,
 } from "@benchboss/core";
-import type {
-  BudgetBook,
-  BudgetConfig,
-  GameModule,
-  LogEvent,
-  MatchConfig,
-  PhaseMachine,
-  Rng,
-  SeatId,
-} from "@benchboss/core";
-import type { ActionInvocation, PublicFrame, SpectatorView } from "@benchboss/protocol";
-import { validateSchema } from "@benchboss/protocol";
+import {
+  type ActionInvocation,
+  type ClockSnapshot,
+  type HostEvent,
+  type Participation,
+  type PublicFrame,
+  type SpectatorView,
+  isResourceAmount,
+  validateParticipation,
+  validateSchema,
+} from "@benchboss/protocol";
 import { ObservationEnvelope } from "@benchboss/schemas";
 import type { SenseResolver } from "./sense-resolver";
 
-const BUDGET_KEYS: (keyof BudgetConfig)[] = [
-  "wallClockMsPerDecision",
-  "toolCallsPerTurn",
-  "intelOrScoutPoints",
-  "simRolloutsPerTurn",
-  "invalidRetries",
-];
-
-export interface MatchSession<State> {
-  projectPublic?: (state: State) => SpectatorView;
-  frames: readonly PublicFrame[];
-  decisionEpoch: number;
-  seatDecisions: Readonly<Record<SeatId, number>>;
-  // biome-ignore lint/suspicious/noExplicitAny: GameModule is covariant here; the session is Action/Observation/Score-agnostic
-  game: GameModule<State, any, any, any>;
-  config: MatchConfig;
-  seed: string;
-  state: State;
-  senseSeq: number;
-  terminalWritten: boolean;
-  lastTurnPhase: Readonly<Record<SeatId, string>>;
-  budgets: BudgetBook;
-  log: readonly LogEvent[];
-  matchRng: Rng;
-  pm: PhaseMachine<State>;
-  currentPhase: (s: State) => string;
-  safeDefault: (s: State, seat: SeatId) => unknown;
-  defaultAction?: (s: State, seat: SeatId) => ActionInvocation;
-  senseResolvers: ReadonlyMap<string, SenseResolver<State>>;
-  terminalSummary: (s: State) => Record<string, unknown>;
-  resolveSummary: (s: State, resolvedPhase: string) => Record<string, unknown>;
-}
-
 export type Command =
   | { kind: "callTool"; seat: SeatId; tool: string; input: unknown }
-  | { kind: "commitDefault"; seat: SeatId };
-
+  | { kind: "commitDefault"; seat: SeatId }
+  | { kind: "advanceTime"; at: number };
 export interface StepOutput {
   ok: boolean;
   reason: string;
   observation?: unknown;
   result?: Record<string, unknown>;
 }
-
-export interface MatchHandle<State> {
-  get: () => MatchSession<State>;
-  advance: (cmd: Command) => StepOutput;
-}
-
-export function newSession<State>(opts: {
+export interface SessionOptions<State> {
   publicView?: (state: State) => SpectatorView;
-  // biome-ignore lint/suspicious/noExplicitAny: GameModule is covariant here; the session is Action/Observation/Score-agnostic
+  // biome-ignore lint/suspicious/noExplicitAny: game action, observation and score are opaque to the referee
   game: GameModule<State, any, any, any>;
   config: MatchConfig;
   seed: string;
   phaseToTools: Record<string, string[]>;
-  currentPhase: (s: State) => string;
-  isReady: (s: State) => boolean;
-  safeDefault: (s: State, seat: SeatId) => unknown;
-  defaultAction?: (s: State, seat: SeatId) => ActionInvocation;
+  currentPhase: (state: State) => string;
+  isReady: (state: State) => boolean;
+  defaultAction: (state: State, seat: SeatId) => ActionInvocation;
   senseResolvers?: SenseResolver<State>[];
-  terminalSummary?: (s: State) => Record<string, unknown>;
-  resolveSummary?: (s: State, resolvedPhase: string) => Record<string, unknown>;
-}): MatchSession<State> {
+  terminalSummary?: (state: State) => Record<string, unknown>;
+  resolveSummary?: (state: State, phase: string) => Record<string, unknown>;
+  participation?: (state: State, seat: SeatId) => Participation;
+  onHostEvent?: (state: State, event: HostEvent) => State;
+}
+interface Runtime {
+  at: number | null;
+  phaseName: string;
+  phaseDeadline: number | null;
+  remaining: Readonly<Record<SeatId, number | null>>;
+  decisionElapsed: Readonly<Record<SeatId, number>>;
+  participants: Readonly<Record<SeatId, Participation>>;
+  finished: Readonly<Record<SeatId, string>>;
+}
+export interface MatchSession<State> {
+  projectPublic?: (state: State) => SpectatorView;
+  frames: readonly PublicFrame[];
+  decisionEpoch: number;
+  seatDecisions: Readonly<Record<SeatId, number>>;
+  // biome-ignore lint/suspicious/noExplicitAny: the session is action, observation and score agnostic
+  game: GameModule<State, any, any, any>;
+  config: MatchConfig;
+  seed: string;
+  state: State;
+  senseSeq: number;
+  terminalWritten: boolean;
+  resources: ResourceBook;
+  log: readonly LogEvent[];
+  matchRng: Rng;
+  pm: PhaseMachine<State>;
+  currentPhase: (state: State) => string;
+  defaultAction: (state: State, seat: SeatId) => ActionInvocation;
+  senseResolvers: ReadonlyMap<string, SenseResolver<State>>;
+  terminalSummary: (state: State) => Record<string, unknown>;
+  resolveSummary: (state: State, phase: string) => Record<string, unknown>;
+  runtime: Runtime;
+  participationHook?: (state: State, seat: SeatId) => Participation;
+  hostEventHook?: (state: State, event: HostEvent) => State;
+}
+type Transition<State> = { session: MatchSession<State>; output: StepOutput };
+const phaseIdentity = <State>(session: MatchSession<State>) =>
+  `${session.config.matchId}:${session.decisionEpoch}`;
+const failed = <State>(session: MatchSession<State>, reason: string): Transition<State> => ({
+  session,
+  output: { ok: false, reason },
+});
+const terminal = <State>(session: MatchSession<State>) => session.game.isTerminal(session.state);
+
+export function newSession<State>(options: SessionOptions<State>): MatchSession<State> {
+  const validation = validateMatchConfig(options.config, {
+    gameId: options.game.id,
+    hasHostEventHandler: typeof options.onHostEvent === "function",
+  });
+  if (!validation.ok) throw Error(validation.reason);
+  const config = structuredClone(options.config);
+  const state = options.game.newMatch(config, options.seed);
+  const phase = options.currentPhase(state);
   const log = appendEvent([], {
-    matchId: opts.config.matchId,
+    matchId: config.matchId,
     phase: "init",
     seat: null,
     kind: "rng.commit",
-    payload: { hash: sha256Commit(opts.seed) },
+    payload: { hash: sha256Commit(options.seed) },
   });
-  const state = opts.game.newMatch(opts.config, opts.seed);
-  return {
-    projectPublic: opts.publicView,
-    frames: opts.publicView
-      ? [{ seq: log.length - 1, view: structuredClone(opts.publicView(state)) }]
-      : [],
+  const s: MatchSession<State> = {
+    projectPublic: options.publicView,
+    frames: [],
     decisionEpoch: 0,
     seatDecisions: {},
-    game: opts.game,
-    config: opts.config,
-    seed: opts.seed,
+    game: options.game,
+    config,
+    seed: options.seed,
     state,
     senseSeq: 0,
     terminalWritten: false,
-    lastTurnPhase: {},
-    budgets: initBudgetBook(opts.config.seats, opts.config.budgets),
+    resources: initResourceBook(config.seats, config.resources),
     log,
-    matchRng: createRng(opts.seed),
-    pm: createPhaseMachine<State>(opts.game, opts.phaseToTools, opts.currentPhase, opts.isReady),
-    currentPhase: opts.currentPhase,
-    safeDefault: opts.safeDefault,
-    defaultAction: opts.defaultAction,
-    senseResolvers: new Map((opts.senseResolvers ?? []).map((r) => [r.tool, r])),
-    terminalSummary: opts.terminalSummary ?? (() => ({})),
-    resolveSummary: opts.resolveSummary ?? (() => ({})),
+    matchRng: createRng(options.seed),
+    pm: createPhaseMachine(
+      options.game,
+      options.phaseToTools,
+      options.currentPhase,
+      options.isReady,
+    ),
+    currentPhase: options.currentPhase,
+    defaultAction: options.defaultAction,
+    senseResolvers: new Map(
+      (options.senseResolvers ?? []).map((resolver) => [resolver.tool, resolver]),
+    ),
+    terminalSummary: options.terminalSummary ?? (() => ({})),
+    resolveSummary: options.resolveSummary ?? (() => ({})),
+    participationHook: options.participation,
+    hostEventHook: options.onHostEvent,
+    runtime: {
+      at: null,
+      phaseName: phase,
+      phaseDeadline: null,
+      remaining: Object.fromEntries(
+        config.seats.map((seat) => [seat, config.timing.playerTotalMs]),
+      ),
+      decisionElapsed: {},
+      participants: {},
+      finished: {},
+    },
   };
+  return recordFrame(refreshParticipation(s));
 }
 
-// ---- pure readers ----
-
-export function publicView<State>(session: MatchSession<State>): SpectatorView {
-  if (!session.projectPublic) throw new Error("public projection unavailable for legacy session");
-  return structuredClone(session.projectPublic(session.state));
-}
-
-export function publicFrames<State>(session: MatchSession<State>): PublicFrame[] {
-  return structuredClone([...session.frames]);
-}
-
-export function decisionId<State>(session: MatchSession<State>, seat: SeatId): string {
-  return `${session.config.matchId}:${seat}:${session.decisionEpoch}:${session.seatDecisions[seat] ?? 0}`;
-}
-
-function recordFrame<State>(session: MatchSession<State>): MatchSession<State> {
-  if (!session.projectPublic) return session;
-  return {
-    ...session,
-    frames: [...session.frames, { seq: session.log.length - 1, view: publicView(session) }],
-  };
-}
-
-export function sessionState<State>(session: MatchSession<State>): State {
-  return session.state;
-}
-
-export function sessionLog<State>(session: MatchSession<State>): readonly LogEvent[] {
-  return session.log;
-}
-
-export function isTerminal<State>(session: MatchSession<State>): boolean {
-  return session.game.isTerminal(session.state);
-}
-
-export function observe<State>(session: MatchSession<State>, seat: SeatId): unknown {
-  return ObservationEnvelope.parse(mergedObservation(session, seat));
-}
-
-function mergedObservation<State>(
+function append<State>(
   session: MatchSession<State>,
-  seat: SeatId,
-): Record<string, unknown> {
-  const partial = session.game.observe(session.state, seat) as Record<string, unknown>;
-  const actionOffers = session.game.isTerminal(session.state)
-    ? []
-    : session.game
-        .legalActions(session.state, seat)
-        .map((spec) => ({ ...spec, description: spec.description ?? spec.tool }));
-  const legalTools = actionOffers.map((spec) => spec.tool);
-  const budgets: Record<string, number> = {};
-  const current = openTurn(session, seat, session.currentPhase(session.state));
-  for (const key of BUDGET_KEYS) budgets[key] = remaining(current.budgets, seat, key);
-  return { ...partial, legalTools, actionOffers, decisionId: decisionId(session, seat), budgets };
-}
-
-// ---- reducer ----
-
-export function step<State>(
-  session: MatchSession<State>,
-  cmd: Command,
-): { session: MatchSession<State>; output: StepOutput } {
-  if (!session.config.seats.includes(cmd.seat) || session.game.isTerminal(session.state)) {
-    return { session, output: { ok: false, reason: "unknown seat or terminal match" } };
-  }
-  return cmd.kind === "commitDefault"
-    ? commitDefault(session, cmd.seat)
-    : callTool(session, cmd.seat, cmd.tool, cmd.input);
-}
-
-function openTurn<State>(
-  session: MatchSession<State>,
-  seat: SeatId,
-  phase: string,
+  kind: string,
+  payload: Record<string, unknown>,
+  seat: SeatId | null = null,
+  phase = session.currentPhase(session.state),
 ): MatchSession<State> {
-  const turn = `${session.decisionEpoch}:${phase}`;
-  if (session.lastTurnPhase[seat] === turn) return session;
   return {
     ...session,
-    budgets: resetTurnBudgets(session.budgets, seat, session.config.budgets),
-    lastTurnPhase: { ...session.lastTurnPhase, [seat]: turn },
-  };
-}
-
-function callTool<State>(
-  session: MatchSession<State>,
-  seat: SeatId,
-  tool: string,
-  input: unknown,
-): { session: MatchSession<State>; output: StepOutput } {
-  const phase = session.currentPhase(session.state);
-  if (!session.pm.toolsLegalIn(phase).includes(tool)) {
-    return { session, output: { ok: false, reason: `tool ${tool} not legal in phase ${phase}` } };
-  }
-  const offer = session.game
-    .legalActions(session.state, seat)
-    .find((action) => action.tool === tool);
-  if (!offer)
-    return { session, output: { ok: false, reason: `tool ${tool} not legal for seat ${seat}` } };
-  const validated = validateSchema(offer.jsonSchema, input);
-  if (!validated.ok) {
-    return { session, output: { ok: false, reason: `invalid input: ${validated.reason}` } };
-  }
-  let s = openTurn(session, seat, phase);
-
-  const sense = s.senseResolvers.get(tool);
-  if (sense) return serveSense(s, seat, sense, input);
-
-  const spent = spend(s.budgets, seat, "toolCallsPerTurn", 1);
-  s = { ...s, budgets: spent.book };
-  if (!spent.ok) return { session: s, output: { ok: false, reason: "tool budget exhausted" } };
-
-  const result = s.pm.collect(s.state, seat, tool, input);
-  if (result.accepted) {
-    s = {
-      ...s,
-      state: result.state,
-      log: appendEvent(s.log, {
-        matchId: s.config.matchId,
-        phase,
-        seat,
-        kind: "action.submit",
-        payload: { tool, action: input },
-      }),
-    };
-    s = { ...s, seatDecisions: { ...s.seatDecisions, [seat]: (s.seatDecisions[seat] ?? 0) + 1 } };
-    s = advanceIfReady(recordFrame(s));
-    return { session: s, output: { ok: true, reason: "ok", observation: observe(s, seat) } };
-  }
-
-  if (!safeDefaultTriggered(s.budgets, seat)) {
-    s = { ...s, budgets: spend(s.budgets, seat, "invalidRetries", 1).book };
-    return { session: s, output: { ok: false, reason: result.reason } };
-  }
-  return commitDefault(s, seat);
-}
-
-function commitDefault<State>(
-  session: MatchSession<State>,
-  seat: SeatId,
-): { session: MatchSession<State>; output: StepOutput } {
-  const phase = session.currentPhase(session.state);
-  let s = openTurn(session, seat, phase);
-  const selected = s.defaultAction?.(s.state, seat);
-  const fallback = selected ? selected.input : s.safeDefault(s.state, seat);
-  const offers = s.game
-    .legalActions(s.state, seat)
-    .filter(
-      (action) =>
-        (!selected || action.tool === selected.tool) &&
-        !s.senseResolvers.has(action.tool) &&
-        validateSchema(action.jsonSchema, fallback).ok,
-    );
-  // Legacy raw-input callbacks are accepted only when identity is unambiguous.
-  const offer = offers.length === 1 ? offers[0] : undefined;
-  if (!offer) return { session, output: { ok: false, reason: "no legal safe default" } };
-  // Bypass pm.collect's tool-legality gate: a server-internal forced commit
-  // (clock expired), not a player tool call. submit() is the correct boundary
-  // — same as the replay verifier.
-  const def = s.game.submit(s.state, seat, fallback, offer.tool);
-  // A rejected default changed nothing, so nothing is logged: the log only ever
-  // carries actions the game accepted, which is what replay verification replays.
-  if (!def.accepted) {
-    return { session, output: { ok: false, reason: `safe default rejected: ${def.reason}` } };
-  }
-  s = {
-    ...s,
-    state: def.state,
-    log: appendEvent(s.log, {
-      matchId: s.config.matchId,
+    log: appendEvent(session.log, {
+      matchId: session.config.matchId,
       phase,
       seat,
-      kind: "action.default",
-      payload: { tool: offer.tool, action: fallback },
+      kind,
+      payload: structuredClone(payload),
     }),
   };
-  s = { ...s, seatDecisions: { ...s.seatDecisions, [seat]: (s.seatDecisions[seat] ?? 0) + 1 } };
-  s = advanceIfReady(recordFrame(s));
-  return { session: s, output: { ok: true, reason: "safe default committed" } };
 }
-
+function refreshParticipation<State>(session: MatchSession<State>): MatchSession<State> {
+  const finished = { ...session.runtime.finished };
+  const participants: Record<SeatId, Participation> = {};
+  for (const seat of session.config.seats) {
+    const value =
+      finished[seat] !== undefined
+        ? { status: "finished" as const, reason: finished[seat] }
+        : terminal(session)
+          ? { status: "finished" as const, reason: "match_over" }
+          : (session.participationHook?.(session.state, seat) ?? {
+              status: session.game
+                .legalActions(session.state, seat)
+                .some((offer) => !session.senseResolvers.has(offer.tool))
+                ? ("acting" as const)
+                : ("waiting" as const),
+            });
+    if (!validateParticipation(value).ok) throw Error("invalid participation");
+    participants[seat] = value;
+    if (value.status === "finished") finished[seat] = value.reason;
+  }
+  return { ...session, runtime: { ...session.runtime, participants, finished } };
+}
+export function participation<State>(session: MatchSession<State>, seat: SeatId): Participation {
+  if (!session.config.seats.includes(seat)) return { status: "waiting" };
+  return refreshParticipation(session).runtime.participants[seat] ?? { status: "waiting" };
+}
+function minimum(values: (number | null)[]): number | null {
+  const enabled = values.filter((value): value is number => value !== null);
+  return enabled.length ? Math.min(...enabled) : null;
+}
+export function clockSnapshot<State>(session: MatchSession<State>, seat: SeatId): ClockSnapshot {
+  const {
+    runtime: clock,
+    config: { timing },
+  } = session;
+  const running = participation(session, seat).status === "acting" && !terminal(session);
+  const at = clock.at ?? 0;
+  const remainingMs = clock.remaining[seat] ?? null;
+  const decisionRemaining =
+    timing.decisionLimitMs === null
+      ? null
+      : Math.max(0, timing.decisionLimitMs - (clock.decisionElapsed[seat] ?? 0));
+  return {
+    sampledAt: at,
+    remainingMs,
+    running,
+    deadline: running
+      ? minimum([
+          remainingMs === null ? null : at + remainingMs,
+          decisionRemaining === null ? null : at + decisionRemaining,
+          clock.phaseDeadline,
+        ])
+      : null,
+    phaseId: phaseIdentity(session),
+    phaseDeadline: terminal(session) ? null : clock.phaseDeadline,
+  };
+}
+export function observe<State>(session: MatchSession<State>, seat: SeatId): unknown {
+  const partial = session.game.observe(session.state, seat) as Record<string, unknown>;
+  const status = participation(session, seat);
+  const actionOffers =
+    status.status === "finished"
+      ? []
+      : session.game
+          .legalActions(session.state, seat)
+          .filter((offer) => status.status === "acting" || session.senseResolvers.has(offer.tool))
+          .map((offer) => ({ ...offer, description: offer.description ?? offer.tool }));
+  return ObservationEnvelope.parse({
+    ...partial,
+    protocolVersion: 1,
+    phaseId: phaseIdentity(session),
+    legalTools: actionOffers.map((offer) => offer.tool),
+    actionOffers,
+    decisionId: `${session.config.matchId}:${seat}:${session.decisionEpoch}:${session.seatDecisions[seat] ?? 0}`,
+    resources: resourceBalances(session.resources, seat, session.config.resources),
+    participation: status,
+    clock: clockSnapshot(session, seat),
+  });
+}
+export function publicView<State>(session: MatchSession<State>): SpectatorView {
+  if (!session.projectPublic) throw Error("public projection unavailable");
+  // Timing/resources are runtime-owned: game projectors cannot override their privacy.
+  const {
+    clocks: _projectedClocks,
+    resources: _projectedResources,
+    ...view
+  } = structuredClone(session.projectPublic(session.state));
+  const resources = Object.fromEntries(
+    session.config.seats.map((seat) => [
+      seat,
+      resourceBalances(session.resources, seat, session.config.resources, "public"),
+    ]),
+  );
+  return {
+    ...view,
+    ...(session.config.timing.clockVisibility === "public"
+      ? {
+          clocks: Object.fromEntries(
+            session.config.seats.map((seat) => [seat, clockSnapshot(session, seat)]),
+          ),
+        }
+      : {}),
+    ...(Object.values(session.config.resources).some((resource) => resource.visibility === "public")
+      ? { resources }
+      : {}),
+  };
+}
+function recordFrame<State>(session: MatchSession<State>): MatchSession<State> {
+  return session.projectPublic
+    ? {
+        ...session,
+        frames: [...session.frames, { seq: session.log.length - 1, view: publicView(session) }],
+      }
+    : session;
+}
+function resetDecision<State>(session: MatchSession<State>, seat: SeatId): MatchSession<State> {
+  return {
+    ...session,
+    seatDecisions: { ...session.seatDecisions, [seat]: (session.seatDecisions[seat] ?? 0) + 1 },
+    resources: resetResources(session.resources, seat, session.config.resources, "decision"),
+    runtime: {
+      ...session.runtime,
+      decisionElapsed: { ...session.runtime.decisionElapsed, [seat]: 0 },
+    },
+  };
+}
+function beginPhase<State>(session: MatchSession<State>): MatchSession<State> {
+  const phase = session.currentPhase(session.state);
+  const limit = session.config.timing.phaseLimits[phase];
+  let resources = session.resources;
+  for (const seat of session.config.seats)
+    resources = resetResources(resources, seat, session.config.resources, "phase");
+  let s = {
+    ...session,
+    resources,
+    decisionEpoch: session.decisionEpoch + 1,
+    seatDecisions: {},
+    runtime: {
+      ...session.runtime,
+      phaseName: phase,
+      phaseDeadline:
+        !terminal(session) && limit && session.runtime.at !== null
+          ? session.runtime.at + limit.durationMs
+          : null,
+      decisionElapsed: {},
+    },
+  };
+  s = append(s, "phase.begin", {
+    phaseId: phaseIdentity(s),
+    deadline: s.runtime.phaseDeadline,
+    resources: s.resources,
+  });
+  return refreshParticipation(s);
+}
+function settle<State>(session: MatchSession<State>, forcePhase = false): MatchSession<State> {
+  let s = refreshParticipation(session);
+  let forceResolution = forcePhase;
+  if (s.currentPhase(s.state) !== s.runtime.phaseName) s = beginPhase(s);
+  for (let count = 0; !terminal(s); count++) {
+    if (count >= 10000) throw Error("phase resolution exceeded progress bound");
+    const policy = s.config.timing.phaseLimits[s.currentPhase(s.state)];
+    if (!forceResolution && (policy?.close === "deadline" || !s.pm.ready(s.state))) break;
+    const phase = s.currentPhase(s.state);
+    const before = canonical(s.state);
+    s = { ...s, state: s.pm.resolve(s.state) };
+    if (canonical(s.state) === before) throw Error("phase resolution made no progress");
+    s = append(s, "phase.resolve", { ...s.resolveSummary(s.state, phase) }, null, phase);
+    s = beginPhase(s);
+    forceResolution = false;
+  }
+  return refreshParticipation(s);
+}
+function initializeTime<State>(session: MatchSession<State>, at: number): MatchSession<State> {
+  const limit = session.config.timing.phaseLimits[session.currentPhase(session.state)];
+  return refreshParticipation({
+    ...session,
+    runtime: {
+      ...session.runtime,
+      at,
+      phaseDeadline: limit && !terminal(session) ? at + limit.durationMs : null,
+    },
+  });
+}
+function advanceClock<State>(session: MatchSession<State>, at: number): MatchSession<State> {
+  const from = session.runtime.at ?? at;
+  const elapsed = at - from;
+  const remaining = { ...session.runtime.remaining };
+  const decisionElapsed = { ...session.runtime.decisionElapsed };
+  const spent: Record<string, number> = {};
+  for (const seat of session.config.seats) {
+    if (session.runtime.participants[seat]?.status !== "acting") continue;
+    if (remaining[seat] !== null && remaining[seat] !== undefined)
+      remaining[seat] = Math.max(0, remaining[seat] - elapsed);
+    decisionElapsed[seat] = (decisionElapsed[seat] ?? 0) + elapsed;
+    spent[seat] = elapsed;
+  }
+  return append(
+    { ...session, runtime: { ...session.runtime, at, remaining, decisionElapsed } },
+    "clock.advance",
+    { from, to: at, spent },
+  );
+}
+function actingSeats<State>(session: MatchSession<State>): SeatId[] {
+  return session.config.seats
+    .filter((seat) => session.runtime.participants[seat]?.status === "acting")
+    .sort();
+}
+function event<State>(
+  session: MatchSession<State>,
+  kind: HostEvent["kind"],
+  seats: SeatId[],
+): MatchSession<State> {
+  const hostEvent: HostEvent = {
+    kind,
+    seats: [...seats].sort(),
+    phaseId: phaseIdentity(session),
+    at: session.runtime.at ?? 0,
+  };
+  let s = append(session, "host.event", { ...hostEvent });
+  const before = canonical(s.state);
+  if (s.hostEventHook) s = { ...s, state: s.hostEventHook(s.state, hostEvent) };
+  s = refreshParticipation(s);
+  if (kind === "player_time_exhausted") {
+    if (seats.some((seat) => s.runtime.participants[seat]?.status !== "finished") && !terminal(s))
+      throw Error("exhausted seat must finish or end the match");
+    return settle(s);
+  }
+  if (canonical(s.state) !== before) {
+    if (kind === "phase_expired" && s.currentPhase(s.state) === s.runtime.phaseName)
+      s = beginPhase(s);
+    if (kind !== "phase_expired") for (const seat of seats) s = resetDecision(s, seat);
+    return settle(s);
+  }
+  // A direct submit may enter a new phase before game.step. Its actors must get
+  // their own deadline rather than consuming the previous phase's expiry batch.
+  const expiredPhase = s.currentPhase(s.state);
+  for (const seat of seats) {
+    if (terminal(s)) break;
+    if (s.runtime.participants[seat]?.status !== "acting") continue;
+    const applied = applyDefault(s, seat);
+    if (!applied.output.ok) throw Error(applied.output.reason);
+    s = refreshParticipation(applied.session);
+    if (s.currentPhase(s.state) !== expiredPhase) break;
+  }
+  return settle(s, kind === "phase_expired" && s.currentPhase(s.state) === expiredPhase);
+}
+function advanceTime<State>(session: MatchSession<State>, at: number): MatchSession<State> {
+  if (session.runtime.at === null) return settle(initializeTime(session, at));
+  let s = settle(session);
+  for (let count = 0; !terminal(s); count++) {
+    if (count >= 10000) throw Error("clock expiry exceeded progress bound");
+    const actors = actingSeats(s);
+    const due = minimum([
+      s.runtime.phaseDeadline,
+      ...actors.map((seat) => clockSnapshot(s, seat).deadline),
+    ]);
+    if (due === null || due > at) return advanceClock(s, at);
+    s = advanceClock(s, due);
+    const exhausted = actors.filter((seat) => s.runtime.remaining[seat] === 0);
+    if (exhausted.length) {
+      s = event(s, "player_time_exhausted", exhausted);
+      continue;
+    }
+    if (s.runtime.phaseDeadline !== null && s.runtime.phaseDeadline <= due) {
+      s = event(s, "phase_expired", actingSeats(s));
+      continue;
+    }
+    const decisionExpired = actors.filter(
+      (seat) =>
+        s.config.timing.decisionLimitMs !== null &&
+        (s.runtime.decisionElapsed[seat] ?? 0) >= s.config.timing.decisionLimitMs,
+    );
+    if (decisionExpired.length) {
+      s = event(s, "decision_expired", decisionExpired);
+      continue;
+    }
+    throw Error("clock expiry made no progress");
+  }
+  return s;
+}
+function validateCharge<State>(session: MatchSession<State>, resource: string, cost: number): void {
+  if (!Object.hasOwn(session.config.resources, resource) || !isResourceAmount(cost))
+    throw Error("invalid resource charge");
+}
+function charge<State>(
+  session: MatchSession<State>,
+  seat: SeatId,
+  resource: string,
+  cost: number,
+  purpose: string,
+): { session: MatchSession<State>; ok: boolean } {
+  validateCharge(session, resource, cost);
+  const spent = spend(session.resources, seat, resource, cost);
+  return {
+    session: append(
+      { ...session, resources: spent.book },
+      "resource.spend",
+      { resource, cost, purpose, ok: spent.ok, remaining: spent.book[seat]?.[resource] },
+      seat,
+    ),
+    ok: spent.ok,
+  };
+}
+function applyDefault<State>(session: MatchSession<State>, seat: SeatId): Transition<State> {
+  if (participation(session, seat).status !== "acting")
+    return failed(session, "seat is not acting");
+  const selected = session.defaultAction(session.state, seat);
+  const input = selected.input;
+  const offers = session.game
+    .legalActions(session.state, seat)
+    .filter(
+      (offer) =>
+        offer.tool === selected.tool &&
+        !session.senseResolvers.has(offer.tool) &&
+        validateSchema(offer.jsonSchema, input).ok,
+    );
+  const offer = offers.length === 1 ? offers[0] : undefined;
+  if (!offer) return failed(session, "no legal safe default");
+  const result = session.game.submit(session.state, seat, input, offer.tool);
+  if (!result.accepted) return failed(session, `safe default rejected: ${result.reason}`);
+  return {
+    session: resetDecision(
+      append(
+        { ...session, state: result.state },
+        "action.default",
+        { tool: offer.tool, action: input },
+        seat,
+        session.currentPhase(session.state),
+      ),
+      seat,
+    ),
+    output: { ok: true, reason: "safe default committed" },
+  };
+}
 function serveSense<State>(
   session: MatchSession<State>,
   seat: SeatId,
   resolver: SenseResolver<State>,
   input: unknown,
-): { session: MatchSession<State>; output: StepOutput } {
-  const cost = resolver.cost(input);
-  const spent = spend(session.budgets, seat, resolver.budgetKey, cost);
-  if (!spent.ok) {
-    return { session, output: { ok: false, reason: `${resolver.budgetKey}-exhausted` } };
-  }
-  // matchRng is only ever forked here (never drawn), so it stays effectively
-  // immutable across the match — every fork reads the same initial word-state.
+  cost: number,
+): Transition<State> {
+  const charged = charge(session, seat, resolver.resource, cost, "sense");
+  if (!charged.ok) return failed(charged.session, `${resolver.resource}-exhausted`);
   const rng = session.matchRng.fork(`sense:${resolver.tool}:${seat}:${session.senseSeq}`);
   const { result, nextState } = resolver.resolve(session.state, seat, input, rng);
-  let s: MatchSession<State> = {
-    ...session,
-    budgets: spent.book,
-    senseSeq: session.senseSeq + 1,
-    state: nextState,
-  };
-  s = {
-    ...s,
-    log: appendEvent(s.log, {
-      matchId: s.config.matchId,
-      phase: s.currentPhase(s.state),
-      seat,
-      kind: "sense.serve",
-      payload: { tool: resolver.tool, cost },
-    }),
-  };
-  return {
-    session: recordFrame(s),
-    output: { ok: true, reason: "sensing served", observation: observe(s, seat), result },
-  };
+  const s = append(
+    { ...charged.session, state: nextState, senseSeq: session.senseSeq + 1 },
+    "sense.serve",
+    { tool: resolver.tool, resource: resolver.resource, cost },
+    seat,
+  );
+  return { session: s, output: { ok: true, reason: "sensing served", result } };
 }
-
-function advanceIfReady<State>(session: MatchSession<State>): MatchSession<State> {
-  if (session.game.isTerminal(session.state)) return finalizeTerminal(session);
-  if (!session.pm.ready(session.state)) return session;
+interface PreparedCall<State> {
+  sense?: { resolver: SenseResolver<State>; cost: number };
+}
+function prepareCall<State>(
+  session: MatchSession<State>,
+  seat: SeatId,
+  tool: string,
+  input: unknown,
+): { ok: true; prepared: PreparedCall<State> } | { ok: false; reason: string } {
   const phase = session.currentPhase(session.state);
-  let s: MatchSession<State> = {
-    ...session,
-    state: session.pm.resolve(session.state),
-    decisionEpoch: session.decisionEpoch + 1,
-    seatDecisions: {},
+  if (!session.pm.toolsLegalIn(phase).includes(tool))
+    return { ok: false, reason: `tool ${tool} not legal in phase ${phase}` };
+  const offer = session.game.legalActions(session.state, seat).find((value) => value.tool === tool);
+  if (!offer) return { ok: false, reason: `tool ${tool} not legal for seat ${seat}` };
+  const valid = validateSchema(offer.jsonSchema, input);
+  if (!valid.ok) return { ok: false, reason: `invalid input: ${valid.reason}` };
+  const resolver = session.senseResolvers.get(tool);
+  if (resolver) {
+    const cost = resolver.cost(input);
+    validateCharge(session, resolver.resource, cost);
+    if (!spend(session.resources, seat, resolver.resource, cost).ok)
+      return { ok: false, reason: `${resolver.resource}-exhausted` };
+    return { ok: true, prepared: { sense: { resolver, cost } } };
+  }
+  if (participation(session, seat).status !== "acting")
+    return { ok: false, reason: "seat is not acting" };
+  const metering = session.config.metering.action;
+  if (metering && !spend(session.resources, seat, metering.resource, metering.cost).ok)
+    return { ok: false, reason: `${metering.resource}-exhausted` };
+  return { ok: true, prepared: {} };
+}
+function callTool<State>(
+  session: MatchSession<State>,
+  seat: SeatId,
+  tool: string,
+  input: unknown,
+  prepared: PreparedCall<State>,
+): Transition<State> {
+  const phase = session.currentPhase(session.state);
+  if (prepared.sense)
+    return serveSense(session, seat, prepared.sense.resolver, input, prepared.sense.cost);
+  let s = session;
+  const metering = s.config.metering;
+  if (metering.action) {
+    const charged = charge(s, seat, metering.action.resource, metering.action.cost, "action");
+    s = charged.session;
+    if (!charged.ok) return failed(s, `${metering.action.resource}-exhausted`);
+  }
+  const submitted = s.pm.collect(s.state, seat, tool, input);
+  if (submitted.accepted) {
+    s = resetDecision(
+      append(
+        { ...s, state: submitted.state },
+        "action.submit",
+        { tool, action: input },
+        seat,
+        phase,
+      ),
+      seat,
+    );
+    return { session: s, output: { ok: true, reason: "ok" } };
+  }
+  s = append(s, "action.reject", { tool, action: input, reason: submitted.reason }, seat);
+  if (metering.invalidAction) {
+    const charged = charge(
+      s,
+      seat,
+      metering.invalidAction.resource,
+      metering.invalidAction.cost,
+      "invalidAction",
+    );
+    s = charged.session;
+    if (!charged.ok)
+      return {
+        session: event(s, "invalid_retries_exhausted", [seat]),
+        output: { ok: true, reason: "safe default committed" },
+      };
+  }
+  return failed(s, submitted.reason);
+}
+function finishCommand<State>(
+  session: MatchSession<State>,
+  output: StepOutput,
+  command: Command,
+): Transition<State> {
+  let s = settle(session);
+  s = append(s, "command.result", {
+    ok: output.ok,
+    reason: output.reason,
+  });
+  s = append(s, "clock.state", {
+    clocks: Object.fromEntries(s.config.seats.map((seat) => [seat, clockSnapshot(s, seat)])),
+    participation: s.runtime.participants,
+    resources: s.resources,
+  });
+  if (terminal(s) && !s.terminalWritten) {
+    s = { ...s, terminalWritten: true };
+    s = append(s, "rng.reveal", { seed: s.seed }, null, "terminal");
+    s = append(
+      s,
+      "match.terminal",
+      {
+        score: s.game.score(s.state),
+        ...s.terminalSummary(s.state),
+        config: s.config,
+        ...(s.projectPublic ? { result: publicView(s).result } : {}),
+      },
+      null,
+      "terminal",
+    );
+  }
+  s = recordFrame(s);
+  return {
+    session: s,
+    output:
+      command.kind === "callTool" && output.ok
+        ? { ...output, observation: observe(s, command.seat) }
+        : output,
   };
-  s = {
-    ...s,
-    log: appendEvent(s.log, {
-      matchId: s.config.matchId,
-      phase,
-      seat: null,
-      kind: "phase.resolve",
-      payload: { ...s.resolveSummary(s.state, phase) },
-    }),
-  };
-  if (s.game.isTerminal(s.state)) return finalizeTerminal(s);
-  return advanceIfReady(recordFrame(s));
+}
+export function step<State>(session: MatchSession<State>, command: Command): Transition<State> {
+  if (terminal(session)) return failed(session, "unknown seat or terminal match");
+  if (command.kind !== "advanceTime" && !session.config.seats.includes(command.seat))
+    return failed(session, "unknown seat or terminal match");
+  if (
+    command.kind === "advanceTime" &&
+    (!Number.isSafeInteger(command.at) ||
+      command.at < 0 ||
+      (session.runtime.at !== null && command.at < session.runtime.at))
+  )
+    return failed(session, "time must be a monotonic nonnegative safe integer");
+  if (command.kind === "advanceTime") {
+    if (command.at === session.runtime.at)
+      return { session, output: { ok: true, reason: "time advanced" } };
+    const recorded = append(refreshParticipation(session), "command", { ...command });
+    return finishCommand(
+      advanceTime(recorded, command.at),
+      { ok: true, reason: "time advanced" },
+      command,
+    );
+  }
+  if (participation(session, command.seat).status === "finished")
+    return failed(session, "seat finished");
+  if (command.kind === "commitDefault" && participation(session, command.seat).status !== "acting")
+    return failed(session, "seat is not acting");
+  // No-op rejections retain no caller payload or frame. The host's preceding
+  // advanceTime command already accounts for their elapsed time. Only calls
+  // admitted to metered execution are replay commands.
+  const preparation =
+    command.kind === "callTool"
+      ? prepareCall(session, command.seat, command.tool, command.input)
+      : { ok: true as const, prepared: {} };
+  if (!preparation.ok) return failed(session, preparation.reason);
+  let s = refreshParticipation(session);
+  // Hosts establish epoch time first; direct low-level execution uses zero.
+  if (s.runtime.at === null) s = initializeTime(s, 0);
+  s = append(s, "command", { ...command });
+  const result =
+    command.kind === "commitDefault"
+      ? applyDefault(s, command.seat)
+      : callTool(s, command.seat, command.tool, command.input, preparation.prepared);
+  return finishCommand(result.session, result.output, command);
+}
+export function canonical(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`;
+  if (value !== null && typeof value === "object")
+    return `{${Object.entries(value)
+      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+      .map(([key, item]) => `${JSON.stringify(key)}:${canonical(item)}`)
+      .join(",")}}`;
+  return JSON.stringify(value) ?? "undefined";
 }
 
-function finalizeTerminal<State>(session: MatchSession<State>): MatchSession<State> {
-  let s = session;
-  if (s.game.isTerminal(s.state) && !s.terminalWritten) {
-    s = { ...s, terminalWritten: true };
-    s = {
-      ...s,
-      log: appendEvent(s.log, {
-        matchId: s.config.matchId,
-        phase: "terminal",
-        seat: null,
-        kind: "rng.reveal",
-        payload: { seed: s.seed },
-      }),
-    };
-    s = {
-      ...s,
-      log: appendEvent(s.log, {
-        matchId: s.config.matchId,
-        phase: "terminal",
-        seat: null,
-        kind: "match.terminal",
-        payload: {
-          score: s.game.score(s.state),
-          ...s.terminalSummary(s.state),
-          config: s.config,
-          ...(s.projectPublic ? { result: publicView(s).result } : {}),
-        },
-      }),
-    };
-    return recordFrame(s);
-  }
-  return s;
+export interface MatchHandle<State> {
+  get: () => MatchSession<State>;
+  advance: (command: Command) => StepOutput;
 }
+export const sessionState = <State>(session: MatchSession<State>): State => session.state;
+export const sessionLog = <State>(session: MatchSession<State>) => session.log;
+export const isTerminal = <State>(session: MatchSession<State>): boolean => terminal(session);
+export const decisionId = <State>(session: MatchSession<State>, seat: SeatId): string =>
+  `${session.config.matchId}:${seat}:${session.decisionEpoch}:${session.seatDecisions[seat] ?? 0}`;
+export const phaseId = <State>(session: MatchSession<State>): string => phaseIdentity(session);
+export const publicFrames = <State>(session: MatchSession<State>): PublicFrame[] =>
+  structuredClone([...session.frames]);

@@ -1,20 +1,12 @@
 import { type MatchConfig, mkSeatId } from "@benchboss/core";
-import { SPY_GAME_ID } from "../src/game";
+import { gameConfig } from "../../tests/config";
+import { plugin } from "../src/plugin";
 
-export function baseConfig(rounds = 5): MatchConfig {
-  return {
-    matchId: "m1",
-    gameId: SPY_GAME_ID,
-    seats: [0, 1, 2, 3, 4].map(mkSeatId),
-    rules: { rounds },
-    budgets: {
-      wallClockMsPerDecision: 1000,
-      toolCallsPerTurn: 8,
-      intelOrScoutPoints: 3,
-      simRolloutsPerTurn: 0,
-      invalidRetries: 2,
-    },
-  };
+export function baseConfig(_rounds = 5): MatchConfig {
+  const config = gameConfig(plugin.manifest, "m1", [0, 1, 2, 3, 4].map(mkSeatId));
+  config.timing.decisionLimitMs = 1000;
+  config.resources.retries = { amount: 2, reset: "match", visibility: "private" };
+  return config;
 }
 
 export function handlerConfig(rounds = 5): MatchConfig {

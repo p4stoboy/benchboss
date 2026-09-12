@@ -4,11 +4,11 @@ import { counterIntel, plantMisinfo, protectSource } from "./deception";
 import { auditStatement, scanAlignment, traceOperation } from "./intel";
 import type { IntelResult, SpyState } from "./types";
 
-// The referee spends budgetKey at the callTool boundary and forks the rng per
-// call; resolvers never touch budgets and never advance the phase. Results go
+// The referee spends the named resource at the callTool boundary and forks the rng per
+// call; resolvers never touch resources and never advance the phase. Results go
 // to the caller's private intelResults only.
 
-const BUDGET = "intelOrScoutPoints" as const;
+const RESOURCE = "research";
 const MOLE_ONLY = { error: "mole_only" } as const;
 
 function isMole(state: SpyState, seat: SeatId): boolean {
@@ -36,40 +36,46 @@ export function spySenseResolvers(_seed: string): SenseResolver<SpyState>[] {
   return [
     {
       tool: "intel.scan_alignment",
-      budgetKey: BUDGET,
+      resource: RESOURCE,
       cost: () => 1,
       resolve(state, seat, input, rng) {
         const { target } = input as { target: SeatId };
         const { result, nextState } = scanAlignment(state, target, rng);
         return {
           result: { ...result },
-          nextState: append(nextState, seat, this.tool, { ...result }),
+          nextState: append(nextState, seat, "intel.scan_alignment", { ...result }),
         };
       },
     },
     {
       tool: "intel.audit_statement",
-      budgetKey: BUDGET,
+      resource: RESOURCE,
       cost: () => 1,
       resolve(state, seat, input, rng) {
         const { actId } = input as { actId: string };
         const result = auditStatement(state, actId, rng);
-        return { result: { ...result }, nextState: append(state, seat, this.tool, { ...result }) };
+        return {
+          result: { ...result },
+          nextState: append(state, seat, "intel.audit_statement", { ...result }),
+        };
       },
     },
     {
       tool: "intel.trace_operation",
-      budgetKey: BUDGET,
+      resource: RESOURCE,
       cost: () => 1,
       resolve(state, seat, input, rng) {
         const { opIndex } = input as { opIndex: number };
         const result = traceOperation(state, opIndex, rng);
-        return { result: { ...result }, nextState: append(state, seat, this.tool, { ...result }) };
+        return {
+          result: { ...result },
+          nextState: append(state, seat, "intel.trace_operation", { ...result }),
+        };
       },
     },
     {
       tool: "intel.plant_misinfo",
-      budgetKey: BUDGET,
+      resource: RESOURCE,
       cost: () => 1,
       resolve(state, seat, input) {
         if (!isMole(state, seat)) return { result: MOLE_ONLY, nextState: state };
@@ -79,17 +85,20 @@ export function spySenseResolvers(_seed: string): SenseResolver<SpyState>[] {
     },
     {
       tool: "intel.counterintel",
-      budgetKey: BUDGET,
+      resource: RESOURCE,
       cost: () => 1,
       resolve(state, seat, _input, rng) {
         if (!isMole(state, seat)) return { result: MOLE_ONLY, nextState: state };
         const result = counterIntel(state, seat, rng);
-        return { result: { ...result }, nextState: append(state, seat, this.tool, { ...result }) };
+        return {
+          result: { ...result },
+          nextState: append(state, seat, "intel.counterintel", { ...result }),
+        };
       },
     },
     {
       tool: "intel.protect_source",
-      budgetKey: BUDGET,
+      resource: RESOURCE,
       cost: () => 1,
       resolve(state, seat) {
         if (!isMole(state, seat)) return { result: MOLE_ONLY, nextState: state };

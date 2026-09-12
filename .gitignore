@@ -6,3 +6,8 @@ dist/
 !.env.example
 *.log
 .DS_Store
+
+# Local working notes and implementation plans
+/docs/design-notes/
+/docs/plans/
+/docs/superpowers/plans/

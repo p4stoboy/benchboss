@@ -18,7 +18,7 @@ export const TOOLS: ToolDef[] = [
   {
     name: "benchboss_next",
     description:
-      "Wait for your next decision, finished result or cancellation. An idle response means poll again; cancellation ends the match without a result.",
+      "Wait for a decision, waiting status, finished seat, match result or cancellation. Submit game actions on turn; waiting may still offer sensing tools. seat_finished ends your participation, and idle means poll again.",
     inputSchema: z.object({}).strict(),
     invoke: (client) => client.next(),
   },

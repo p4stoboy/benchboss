@@ -1,21 +1,27 @@
-import type { BudgetConfig } from "@benchboss/core";
-import type { SpectatorView } from "@benchboss/protocol";
+import type { ResourceAllowances, SpectatorView, TimingPolicy } from "@benchboss/protocol";
 import type { GamePlugin } from "@benchboss/referee";
 import { SPY_GAME_ID, makeSpyGame } from "./game";
 import { SPY_PHASE_TOOLS, currentPhase, isReady, spySafeDefault } from "./phases";
 import { spySenseResolvers } from "./sensing";
 import type { SpyState } from "./types";
 
-const SPY_BUDGETS: BudgetConfig = {
-  // Hidden-state analysis needs inference time as well as round-trip transport.
-  wallClockMsPerDecision: 90_000,
-  toolCallsPerTurn: 8,
-  intelOrScoutPoints: 3,
-  simRolloutsPerTurn: 0,
-  invalidRetries: 1,
+const RESOURCES = {
+  actions: { amount: 8, reset: "phase", visibility: "private" },
+  retries: { amount: 1, reset: "match", visibility: "private" },
+  research: { amount: 3, reset: "match", visibility: "private" },
+} satisfies ResourceAllowances;
+const TIMING = {
+  playerTotalMs: null,
+  decisionLimitMs: 90000,
+  phaseLimits: { comms: { durationMs: 90_000, close: "ready_or_deadline" } },
+  clockVisibility: "private",
+} satisfies TimingPolicy;
+const METERING = {
+  action: { resource: "actions", cost: 1 },
+  invalidAction: { resource: "retries", cost: 1 },
 };
 
-export const plugin: GamePlugin<SpyState> = {
+export const plugin = {
   manifest: {
     protocolVersion: 1,
     id: SPY_GAME_ID,
@@ -32,7 +38,9 @@ export const plugin: GamePlugin<SpyState> = {
       additionalProperties: false,
     },
     defaultRules: {},
-    defaultBudgets: SPY_BUDGETS,
+    defaultTiming: TIMING,
+    defaultResources: RESOURCES,
+    defaultMetering: METERING,
     roundStructure: [
       "briefing",
       "intel",
@@ -87,9 +95,8 @@ export const plugin: GamePlugin<SpyState> = {
   }),
   senseResolvers: (seed) => spySenseResolvers(seed),
   defaultSeats: 5,
-  defaultBudgets: SPY_BUDGETS,
   defaultRules: {},
-};
+} satisfies GamePlugin<SpyState>;
 
 export function spyPublicView(state: SpyState): SpectatorView {
   return {
@@ -151,6 +158,7 @@ export function spyPublicView(state: SpyState): SpectatorView {
       state.winner === null
         ? null
         : {
+            cause: { kind: "rules", detail: state.winReason ?? undefined },
             summary: `${state.winner} win: ${state.winReason}`,
             seats: state.seats.map((seat) => ({
               seat,

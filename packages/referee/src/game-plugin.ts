@@ -1,10 +1,16 @@
-import type { BudgetConfig, GameModule, SeatId } from "@benchboss/core";
-import type { ActionInvocation, GameManifest, SpectatorView } from "@benchboss/protocol";
+import type { GameModule, SeatId } from "@benchboss/core";
+import type {
+  ActionInvocation,
+  GameManifest,
+  HostEvent,
+  Participation,
+  SpectatorView,
+} from "@benchboss/protocol";
 import type { SenseResolver } from "./sense-resolver";
 
 // One self-contained game: the GameModule plus every wiring value the referee's
 // `newSession` needs, plus the match defaults the platform uses to size and
-// budget a match. `senseResolvers` is a factory because spy's resolvers are
+// configure a match. `senseResolvers` is a factory because spy's resolvers are
 // seeded off the match seed. Heterogeneous instances are held as GamePlugin<any>.
 export interface GamePlugin<State> {
   manifest: GameManifest;
@@ -18,6 +24,7 @@ export interface GamePlugin<State> {
   safeDefault(s: State, seat: SeatId): ActionInvocation;
   senseResolvers?: (seed: string) => SenseResolver<State>[];
   defaultSeats: number;
-  defaultBudgets: BudgetConfig;
+  participation?: (state: State, seat: SeatId) => Participation;
+  onHostEvent?: (state: State, event: HostEvent) => State;
   defaultRules?: Record<string, unknown>;
 }

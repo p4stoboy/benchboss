@@ -13,6 +13,7 @@ import {
 import type { Observation } from "@benchboss/schemas";
 import { SPY_PHASE_TOOLS, currentPhase, isReady, makeSpyGame, spySafeDefault } from "../src/index";
 import type { SpyState } from "../src/index";
+import { plugin } from "../src/plugin";
 import { baseConfig } from "./helpers";
 
 function harness<State>(session: MatchSession<State>): MatchHandle<State> {
@@ -38,7 +39,7 @@ function newServer(seed = "srv-seed") {
       phaseToTools: SPY_PHASE_TOOLS,
       currentPhase,
       isReady,
-      safeDefault: spySafeDefault,
+      defaultAction: plugin.safeDefault,
     }),
   );
 }
@@ -75,17 +76,17 @@ describe("spy MatchServer integration", () => {
     // phase resets the budget; getObservation alone does not). A warmup pass
     // opens the turn, then we measure before/after a second send.
     server.advance({ kind: "callTool", seat: token, tool: "comms.send", input: { act: "pass" } });
-    const budgetsBefore = (observe(server.get(), token) as { budgets: Record<string, number> })
-      .budgets;
-    const before = budgetsBefore.toolCallsPerTurn;
+    const resourcesBefore = (observe(server.get(), token) as { resources: Record<string, number> })
+      .resources;
+    const before = resourcesBefore.actions;
     expect(before).toBeDefined();
-    if (before === undefined) throw new Error("toolCallsPerTurn budget missing");
+    if (before === undefined) throw new Error("actions budget missing");
     server.advance({ kind: "callTool", seat: token, tool: "comms.send", input: { act: "pass" } });
-    const budgetsAfter = (observe(server.get(), token) as { budgets: Record<string, number> })
-      .budgets;
-    const after = budgetsAfter.toolCallsPerTurn;
+    const resourcesAfter = (observe(server.get(), token) as { resources: Record<string, number> })
+      .resources;
+    const after = resourcesAfter.actions;
     expect(after).toBeDefined();
-    if (after === undefined) throw new Error("toolCallsPerTurn budget missing after");
+    if (after === undefined) throw new Error("actions budget missing after");
     expect(after).toBe(before - 1);
   });
 
@@ -158,7 +159,7 @@ describe("spy MatchServer integration", () => {
     if (maybeLeader === undefined) throw new Error("no leader seat");
     const leader = maybeLeader;
     const token = leader;
-    // submit an illegal team (wrong size) until invalidRetries exhausts -> safe default.
+    // submit an illegal team (wrong size) until retries exhausts -> safe default.
     const r1 = server.advance({
       kind: "callTool",
       seat: token,
@@ -179,7 +180,7 @@ describe("spy MatchServer integration", () => {
       tool: "match.propose_team",
       input: { team: [leader] },
     });
-    // after invalidRetries(2) exhausted the server commits spySafeDefault.
+    // after retries(2) exhausted the server commits spySafeDefault.
     const finalProposal = sessionState(server.get()).proposal;
     expect(finalProposal).not.toBeNull();
     if (finalProposal === null) throw new Error("proposal should not be null");

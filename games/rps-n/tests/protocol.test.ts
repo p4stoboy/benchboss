@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkSeatId, verifyReplay } from "@benchboss/core";
+import { mkSeatId } from "@benchboss/core";
 import {
   decisionId,
   newSession,
@@ -7,25 +7,19 @@ import {
   publicFrames,
   publicView,
   step,
+  verifyPluginReplay,
 } from "@benchboss/referee";
+import { gameConfig } from "../../tests/config";
 import { plugin } from "../src/plugin";
 
 const seats = [mkSeatId(0), mkSeatId(1)];
 function session() {
   return newSession({
     game: plugin.makeGame(),
-    config: {
-      matchId: "protocol",
-      gameId: plugin.id,
-      seats,
-      rules: { rounds: 2 },
-      budgets: plugin.defaultBudgets,
-    },
+    config: gameConfig(plugin.manifest, "protocol", seats, { rounds: 2 }),
     seed: "private-seed",
     ...plugin,
     defaultAction: plugin.safeDefault,
-    safeDefault: (state, seat) => plugin.safeDefault(state, seat).input,
-    senseResolvers: plugin.senseResolvers?.("private-seed"),
   });
 }
 
@@ -40,9 +34,13 @@ describe("versioned RPS protocol", () => {
         input,
       });
       expect(result.output.ok).toBe(false);
-      expect(result.session).toBe(initial);
+      expect(result.session.state).toEqual(initial.state);
+      expect(result.session.resources).toEqual(initial.resources);
+      expect(decisionId(result.session, mkSeatId(0))).toBe(decisionId(initial, mkSeatId(0)));
     }
-    expect(step(initial, { kind: "commitDefault", seat: mkSeatId(99) }).session).toBe(initial);
+    expect(step(initial, { kind: "commitDefault", seat: mkSeatId(99) }).session.state).toEqual(
+      initial.state,
+    );
     const offers = (
       observe(initial, mkSeatId(0)) as {
         actionOffers: { description: string; jsonSchema: unknown }[];
@@ -52,7 +50,7 @@ describe("versioned RPS protocol", () => {
     expect(offers[0]?.jsonSchema).toHaveProperty("additionalProperties", false);
   });
 
-  test("simultaneous commits preserve the other seat decision and repeated phases reset budgets", () => {
+  test("simultaneous commits preserve the other seat decision and repeated phases reset resources", () => {
     let current = session();
     const first = decisionId(current, mkSeatId(0));
     const other = decisionId(current, mkSeatId(1));
@@ -70,8 +68,8 @@ describe("versioned RPS protocol", () => {
         seat: mkSeatId(0),
         tool: "match.throw",
         input: { throw: "paper" },
-      }).session,
-    ).toBe(current);
+      }).session.state,
+    ).toEqual(current.state);
     current = step(current, { kind: "commitDefault", seat: mkSeatId(1) }).session;
     expect(current.state.phase).toBe("throw");
     expect(decisionId(current, mkSeatId(0))).not.toBe(first);
@@ -111,16 +109,16 @@ describe("versioned RPS protocol", () => {
         .every((event) => event.payload.tool === "match.throw"),
     ).toBe(true);
     expect(
-      verifyReplay({
-        game: plugin.makeGame(),
+      verifyPluginReplay({
+        plugin,
         config: current.config,
         seed: current.seed,
         log: current.log,
       }).ok,
     ).toBe(true);
     expect(
-      verifyReplay({
-        game: plugin.makeGame(),
+      verifyPluginReplay({
+        plugin,
         config: { ...current.config, rules: { rounds: 99 } },
         seed: current.seed,
         log: current.log,

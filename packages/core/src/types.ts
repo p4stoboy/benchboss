@@ -1,4 +1,9 @@
-import type { GameRevision } from "@benchboss/protocol";
+import type {
+  GameRevision,
+  MeteringPolicy,
+  ResourceAllowances,
+  TimingPolicy,
+} from "@benchboss/protocol";
 export type SeatId = string & { readonly __brand: "SeatId" };
 export type MatchId = string;
 export type ActionId = string;
@@ -7,20 +12,14 @@ export type Phase = string;
 export const mkSeatId = (n: number): SeatId => `seat:${n}` as SeatId;
 
 export interface MatchConfig {
-  identity?: GameRevision;
   matchId: MatchId;
   gameId: string;
   seats: SeatId[];
   rules: Record<string, unknown>;
-  budgets: BudgetConfig;
-}
-
-export interface BudgetConfig {
-  wallClockMsPerDecision: number;
-  toolCallsPerTurn: number;
-  intelOrScoutPoints: number;
-  simRolloutsPerTurn: number;
-  invalidRetries: number;
+  identity: GameRevision;
+  timing: TimingPolicy;
+  resources: ResourceAllowances;
+  metering: MeteringPolicy;
 }
 
 export interface LegalActionSpec {
@@ -42,7 +41,7 @@ export interface GameModule<State, Action, Observation, Score> {
   newMatch(config: MatchConfig, seed: string): State;
   observe(state: State, seat: SeatId): Observation;
   legalActions(state: State, seat: SeatId): LegalActionSpec[];
-  submit(state: State, seat: SeatId, action: Action, tool?: string): SubmitResult<State>;
+  submit(state: State, seat: SeatId, action: Action, tool: string): SubmitResult<State>;
   step(state: State): State;
   isTerminal(state: State): boolean;
   score(state: State): Record<SeatId, Score>;

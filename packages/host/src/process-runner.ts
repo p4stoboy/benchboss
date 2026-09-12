@@ -8,6 +8,7 @@ import {
   positiveLimit,
 } from "./process-transport";
 import type { WorkerCommand, WorkerReply, WorkerSnapshot } from "./process-worker";
+import { monotonicEpochMs, sampleNext, sampleView } from "./runner";
 import type {
   AbortReason,
   MatchAbortion,
@@ -15,7 +16,7 @@ import type {
   NextEnvelope,
   OpsMatch,
   RunnerDeps,
-  SubmitResult,
+  SubmitEnvelope,
 } from "./runner";
 
 export interface ProcessRunnerOptions extends ProcessLimits {
@@ -36,6 +37,7 @@ interface HeldMatch {
   finalization: OpsMatch["finalization"];
   completedAt?: number;
   acknowledged: Set<SeatId>;
+  acknowledgedFinished: Set<SeatId>;
   tail: Promise<unknown>;
 }
 
@@ -43,7 +45,7 @@ export function createProcessMatchRunner(
   deps: RunnerDeps,
   options: ProcessRunnerOptions,
 ): ProcessMatchRunner {
-  const now = deps.now ?? Date.now;
+  const now = deps.now ?? monotonicEpochMs;
   const maxMatches = positiveLimit(options.maxMatches, 16);
   const maxRetained = positiveLimit(options.maxRetainedMatches, 256);
   const maxRequests = positiveLimit(options.maxCachedRequests, 10000);
@@ -51,7 +53,7 @@ export function createProcessMatchRunner(
   const held = new Map<string, HeldMatch>();
   const receipts = new Map<
     string,
-    { body: string; expires: number; response: Promise<SubmitResult> }
+    { body: string; expires: number; response: Promise<SubmitEnvelope> }
   >();
   const over = (m: HeldMatch) => !!m.abortion || m.snapshot?.inspection.over === true;
   const settled = (m: HeldMatch) =>
@@ -116,12 +118,17 @@ export function createProcessMatchRunner(
       throw error;
     }
   }
-  async function dispatch(m: HeldMatch, command: WorkerCommand): Promise<SubmitResult | undefined> {
-    let result: SubmitResult | undefined;
+  async function dispatch(
+    m: HeldMatch,
+    command: WorkerCommand,
+  ): Promise<SubmitEnvelope | undefined> {
+    let result: SubmitEnvelope | undefined;
     if (!over(m)) {
       try {
         if (!m.process) throw Error("missing worker");
-        const response = await m.process.request<WorkerReply>(command);
+        const response = await m.process.request<WorkerReply>(
+          command.kind === "verify" ? command : { ...command, at: now() },
+        );
         const snapshot = response?.snapshot;
         if (
           !snapshot ||
@@ -135,13 +142,13 @@ export function createProcessMatchRunner(
         result = response.result;
       } catch {
         cancel(m, "game_error");
-        result = { ok: false, reason: "match_aborted" };
+        result = { protocolVersion: 1, ok: false, reason: "match_aborted" };
       }
     }
     try {
       await finish(m);
     } catch {
-      if (!m.persisted) return { ok: false, reason: "persistence_pending" };
+      if (!m.persisted) return { protocolVersion: 1, ok: false, reason: "persistence_pending" };
     }
     return result;
   }
@@ -161,29 +168,41 @@ export function createProcessMatchRunner(
     abortReason: m.abortion?.reason,
     endedAt: m.abortion?.endedAt ?? m.snapshot?.inspection.endedAt ?? null,
     result: m.persisted ? (m.snapshot?.inspection.result ?? null) : null,
-    perDecisionMs: m.spec.config.budgets.wallClockMsPerDecision,
+    perDecisionMs: m.spec.config.timing.decisionLimitMs,
     acknowledgedOver: [...m.acknowledged],
   });
-  const poll = (principal: string): NextEnvelope => {
+  const poll = (principal: string, options: { acknowledge?: boolean } = {}): NextEnvelope => {
     sweep();
     for (const m of held.values()) {
       const seat = m.spec.assignments.find((s) => s.principalId === principal)?.seat;
       if (!seat) continue;
       if (over(m)) {
         if (!m.persisted || m.acknowledged.has(seat)) continue;
-        m.acknowledged.add(seat);
+        if (options.acknowledge !== false) m.acknowledged.add(seat);
         return m.abortion
-          ? { kind: "match_aborted", matchId: m.spec.matchId, reason: m.abortion.reason }
+          ? {
+              protocolVersion: 1,
+              kind: "match_aborted",
+              matchId: m.spec.matchId,
+              reason: m.abortion.reason,
+            }
           : {
+              protocolVersion: 1,
               kind: "match_over",
               matchId: m.spec.matchId,
               result: m.snapshot?.inspection.result ?? {},
             };
       }
       const turn = m.snapshot?.turns[principal];
-      if (turn?.kind === "turn") return structuredClone(turn);
+      if (turn?.kind === "seat_finished") {
+        if (m.acknowledgedFinished.has(seat)) continue;
+        if (options.acknowledge !== false) m.acknowledgedFinished.add(seat);
+        return structuredClone(turn);
+      }
+      if (turn?.kind === "turn" || turn?.kind === "waiting")
+        return sampleNext(structuredClone(turn), now());
     }
-    return { kind: "idle" };
+    return { protocolVersion: 1, kind: "idle" };
   };
   return {
     async start(input) {
@@ -194,6 +213,7 @@ export function createProcessMatchRunner(
         held.size >= maxRetained
       )
         throw Object.assign(Error("match_capacity"), { kind: "capacity_error" });
+      deps.registry.resolve(input.config);
       const spec = structuredClone(input);
       spec.startedAt ??= new Date(now()).toISOString();
       const m: HeldMatch = {
@@ -201,6 +221,7 @@ export function createProcessMatchRunner(
         persisted: false,
         finalization: "pending",
         acknowledged: new Set(),
+        acknowledgedFinished: new Set(),
         tail: Promise.resolve(),
       };
       held.set(spec.matchId, m);
@@ -216,23 +237,27 @@ export function createProcessMatchRunner(
     submit(principalId, matchId, tool, input, identity) {
       sweep();
       const m = held.get(matchId);
-      if (!m) return Promise.resolve({ ok: false, reason: "unknown_match" });
+      if (!m) return Promise.resolve({ protocolVersion: 1, ok: false, reason: "unknown_match" });
+      const reply = (response: Omit<SubmitEnvelope, "protocolVersion">): SubmitEnvelope => ({
+        ...response,
+        protocolVersion: 1,
+      });
       if (!m.spec.assignments.some((s) => s.principalId === principalId))
-        return Promise.resolve({ ok: false, reason: "not_in_match" });
+        return Promise.resolve(reply({ ok: false, reason: "not_in_match" }));
       const body = JSON.stringify([tool, input, identity?.decisionId]);
       if (Buffer.byteLength(body) > 65536)
-        return Promise.resolve({ ok: false, reason: "request_too_large" });
+        return Promise.resolve(reply({ ok: false, reason: "request_too_large" }));
       const key = JSON.stringify([principalId, matchId, identity?.requestId]);
       if (identity) {
         if (!identity.requestId || !identity.decisionId)
-          return Promise.resolve({ ok: false, reason: "bad_request" });
+          return Promise.resolve(reply({ ok: false, reason: "bad_request" }));
         const prior = receipts.get(key);
         if (prior)
           return prior.body === body
             ? prior.response
-            : Promise.resolve({ ok: false, reason: "request_conflict" });
+            : Promise.resolve(reply({ ok: false, reason: "request_conflict" }));
         if (receipts.size >= maxRequests)
-          return Promise.resolve({ ok: false, reason: "request_capacity" });
+          return Promise.resolve(reply({ ok: false, reason: "request_capacity" }));
       }
       const response = serialize(m, async () => {
         if (over(m)) {
@@ -245,7 +270,7 @@ export function createProcessMatchRunner(
             reason: "worker_command_failed",
           }
         );
-      });
+      }).then(reply);
       if (identity) receipts.set(key, { body, response, expires: now() + retentionMs });
       return response;
     },
@@ -286,7 +311,7 @@ export function createProcessMatchRunner(
     view: (id) => {
       const m = held.get(id);
       return m && !m.abortion && (!over(m) || m.persisted)
-        ? structuredClone(m.snapshot?.view ?? null)
+        ? sampleView(structuredClone(m.snapshot?.view ?? null), now())
         : null;
     },
   };

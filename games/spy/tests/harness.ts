@@ -7,7 +7,6 @@ import {
   mkSeatId,
   parseJsonl,
   scheduleTournament,
-  verifyReplay,
 } from "@benchboss/core";
 import type { LegalActionSpec, Rng } from "@benchboss/core";
 import {
@@ -19,10 +18,13 @@ import {
   sessionLog,
   sessionState,
   step,
+  verifySessionReplay,
 } from "@benchboss/referee";
 import type { Observation } from "@benchboss/schemas";
+import { gameConfig } from "../../tests/config";
 import { SPY_GAME_ID, makeSpyGame } from "../src/game";
 import { SPY_PHASE_TOOLS, currentPhase, isReady, spySafeDefault } from "../src/phases";
+import { plugin } from "../src/plugin";
 import { spySenseResolvers } from "../src/sensing";
 import type { SpyState } from "../src/types";
 
@@ -106,22 +108,29 @@ function SpyRandomBot(name: string): Bot {
   };
 }
 
-const DEFAULT_BUDGETS = {
-  wallClockMsPerDecision: 1000,
-  toolCallsPerTurn: 8,
-  intelOrScoutPoints: 3,
-  simRolloutsPerTurn: 0,
-  invalidRetries: 2,
-};
-
-function spyConfig(seed: string, seats: number, handler = false): MatchConfig {
-  return {
-    matchId: `spy:${seed}`,
+const policy = {
+  identity: {
+    protocolVersion: 1 as const,
+    runtimeVersion: "0.1.0" as const,
     gameId: SPY_GAME_ID,
-    seats: Array.from({ length: seats }, (_, i) => mkSeatId(i)),
-    rules: handler ? { rounds: 5, handler: true } : { rounds: 5 },
-    budgets: DEFAULT_BUDGETS,
-  };
+    revision: plugin.manifest.revision,
+  },
+  timing: plugin.manifest.defaultTiming,
+  resources: {
+    ...plugin.manifest.defaultResources,
+    retries: { amount: 2, reset: "match" as const, visibility: "private" as const },
+  },
+  metering: plugin.manifest.defaultMetering,
+};
+function spyConfig(seed: string, seats: number, handler = false): MatchConfig {
+  const config = gameConfig(
+    plugin.manifest,
+    `spy:${seed}`,
+    Array.from({ length: seats }, (_, i) => mkSeatId(i)),
+    { handler },
+  );
+  config.resources = structuredClone(policy.resources);
+  return config;
 }
 
 function spyResolvers(seed: string, _handler: boolean) {
@@ -181,7 +190,7 @@ export function runSpyMatch(opts: {
     phaseToTools: SPY_PHASE_TOOLS,
     currentPhase,
     isReady,
-    safeDefault: spySafeDefault,
+    defaultAction: plugin.safeDefault,
     senseResolvers: spyResolvers(opts.seed, handler),
     terminalSummary,
     resolveSummary,
@@ -222,10 +231,19 @@ export function verifySpyReplay(opts: {
   const seats = opts.seats ?? 5;
   const config = spyConfig(opts.seed, seats, opts.handler ?? false);
   const log = parseJsonl(opts.jsonl);
-  return verifyReplay({
-    game: makeSpyGame(),
-    config,
-    seed: opts.seed,
+  return verifySessionReplay({
+    options: {
+      game: makeSpyGame(),
+      config,
+      seed: opts.seed,
+      phaseToTools: SPY_PHASE_TOOLS,
+      currentPhase,
+      isReady,
+      defaultAction: plugin.safeDefault,
+      senseResolvers: spyResolvers(opts.seed, opts.handler ?? false),
+      terminalSummary,
+      resolveSummary,
+    },
     log,
   });
 }
@@ -241,7 +259,7 @@ export function runSpyTournament(opts: {
   alignmentTally: { loyalWins: number; loyalGames: number; moleWins: number; moleGames: number };
 } {
   const handler = opts.handler ?? false;
-  const configs = scheduleTournament(DEFAULT_BUDGETS, {
+  const configs = scheduleTournament(policy, {
     agents: opts.agents,
     gameId: SPY_GAME_ID,
     seedBatch: opts.seedBatch,
@@ -259,12 +277,13 @@ export function runSpyTournament(opts: {
   const aggWins: Record<string, number> = Object.fromEntries(opts.agents.map((a) => [a, 0]));
   let matches = 0;
 
-  for (const baseConfig of configs) {
+  for (const scheduled of configs) {
+    const baseConfig = scheduled.config;
     matches++;
     const config: MatchConfig = handler
       ? { ...baseConfig, rules: { ...baseConfig.rules, handler: true } }
       : baseConfig;
-    const matchSeed = `${config.matchId}`;
+    const matchSeed = scheduled.seed;
     const game = makeSpyGame();
     let session = newSession<SpyState>({
       game,
@@ -273,7 +292,7 @@ export function runSpyTournament(opts: {
       phaseToTools: SPY_PHASE_TOOLS,
       currentPhase,
       isReady,
-      safeDefault: spySafeDefault,
+      defaultAction: plugin.safeDefault,
       senseResolvers: spyResolvers(matchSeed, handler),
       terminalSummary,
       resolveSummary,
@@ -301,8 +320,7 @@ export function runSpyTournament(opts: {
     const finalState = sessionState(session);
     const sc = game.score(finalState) as Record<string, number>;
 
-    const seatAssignment = config.rules.seatAssignment;
-    const assignmentArr = Array.isArray(seatAssignment) ? (seatAssignment as string[]) : [];
+    const assignmentArr = scheduled.assignments.map((assignment) => assignment.agentId);
 
     config.seats.forEach((seat, idx) => {
       const agent = assignmentArr[idx] ?? opts.agents[idx % opts.agents.length] ?? "";

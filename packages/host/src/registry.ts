@@ -1,26 +1,27 @@
 import { isDeepStrictEqual } from "node:util";
-import type { MatchConfig, SeatId } from "@benchboss/core";
+import { type MatchConfig, type SeatId, validateMatchConfig } from "@benchboss/core";
 import {
   type GameManifest,
-  type GameRevision,
+  PROTOCOL_VERSION,
   RUNTIME_VERSION,
+  validateMetering,
+  validateResources,
   validateSchema,
+  validateTimingPolicy,
 } from "@benchboss/protocol";
 import type { GamePlugin } from "@benchboss/referee";
 
-export interface GameInfo extends GameManifest {
+export type GameInfo = GameManifest & {
   manifest: GameManifest;
   id: string;
   seats: number;
-  budgets: MatchConfig["budgets"];
   rules: Record<string, unknown>;
   phases: Record<string, string[]>;
-}
-
+};
 export interface GameRegistry {
   has(id: string): boolean;
   // biome-ignore lint/suspicious/noExplicitAny: registry holds heterogeneous game plugins
-  get(id: string, revision?: string): GamePlugin<any>;
+  get(id: string): GamePlugin<any>;
   resolve(config: MatchConfig): GamePlugin<unknown>;
   seatsFor(id: string): number;
   buildConfig(matchId: string, gameId: string, seats: SeatId[]): MatchConfig;
@@ -30,125 +31,140 @@ export interface GameRegistry {
 export function createRegistry(
   // biome-ignore lint/suspicious/noExplicitAny: registry holds heterogeneous game plugins
   plugins: GamePlugin<any>[],
-  options: { legacyRevisions?: Record<string, string> } = {},
 ): GameRegistry {
   // biome-ignore lint/suspicious/noExplicitAny: heterogeneous plugins keyed by id
   const byId = new Map<string, GamePlugin<any>>();
-  // biome-ignore lint/suspicious/noExplicitAny: heterogeneous plugins keyed by revision
-  const revisions = new Map<string, GamePlugin<any>>();
-  for (const p of plugins) {
+  for (const plugin of plugins) {
+    const manifest = plugin.manifest;
+    if (!manifest || manifest.id !== plugin.id || manifest.protocolVersion !== PROTOCOL_VERSION)
+      throw Error("invalid game manifest");
     if (
-      !p.manifest ||
-      p.manifest.id !== p.id ||
-      p.manifest.protocolVersion !== 1 ||
-      !p.manifest.revision
+      [
+        manifest.id,
+        manifest.revision,
+        manifest.title,
+        manifest.description,
+        manifest.rulesSource,
+      ].some((value) => typeof value !== "string" || !value.trim()) ||
+      !Array.isArray(manifest.roundStructure) ||
+      !Array.isArray(manifest.winConditions) ||
+      !Array.isArray(manifest.safeDefaults) ||
+      manifest.disclosure !== "full-after-terminal" ||
+      !manifest.defaultRules ||
+      !validateSchema(manifest.rulesSchema, manifest.defaultRules).ok
     )
-      throw new Error("invalid game manifest");
-    const m = p.manifest;
+      throw Error("invalid game manifest");
     if (
-      [m.id, m.revision, m.title, m.description, m.rulesSource].some(
-        (v) => typeof v !== "string" || !v.trim(),
-      ) ||
-      !Array.isArray(m.roundStructure) ||
-      !Array.isArray(m.winConditions) ||
-      !Array.isArray(m.safeDefaults) ||
-      m.disclosure !== "full-after-terminal" ||
-      !m.defaultRules ||
-      !m.defaultBudgets ||
-      !validateSchema(m.rulesSchema, m.defaultRules).ok
+      !Array.isArray(manifest.seatCounts) ||
+      manifest.seatCounts.length === 0 ||
+      manifest.seatCounts.some((count) => !Number.isSafeInteger(count) || count < 1) ||
+      new Set(manifest.seatCounts).size !== manifest.seatCounts.length ||
+      !manifest.seatCounts.includes(manifest.defaultSeats) ||
+      manifest.defaultSeats !== plugin.defaultSeats ||
+      !isDeepStrictEqual(manifest.defaultRules, plugin.defaultRules ?? {})
     )
-      throw new Error("invalid game manifest");
-    if (
-      !Array.isArray(m.seatCounts) ||
-      m.seatCounts.length === 0 ||
-      m.seatCounts.some((n) => !Number.isSafeInteger(n) || n < 1) ||
-      new Set(m.seatCounts).size !== m.seatCounts.length ||
-      !m.seatCounts.includes(m.defaultSeats) ||
-      m.defaultSeats !== p.defaultSeats ||
-      !isDeepStrictEqual(m.defaultBudgets, p.defaultBudgets) ||
-      !isDeepStrictEqual(m.defaultRules, p.defaultRules ?? {}) ||
-      Object.values(m.defaultBudgets).some((n) => !Number.isFinite(n) || n < 0)
-    )
-      throw new Error("inconsistent game defaults");
-    const key = `${p.id}@${p.manifest.revision}`;
-    if (revisions.has(key)) throw new Error(`duplicate game id: ${key}`);
-    revisions.set(key, p);
-    if (p.manifest.revision !== options.legacyRevisions?.[p.id]) byId.set(p.id, p);
+      throw Error("inconsistent game defaults");
+    const allowed = new Set([
+      "protocolVersion",
+      "id",
+      "revision",
+      "title",
+      "description",
+      "rulesSource",
+      "seatCounts",
+      "defaultSeats",
+      "rulesSchema",
+      "defaultRules",
+      "defaultTiming",
+      "defaultResources",
+      "defaultMetering",
+      "roundStructure",
+      "winConditions",
+      "safeDefaults",
+      "disclosure",
+    ]);
+    if (Object.keys(manifest).some((key) => !allowed.has(key)))
+      throw Error("invalid game manifest fields");
+    validatePolicies(
+      manifest.defaultTiming,
+      manifest.defaultResources,
+      manifest.defaultMetering,
+      plugin.onHostEvent,
+    );
+    if (byId.has(plugin.id)) throw Error(`duplicate game id: ${plugin.id}`);
+    byId.set(plugin.id, plugin);
   }
   // biome-ignore lint/suspicious/noExplicitAny: heterogeneous plugins keyed by id
-  const require = (id: string, revision?: string): GamePlugin<any> => {
-    const p = revision === undefined ? byId.get(id) : revisions.get(`${id}@${revision}`);
-    if (!p) throw new Error(`unknown game: ${id}`);
-    return p;
+  const require = (id: string): GamePlugin<any> => {
+    const plugin = byId.get(id);
+    if (!plugin) throw Error(`unknown game: ${id}`);
+    return plugin;
   };
   return {
     has: (id) => byId.has(id),
     get: require,
     resolve: (config) => {
-      const identity = config.identity;
-      if (
-        identity &&
-        (identity.protocolVersion !== 1 ||
-          identity.runtimeVersion !== RUNTIME_VERSION ||
-          identity.gameId !== config.gameId)
-      )
-        throw new Error("unsupported match identity");
-      const revision = identity?.revision ?? options.legacyRevisions?.[config.gameId];
-      if (!revision) throw new Error(`legacy revision not registered: ${config.gameId}`);
-      const plugin = require(config.gameId, revision);
-      validateConfig(plugin.manifest, config);
+      const validation = validateMatchConfig(config);
+      if (!validation.ok) throw Error(validation.reason);
+      const plugin = require(config.gameId);
+      validateConfig(plugin.manifest, config, plugin.onHostEvent);
       return plugin;
     },
     seatsFor: (id) => require(id).defaultSeats,
     list: () =>
-      [...byId.values()].map((p) =>
+      [...byId.values()].map((plugin) =>
         structuredClone({
-          manifest: p.manifest,
-          ...p.manifest,
-          id: p.id,
-          seats: p.defaultSeats,
-          budgets: p.defaultBudgets,
-          rules: p.defaultRules ?? {},
-          phases: p.phaseToTools,
+          manifest: plugin.manifest,
+          ...plugin.manifest,
+          id: plugin.id,
+          seats: plugin.defaultSeats,
+          rules: plugin.manifest.defaultRules,
+          phases: plugin.phaseToTools,
         }),
       ),
     buildConfig: (matchId, gameId, seats) => {
-      const p = require(gameId);
-      const config = {
-        identity: {
-          protocolVersion: 1,
-          runtimeVersion: RUNTIME_VERSION,
-          gameId,
-          revision: p.manifest.revision,
-        } satisfies GameRevision,
+      const plugin = require(gameId);
+      const manifest = plugin.manifest;
+      const config: MatchConfig = {
         matchId,
         gameId,
         seats,
-        rules: p.defaultRules ?? {},
-        budgets: p.defaultBudgets,
+        rules: manifest.defaultRules,
+        identity: {
+          protocolVersion: PROTOCOL_VERSION,
+          runtimeVersion: RUNTIME_VERSION,
+          gameId,
+          revision: manifest.revision,
+        },
+        timing: manifest.defaultTiming,
+        resources: manifest.defaultResources,
+        metering: manifest.defaultMetering,
       };
-      validateConfig(p.manifest, config);
+      validateConfig(manifest, config, plugin.onHostEvent);
       return structuredClone(config);
     },
   };
 }
-
-function validateConfig(manifest: GameManifest, config: MatchConfig): void {
+function validatePolicies(
+  timing: unknown,
+  resources: unknown,
+  metering: unknown,
+  handler: unknown,
+): void {
+  if (!validateTimingPolicy(timing).ok) throw Error("invalid match timing");
+  if (!validateResources(resources).ok || !validateMetering(metering, resources).ok)
+    throw Error("invalid match resources or metering");
   if (
-    !config.matchId ||
-    !manifest.seatCounts.includes(config.seats.length) ||
-    new Set(config.seats).size !== config.seats.length ||
-    config.seats.some((s) => typeof s !== "string" || !/^seat:(0|[1-9][0-9]*)$/.test(s))
+    (timing as { playerTotalMs: number | null }).playerTotalMs !== null &&
+    typeof handler !== "function"
   )
-    throw new Error("invalid match seats");
-  if (!validateSchema(manifest.rulesSchema, config.rules).ok)
-    throw new Error("invalid match rules");
-  if (
-    Object.keys(manifest.defaultBudgets).some(
-      (k) => typeof config.budgets[k as keyof typeof config.budgets] !== "number",
-    )
-  )
-    throw new Error("invalid match budgets");
-  if (Object.values(config.budgets).some((n) => !Number.isFinite(n) || n < 0))
-    throw new Error("invalid match budgets");
+    throw Error("player total time requires onHostEvent");
+}
+function validateConfig(manifest: GameManifest, config: MatchConfig, handler: unknown): void {
+  const validation = validateMatchConfig(config, {
+    gameId: manifest.id,
+    manifest,
+    hasHostEventHandler: typeof handler === "function",
+  });
+  if (!validation.ok) throw Error(validation.reason);
 }

@@ -1,5 +1,14 @@
 import { randomUUID } from "node:crypto";
-import type { SubmissionIdentity } from "@benchboss/protocol";
+import {
+  type NextEnvelope,
+  SERVER_CAPABILITIES,
+  type ServerCapabilities,
+  type SubmissionIdentity,
+  type SubmitEnvelope,
+  validateCapabilities,
+  validateNextEnvelope,
+  validateSubmitEnvelope,
+} from "@benchboss/protocol";
 
 export interface ClientTransport {
   request(method: "GET" | "POST", path: string, body?: unknown): Promise<unknown>;
@@ -9,13 +18,13 @@ export interface ClientDeps {
 }
 export interface BenchBossClient {
   enqueue(gameId: string): Promise<unknown>;
-  next(): Promise<unknown>;
+  next(): Promise<NextEnvelope>;
   submit(
     matchId: string,
     tool: string,
     input: unknown,
     identity?: SubmissionIdentity,
-  ): Promise<unknown>;
+  ): Promise<SubmitEnvelope>;
 }
 
 export async function readJsonResponse(response: Response): Promise<unknown> {
@@ -58,6 +67,27 @@ function isHttpError(error: unknown): boolean {
 
 export function createBenchBossClient({ transport }: ClientDeps): BenchBossClient {
   const decisions = new Map<string, { id: string; generation: number }>();
+  const observedDecisions = new Map<string, { id: string; generation: number }>();
+  const inactive = new Set<string>();
+  const waitingOffers = new Map<string, Set<string>>();
+  let capabilities: Promise<void> | undefined;
+  async function validateResponse(result: unknown, kind: "next" | "submit"): Promise<void> {
+    const verdict = kind === "next" ? validateNextEnvelope(result) : validateSubmitEnvelope(result);
+    if (!verdict.ok)
+      throw Object.assign(Error(`protocol_error: ${verdict.reason ?? "unsupported envelope"}`), {
+        kind: "protocol_error",
+      });
+    capabilities ??= transport.request("GET", "/capabilities").then((value) => {
+      if (!validateCapabilities(value).ok) throw Error("unsupported_capabilities");
+      const supported = value as ServerCapabilities;
+      if (
+        !supported.supportedProtocolVersions.includes(1) ||
+        SERVER_CAPABILITIES.features.some((feature) => !supported.features.includes(feature))
+      )
+        throw Error("unsupported_capabilities");
+    });
+    await capabilities;
+  }
   let lastMatchId: string | undefined;
   let generation = 0;
   let mutationEpoch = 0;
@@ -70,7 +100,32 @@ export function createBenchBossClient({ transport }: ClientDeps): BenchBossClien
         "decisionId" in observation &&
         typeof observation.decisionId === "string"
       ) {
-        decisions.set(matchId, { id: observation.decisionId, generation: observedAt });
+        observedDecisions.set(matchId, { id: observation.decisionId, generation: observedAt });
+        waitingOffers.delete(matchId);
+        if (
+          "participation" in observation &&
+          observation.participation &&
+          typeof observation.participation === "object" &&
+          "status" in observation.participation &&
+          observation.participation.status !== "acting"
+        ) {
+          decisions.delete(matchId);
+          inactive.add(matchId);
+          if (
+            observation.participation.status === "waiting" &&
+            "legalTools" in observation &&
+            Array.isArray(observation.legalTools)
+          )
+            waitingOffers.set(
+              matchId,
+              new Set(
+                observation.legalTools.filter((tool): tool is string => typeof tool === "string"),
+              ),
+            );
+        } else {
+          inactive.delete(matchId);
+          decisions.set(matchId, { id: observation.decisionId, generation: observedAt });
+        }
       }
     }
   }
@@ -84,6 +139,7 @@ export function createBenchBossClient({ transport }: ClientDeps): BenchBossClien
         "/match/next",
         lastMatchId ? { matchId: lastMatchId } : {},
       );
+      await validateResponse(result, "next");
       if (
         result &&
         typeof result === "object" &&
@@ -92,22 +148,36 @@ export function createBenchBossClient({ transport }: ClientDeps): BenchBossClien
       ) {
         if (
           "observation" in result &&
-          (epoch !== mutationEpoch || (decisions.get(result.matchId)?.generation ?? 0) > startedAt)
+          (epoch !== mutationEpoch ||
+            (observedDecisions.get(result.matchId)?.generation ?? 0) > startedAt)
         ) {
           throw Object.assign(Error("stale_observation: request the current decision again"), {
             kind: "stale_observation",
           });
         }
         rememberDecision(result.matchId, result, startedAt);
+        if ("kind" in result && result.kind === "seat_finished") {
+          decisions.delete(result.matchId);
+          inactive.add(result.matchId);
+          waitingOffers.delete(result.matchId);
+          observedDecisions.set(result.matchId, { id: "", generation: startedAt });
+        }
         if ("kind" in result && (result.kind === "match_over" || result.kind === "match_aborted")) {
           decisions.delete(result.matchId);
+          inactive.add(result.matchId);
+          waitingOffers.delete(result.matchId);
+          observedDecisions.set(result.matchId, { id: "", generation: startedAt });
           if (lastMatchId === result.matchId) lastMatchId = undefined;
         } else lastMatchId = result.matchId;
       }
-      return result;
+      return result as NextEnvelope;
     },
     async submit(matchId, tool, input, suppliedIdentity) {
-      const current = decisions.get(matchId);
+      const isWaitingOffer = waitingOffers.get(matchId)?.has(tool) === true;
+      if (!suppliedIdentity && inactive.has(matchId) && !isWaitingOffer)
+        throw Error("seat_not_acting");
+      const current =
+        decisions.get(matchId) ?? (isWaitingOffer ? observedDecisions.get(matchId) : undefined);
       const identity =
         suppliedIdentity ??
         (current ? { decisionId: current.id, requestId: randomUUID() } : undefined);
@@ -125,10 +195,11 @@ export function createBenchBossClient({ transport }: ClientDeps): BenchBossClien
       } finally {
         mutationEpoch++;
       }
-      const latest = decisions.get(matchId);
+      await validateResponse(result, "submit");
+      const latest = observedDecisions.get(matchId);
       if (!identity || !latest || latest.id === identity.decisionId)
         rememberDecision(matchId, result, ++generation);
-      return result;
+      return result as SubmitEnvelope;
     },
   };
 }

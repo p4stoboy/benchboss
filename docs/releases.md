@@ -1,4 +1,4 @@
-# Source versions and compatibility
+# Source versions and match identity
 
 BenchBoss is distributed as MIT source in a Bun workspace. Its modules are marked
 `private: true` to prevent individual npm publication; that setting does not restrict
@@ -27,19 +27,15 @@ and use their exported interfaces. Select and test source updates explicitly.
 | Version | What it identifies |
 | --- | --- |
 | Source commit | The exact repository contents used for a build. |
-| Protocol version | The message and data contract between clients, hosts and games. Currently `1`. |
+| Protocol version | The message and data contract between clients, hosts and games. Version `1` includes clocks, participation and named resources. |
 | Runtime version | The runtime compatibility identifier recorded with a match. |
 | Game revision | The specific rules implementation used to execute and replay a match. |
 
-Match configuration records the protocol version, runtime version, game ID and game
-revision. Current catalog revisions are `1.0.0`; `legacy-v0` implementations are
-retained for historical records. A source update does not itself change those
-identifiers or the rules used by an existing replay.
-
-Do not replace the behavior of a retained game revision. Add a new revision and
-keep the implementation needed to verify older matches. Unknown revisions must
-fail explicitly instead of silently using the latest rules. See the
-[game catalog](../games/README.md) for revision selection and conformance checks.
+Match configuration requires exact protocol, runtime, game ID and game revision.
+The protocol is `1`, the runtime is `0.1.0`, and all catalog games have revision
+`1.0.0`. This pre-release source has one supported contract and one implementation
+per game. Experimental older configs, budget shapes and replay formats are unsupported.
+Unknown or unavailable identities fail rather than silently selecting another game.
 
 ## Maintainer workflow
 
@@ -52,3 +48,14 @@ Accepted game contributions are served by the official match server when their
 source revision is released there. A source merge does not itself deploy the server
 or publish an npm package. Independent hosts choose their own games and release
 timing, including games that are not in the official catalog.
+
+## Current contract
+
+Manifests define `defaultTiming`, `defaultResources` and `defaultMetering`.
+Match configs include those resolved policies and their exact identity. Observations
+expose named resource balances, clock snapshots and participation. Clients validate
+versioned envelopes and handle `waiting` and `seat_finished` alongside completion.
+Use referee `verifyPluginReplay` to verify all recorded commands and accounting.
+
+Active sessions are in memory and abort across restart. Pin the source commit used
+for any experiment that needs to be reproduced later.

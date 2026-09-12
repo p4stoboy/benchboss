@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { mkSeatId } from "@benchboss/core";
+import { type MatchConfig, mkSeatId } from "@benchboss/core";
+import { SERVER_CAPABILITIES } from "@benchboss/protocol";
 import type { GamePlugin } from "@benchboss/referee";
 import {
   type MatchArtifact,
@@ -8,12 +9,15 @@ import {
   createRegistry,
   startLocalServer,
 } from "../src/index";
-const budgets = {
-  wallClockMsPerDecision: 1000,
-  toolCallsPerTurn: 10,
-  intelOrScoutPoints: 0,
-  simRolloutsPerTurn: 0,
-  invalidRetries: 2,
+const timing = {
+  playerTotalMs: null,
+  decisionLimitMs: 1000,
+  phaseLimits: {},
+  clockVisibility: "public" as const,
+};
+const resources = {
+  actions: { amount: 10, reset: "phase" as const, visibility: "private" as const },
+  retries: { amount: 2, reset: "match" as const, visibility: "private" as const },
 };
 function fixture() {
   let calls = 0;
@@ -22,7 +26,7 @@ function fixture() {
     manifest: {
       protocolVersion: 1,
       id: "third-party",
-      revision: "1",
+      revision: "1.0.0",
       title: "Independent",
       description: "Custom game",
       rulesSource: "rules",
@@ -30,7 +34,12 @@ function fixture() {
       defaultSeats: 1,
       rulesSchema: { type: "object" },
       defaultRules: {},
-      defaultBudgets: budgets,
+      defaultTiming: timing,
+      defaultResources: resources,
+      defaultMetering: {
+        action: { resource: "actions", cost: 1 },
+        invalidAction: { resource: "retries", cost: 1 },
+      },
       roundStructure: [],
       winConditions: [],
       safeDefaults: [],
@@ -80,7 +89,6 @@ function fixture() {
     isReady: () => false,
     safeDefault: () => ({ tool: "choose", input: {} }),
     defaultSeats: 1,
-    defaultBudgets: budgets,
   };
   const registry = createRegistry([plugin]);
   const config = registry.buildConfig("m", "third-party", [mkSeatId(0)]);
@@ -99,7 +107,7 @@ function fixture() {
   };
 }
 describe("independent public host", () => {
-  test("custom catalog pins revision and refuses unknown and unmapped legacy execution", () => {
+  test("custom catalog requires exact identity and refuses missing or unknown revisions", () => {
     const f = fixture();
     const identity = f.config.identity;
     if (!identity) throw new Error("missing identity");
@@ -107,35 +115,30 @@ describe("independent public host", () => {
     expect(() =>
       f.registry.resolve({ ...f.config, identity: { ...identity, revision: "missing" } }),
     ).toThrow();
-    expect(() => f.registry.resolve({ ...f.config, identity: undefined })).toThrow(
-      "legacy revision",
-    );
-  });
-  test("legacy mapping cannot become latest and resolved defaults are independent", () => {
-    const f = fixture();
-    const legacy = { ...f.plugin, manifest: { ...f.plugin.manifest, revision: "legacy-v0" } };
-    const latest = { ...f.plugin, manifest: { ...f.plugin.manifest, revision: "2.0.0" } };
-    const registry = createRegistry([f.plugin, latest, legacy], {
-      legacyRevisions: { "third-party": "legacy-v0" },
-    });
-    expect(registry.get("third-party").manifest.revision).toBe("2.0.0");
-    expect(registry.resolve({ ...f.config, identity: undefined }).manifest.revision).toBe(
-      "legacy-v0",
-    );
-    const cfg = registry.buildConfig("x", "third-party", [mkSeatId(0)]);
-    cfg.budgets.toolCallsPerTurn = 999;
-    cfg.rules.changed = true;
-    expect(registry.buildConfig("y", "third-party", [mkSeatId(0)]).budgets.toolCallsPerTurn).toBe(
-      10,
-    );
-    expect(registry.list()[0]?.manifest.revision).toBe("2.0.0");
-    expect(() => registry.buildConfig("x", "third-party", [])).toThrow("seats");
     expect(() =>
-      registry.buildConfig("x", "third-party", ["invalid" as ReturnType<typeof mkSeatId>]),
+      f.registry.resolve({ ...f.config, identity: undefined } as unknown as MatchConfig),
+    ).toThrow("unsupported match identity");
+  });
+  test("one implementation per game and independent resolved defaults", () => {
+    const f = fixture();
+    const revision = { ...f.plugin, manifest: { ...f.plugin.manifest, revision: "other" } };
+    expect(() => createRegistry([f.plugin, revision])).toThrow("duplicate game id");
+    const cfg = f.registry.buildConfig("x", "third-party", [mkSeatId(0)]);
+    const allowance = cfg.resources.actions;
+    if (!allowance) throw Error("missing resource");
+    allowance.amount = 999;
+    cfg.rules.changed = true;
+    expect(
+      f.registry.buildConfig("y", "third-party", [mkSeatId(0)]).resources.actions?.amount,
+    ).toBe(10);
+    expect(f.registry.list()[0]?.manifest.revision).toBe("1.0.0");
+    expect(() => f.registry.buildConfig("x", "third-party", [])).toThrow("seats");
+    expect(() =>
+      f.registry.buildConfig("x", "third-party", ["invalid" as ReturnType<typeof mkSeatId>]),
     ).toThrow("seats");
     expect(() => createRegistry([{ ...f.plugin, defaultSeats: 2 }])).toThrow("defaults");
     expect(() =>
-      registry.resolve({ ...f.config, rules: [] as unknown as Record<string, unknown> }),
+      f.registry.resolve({ ...f.config, rules: [] as unknown as Record<string, unknown> }),
     ).toThrow("rules");
   });
   test("concurrent equal requests execute once and replay after terminal, conflicts and stale decisions fail", async () => {
@@ -295,7 +298,7 @@ describe("independent public host", () => {
   });
   test("local lifecycle starts an independent listener and closes it", async () => {
     const f = fixture();
-    f.spec.config.budgets.wallClockMsPerDecision = 1;
+    f.spec.config.timing.decisionLimitMs = 1;
     const local = startLocalServer({ registry: f.registry, port: 0, reapIntervalMs: 10 });
     try {
       const res = await fetch(`http://127.0.0.1:${local.server.port}/capabilities`);
@@ -312,9 +315,7 @@ describe("independent public host", () => {
     const { registry } = fixture();
     const { app } = buildLocalServer({ registry });
     const caps = await app.fetch(new Request("http://local/capabilities"));
-    expect(await caps.json()).toEqual({
-      protocolVersion: 1,
-    });
+    expect(await caps.json()).toEqual(SERVER_CAPABILITIES);
     const games = await app.fetch(new Request("http://local/games"));
     expect(((await games.json()) as { title: string }[])[0]?.title).toBe("Independent");
     const denied = await app.fetch(

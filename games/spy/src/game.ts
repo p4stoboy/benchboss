@@ -152,7 +152,7 @@ export function makeSpyGame(): GameModule<SpyState, SpyAction, SpyObservation, n
       const isMole = state.deal.alignmentBySeat[seat] === "mole";
       const ownIntel = state.intelResults[seat] ?? [];
       // Partial envelope (sensing addendum): the server injects legalTools +
-      // budgets from its phase machine + budget book at observe().
+      // resources from its phase machine + resource book at observe().
       return {
         matchId: state.matchId,
         phase: state.phase,
@@ -215,29 +215,16 @@ export function makeSpyGame(): GameModule<SpyState, SpyAction, SpyObservation, n
       });
     },
 
-    submit(
-      state: SpyState,
-      seat: SeatId,
-      action: SpyAction,
-      tool?: string,
-    ): SubmitResult<SpyState> {
+    submit(state: SpyState, seat: SeatId, action: SpyAction, tool: string): SubmitResult<SpyState> {
       const reject = (reason: string): SubmitResult<SpyState> => ({
         accepted: false,
         reason,
         state,
       });
-      // The raw schema-validated tool input arrives WITHOUT a synthetic `kind`
-      // discriminant (step()'s callTool -> pm.collect passes the bare object).
-      // Route on state.phase + the input's own fields. An empty object in a
-      // discussion phase is a match.submit_phase_end.
+      if (!PHASE_TOOLS[state.phase].includes(tool)) return reject("unknown-action");
+      // Tool identity is explicit; an empty input does not select an action.
       const a = action as Record<string, unknown>;
-      const isPhaseEnd = tool
-        ? tool === "match.submit_phase_end"
-        : !("act" in a) &&
-          !("team" in a) &&
-          !("vote" in a) &&
-          !("sabotage" in a) &&
-          !("target" in a);
+      const isPhaseEnd = tool === "match.submit_phase_end";
 
       const phaseEnd = (): SubmitResult<SpyState> => ({
         accepted: true,

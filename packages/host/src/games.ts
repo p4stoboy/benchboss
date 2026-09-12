@@ -1,4 +1,4 @@
-import type { MatchConfig, SeatId } from "@benchboss/core";
+import { type MatchConfig, type SeatId, validateMatchConfig } from "@benchboss/core";
 import {
   type Command,
   type GamePlugin,
@@ -36,6 +36,12 @@ export function createMatchServer(
   config: MatchConfig,
   seed: string,
 ): GameBinding {
+  const validation = validateMatchConfig(config, {
+    gameId: plugin.id,
+    manifest: plugin.manifest,
+    hasHostEventHandler: typeof plugin.onHostEvent === "function",
+  });
+  if (!validation.ok) throw Error(validation.reason);
   const game = plugin.makeGame();
   let session = newSession({
     game,
@@ -46,8 +52,9 @@ export function createMatchServer(
     currentPhase: plugin.currentPhase,
     isReady: plugin.isReady,
     defaultAction: plugin.safeDefault,
-    safeDefault: (state, seat) => plugin.safeDefault(state, seat).input,
     senseResolvers: plugin.senseResolvers?.(seed),
+    participation: plugin.participation,
+    onHostEvent: plugin.onHostEvent,
   });
   const handle: MatchHandle<unknown> = {
     get: () => session,

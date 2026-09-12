@@ -101,7 +101,7 @@ export type SpyPhaseLabel = SpyPhase & Phase;
 // PARTIAL observation envelope (sensing addendum): observe() returns only
 // { matchId, phase, seat, publicState, privateState }. Public spy fields live in
 // publicState; this-seat-only hidden fields in privateState. The server injects
-// legalTools + budgets when it completes this into the full §4 ObservationEnvelope.
+// legalTools + resources when it completes this into the full §4 ObservationEnvelope.
 export interface SpyPublicState {
   seats: SeatId[];
   round: number;

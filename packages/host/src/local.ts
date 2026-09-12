@@ -1,8 +1,9 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { parseJsonl, verifyReplay } from "@benchboss/core";
-import type { SubmissionIdentity } from "@benchboss/protocol";
+import { parseJsonl } from "@benchboss/core";
+import { SERVER_CAPABILITIES, type SubmissionIdentity } from "@benchboss/protocol";
+import { verifyPluginReplay } from "@benchboss/referee";
 import { createLobby } from "./lobby";
 import type { GameRegistry } from "./registry";
 import { type MatchArtifact, createMatchRunner } from "./runner";
@@ -62,14 +63,14 @@ export function buildLocalServer(opts: {
       if (req.method === "GET") {
         if (path === "/health") return json({ ok: true, mode: "local" });
         if (path === "/games") return json(registry.list());
-        if (path === "/capabilities") return json({ protocolVersion: 1 });
+        if (path === "/capabilities") return json(SERVER_CAPABILITIES);
         const view = path.match(/^\/match\/([^/]+)\/view$/);
         if (view) {
           const id = decodeURIComponent(view[1] as string);
           const v = runner.view(id);
           if (v) return json(v, 200, "no-store");
           const a = await artifacts.get(id);
-          const frames = a?.record.presentation?.frames;
+          const frames = a?.record.presentation.frames;
           return frames?.length
             ? json(frames[frames.length - 1]?.view, 200, "no-store")
             : json({ error: "not_found" }, 404);
@@ -96,13 +97,9 @@ export function buildLocalServer(opts: {
           if (!a) return json({ error: "not_found" }, 404);
           try {
             return json(
-              verifyReplay({
-                game: registry.resolve(a.record.config).makeGame(),
-                projectResult: (state) =>
-                  registry.resolve(a.record.config).publicView(state).result,
-                publishedResult: a.record.presentation
-                  ? (a.record.presentation.frames.at(-1)?.view.result ?? null)
-                  : undefined,
+              verifyPluginReplay({
+                plugin: registry.resolve(a.record.config),
+                publishedResult: a.record.presentation.frames.at(-1)?.view.result ?? null,
                 config: a.record.config,
                 seed: a.record.seed,
                 log: parseJsonl(a.replayJsonl),
@@ -117,9 +114,7 @@ export function buildLocalServer(opts: {
           const a = await artifacts.get(decodeURIComponent(replay[1] as string));
           if (!a) return json({ error: "not_found" }, 404);
           return replay[2]
-            ? a.record.presentation
-              ? json(a.record.presentation, 200, "public, max-age=31536000, immutable")
-              : json({ error: "legacy_presentation_unavailable" }, 404)
+            ? json(a.record.presentation, 200, "public, max-age=31536000, immutable")
             : new Response(a.replayJsonl);
         }
       }
@@ -148,9 +143,18 @@ export function buildLocalServer(opts: {
       }
       const token = req.headers.get("x-bb-seat");
       if (!token) return json({ error: "unauthenticated" }, 401);
-      if (path === "/match/next") return json(await runner.next(token));
+      if (path === "/match/next") {
+        const envelope = await runner.next(token);
+        return json(envelope);
+      }
       if (path === "/match/submit") {
-        if (typeof body.matchId !== "string" || typeof body.tool !== "string")
+        if (
+          Object.keys(body).some(
+            (key) => !["matchId", "tool", "input", "decisionId", "requestId"].includes(key),
+          ) ||
+          typeof body.matchId !== "string" ||
+          typeof body.tool !== "string"
+        )
           return json({ error: "bad_request" }, 400);
         let identity: SubmissionIdentity | undefined;
         if (body.decisionId !== undefined || body.requestId !== undefined) {

@@ -50,10 +50,29 @@ export const PLUGIN_FIELDS: PluginField[] = [
   {
     field: "senseResolvers?(seed)",
     meaning:
-      "Optional server-boundary sensing tools, seeded from the match seed and billed to intelOrScoutPoints or simRolloutsPerTurn.",
+      "Optional server-boundary sensing tools, seeded from the match seed and billed to a game-declared named resource with an explicit reset scope.",
   },
   { field: "defaultSeats", meaning: "Seats per match." },
-  { field: "defaultBudgets", meaning: "The BudgetConfig a match starts with." },
+  {
+    field: "manifest.defaultTiming",
+    meaning: "Player totals, optional decision limits, fixed phase deadlines and clock visibility.",
+  },
+  {
+    field: "manifest.defaultResources",
+    meaning: "Named allowances with amount, match/phase/decision reset scope and visibility.",
+  },
+  {
+    field: "manifest.defaultMetering",
+    meaning: "Declared resource costs for game calls and invalid-action retries.",
+  },
+  {
+    field: "participation?(s, seat)",
+    meaning: "Acting, waiting or permanently finished participation; private unless disclosed.",
+  },
+  {
+    field: "onHostEvent?(s, event)",
+    meaning: "Deterministic handling of trusted batched expiry. Required for player-total limits.",
+  },
   { field: "defaultRules?", meaning: "Optional rules object for the match config." },
 ];
 
@@ -67,7 +86,7 @@ export const PUBLIC_GUIDES: Guide[] = [
     summary:
       "Implement the public game contract, test it locally and contribute to the official catalog.",
     scope: "public-protocol",
-    revision: "2026-09-11.1",
+    revision: "2026-09-12.1",
     sections: [
       {
         id: "contract",
@@ -87,7 +106,7 @@ export const PUBLIC_GUIDES: Guide[] = [
           },
           {
             kind: "paragraph",
-            text: "The manifest must declare protocolVersion, game ID and revision, supported seat counts, rule schema and defaults, phase descriptions, budgets, rule documentation and disclosure policy. legalActions supplies exact tool names and JSON Schemas; safeDefault must return a legal {tool,input}. publicView returns versioned blocks and explicit seat outcomes/placements when terminal.",
+            text: "The manifest must declare protocolVersion, game ID and revision, supported seat counts, rule schema and defaults, phase descriptions, timing, named resources and metering, rule documentation and disclosure policy. legalActions supplies exact tool names and JSON Schemas; safeDefault must return a legal {tool,input}. publicView returns versioned blocks and explicit seat outcomes/placements when terminal.",
           },
         ],
       },
@@ -101,8 +120,8 @@ export const PUBLIC_GUIDES: Guide[] = [
               "Use seeded randomness and deterministic transitions. Never call an LLM or external service inside game execution.",
               "Run the referee conformance harness for every advertised seat count: defaults, generated actions, bounded progress, explicit results and deterministic replay.",
               "Add game-owned rule tests and privacy invariants. Changing hidden state must not disclose it through publicView or another seat's observation before the declared disclosure point.",
-              "Test schema rejection, safe defaults and repeated phases. Budgets include inference and transport; hosts may override new-match defaults. Clients obey the server deadline.",
-              "Preserve historical implementations. A changed rules implementation needs a new game revision so old configurations and logs remain verifiable.",
+              "Test schema rejection, safe defaults and repeated phases. Elapsed time includes inference and transport; hosts may override new-match defaults. Clients obey the server deadline.",
+              "Match identity must name the exact protocol, runtime and game revision. Reject unavailable identities and pin a source commit for reproducible experiments.",
             ],
           },
           {
@@ -141,7 +160,7 @@ export const PUBLIC_GUIDES: Guide[] = [
     title: "Run your own host",
     summary: "Run a local match server, choose your games and supply your own hosting policy.",
     scope: "public-protocol",
-    revision: "2026-09-11.1",
+    revision: "2026-09-12.1",
     sections: [
       {
         id: "local",
@@ -209,7 +228,7 @@ export const PUBLIC_GUIDES: Guide[] = [
               },
               { label: "Protocol and message flow", url: `${repo}/blob/main/docs/protocol.md` },
               {
-                label: "Source versions and compatibility",
+                label: "Source versions and match identity",
                 url: `${repo}/blob/main/docs/releases.md`,
               },
             ],

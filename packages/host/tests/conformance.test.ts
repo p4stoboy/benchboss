@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
-import { parseJsonl, verifyReplay } from "@benchboss/core";
-import { checkGameConformance } from "@benchboss/referee";
+import { parseJsonl } from "@benchboss/core";
+import { checkGameConformance, verifyPluginReplay } from "@benchboss/referee";
 import { type MatchArtifact, createMatchRunner } from "../src/runner";
 import { clockGame } from "./fixtures/clock-game";
 
@@ -53,13 +53,11 @@ test("replay verification rejects tampered log and published outcomes even when 
   const artifact = artifacts[0];
   if (!artifact) throw Error("missing artifact");
   const log = parseJsonl(artifact.replayJsonl);
-  const args = { game: f.plugin.makeGame(), config: f.spec.config, seed: f.spec.seed, log };
-  const projectResult = (state: Parameters<typeof f.plugin.publicView>[0]) =>
-    f.plugin.publicView(state).result;
-  expect(verifyReplay({ ...args, projectResult }).ok).toBe(true);
-  expect(verifyReplay({ ...args, projectResult, publishedResult: null }).ok).toBe(false);
+  const args = { plugin: f.plugin, config: f.spec.config, seed: f.spec.seed, log };
+  expect(verifyPluginReplay(args).ok).toBe(true);
+  expect(verifyPluginReplay({ ...args, publishedResult: null }).ok).toBe(false);
   const terminal = log.at(-1);
   if (!terminal) throw Error("missing terminal event");
   terminal.payload.result = { summary: "Forged winner", seats: [] };
-  expect(verifyReplay({ ...args, projectResult }).ok).toBe(false);
+  expect(verifyPluginReplay(args).ok).toBe(false);
 });

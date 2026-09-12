@@ -17,13 +17,14 @@ describe("GamePlugin", () => {
         defaultSeats: 2,
         rulesSchema: {},
         defaultRules: {},
-        defaultBudgets: {
-          wallClockMsPerDecision: 1000,
-          toolCallsPerTurn: 1,
-          intelOrScoutPoints: 0,
-          simRolloutsPerTurn: 0,
-          invalidRetries: 1,
+        defaultTiming: {
+          playerTotalMs: null,
+          decisionLimitMs: 1000,
+          phaseLimits: {},
+          clockVisibility: "private",
         },
+        defaultResources: {},
+        defaultMetering: {},
         roundStructure: [],
         winConditions: [],
         safeDefaults: [],
@@ -53,13 +54,6 @@ describe("GamePlugin", () => {
       isReady: () => true,
       safeDefault: () => ({ tool: "match.pass", input: {} }),
       defaultSeats: 2,
-      defaultBudgets: {
-        wallClockMsPerDecision: 1000,
-        toolCallsPerTurn: 1,
-        intelOrScoutPoints: 0,
-        simRolloutsPerTurn: 0,
-        invalidRetries: 1,
-      },
     };
     expect(plugin.id).toBe("stub");
     expect(plugin.defaultSeats).toBe(2);

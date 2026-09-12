@@ -1,9 +1,19 @@
 import { type SeatId, eventsToJsonl } from "@benchboss/core";
-import type { ReplayPresentation, SpectatorView, SubmissionIdentity } from "@benchboss/protocol";
+import type {
+  ClockSnapshot,
+  NextEnvelope,
+  Observation,
+  ReplayPresentation,
+  SpectatorView,
+  SubmissionIdentity,
+  SubmitEnvelope,
+} from "@benchboss/protocol";
 import {
+  clockSnapshot,
   decisionId,
   isTerminal,
   observe,
+  participation,
   publicFrames,
   publicView,
   sessionLog,
@@ -12,18 +22,10 @@ import { type GameBinding, type MatchSpec, createMatchServer } from "./games";
 
 import type { GameRegistry } from "./registry";
 
-export interface SubmitResult {
-  ok: boolean;
-  reason: string;
+export type { SubmitEnvelope, NextEnvelope } from "@benchboss/protocol";
+type ExecutionResult = Omit<SubmitEnvelope, "protocolVersion" | "observation"> & {
   observation?: unknown;
-  result?: Record<string, unknown>;
-}
-
-export type NextEnvelope =
-  | { kind: "turn"; matchId: string; seat: SeatId; observation: unknown; deadline: number }
-  | { kind: "match_over"; matchId: string; result: Record<SeatId, number> }
-  | { kind: "match_aborted"; matchId: string; reason: AbortReason }
-  | { kind: "idle" };
+};
 
 export type AbortReason = "game_error" | "server_restart" | "server_shutdown";
 export interface MatchAbortion {
@@ -44,7 +46,7 @@ export interface MatchArtifact {
     result: Record<SeatId, number>;
     startedAt: string;
     endedAt: string;
-    presentation?: ReplayPresentation;
+    presentation: ReplayPresentation;
   };
   replayJsonl: string;
   seats: { seat: SeatId; agentId: string; score: number | null }[];
@@ -69,10 +71,10 @@ interface ActiveMatch {
   seatByPrincipal: Map<string, SeatId>;
   seatToAgent: Record<SeatId, string>;
   deadline: Map<SeatId, number | null>;
-  clockDecision: Map<SeatId, string>;
   aborted?: MatchAbortion;
   acknowledgedOver: Set<SeatId>;
-  perDecisionMs: number;
+  acknowledgedFinished: Set<SeatId>;
+  perDecisionMs: number | null;
   startedAt: string;
   endedAt: string | null;
   persisted?: boolean;
@@ -106,7 +108,7 @@ export interface OpsMatch extends LiveMatchSummary {
   over: boolean;
   endedAt: string | null;
   result: Record<SeatId, number> | null;
-  perDecisionMs: number;
+  perDecisionMs: number | null;
   acknowledgedOver: SeatId[];
 }
 
@@ -118,9 +120,9 @@ export interface MatchRunner {
     tool: string,
     input: unknown,
     identity?: SubmissionIdentity,
-  ): Promise<SubmitResult>;
+  ): Promise<SubmitEnvelope>;
   view(matchId: string): SpectatorView | null;
-  poll(principalId: string): NextEnvelope;
+  poll(principalId: string, options?: { acknowledge?: boolean }): NextEnvelope;
   next(principalId: string): Promise<NextEnvelope>;
   reap(): Promise<void>;
   abort(matchId: string, reason: AbortReason): Promise<void>;
@@ -135,9 +137,42 @@ export interface MatchRunner {
 // deps and returns a plain object of functions. It binds `matches`, `now`, the
 // long-poll knobs (`maxHoldMs`/`pollIntervalMs`/`sleep`), and `finalize`, which
 // persists the terminal match + replay through `deps.persist`, then invokes optional completion policy.
+export const monotonicEpochMs = (): number =>
+  Math.floor(performance.timeOrigin + performance.now());
+
+export function sampleClock(clock: ClockSnapshot, at: number): ClockSnapshot {
+  const elapsed = Math.max(0, at - clock.sampledAt);
+  return {
+    ...clock,
+    sampledAt: Math.max(at, clock.sampledAt),
+    remainingMs:
+      clock.remainingMs === null
+        ? null
+        : Math.max(0, clock.remainingMs - (clock.running ? elapsed : 0)),
+  };
+}
+
+export function sampleView(view: SpectatorView | null, at: number): SpectatorView | null {
+  if (!view?.clocks || view.result !== null) return view;
+  return {
+    ...view,
+    clocks: Object.fromEntries(
+      Object.entries(view.clocks).map(([seat, clock]) => [seat, sampleClock(clock, at)]),
+    ),
+  };
+}
+
+export function sampleNext(envelope: NextEnvelope, at: number): NextEnvelope {
+  if (envelope.kind !== "turn" && envelope.kind !== "waiting") return envelope;
+  return {
+    ...envelope,
+    observation: { ...envelope.observation, clock: sampleClock(envelope.observation.clock, at) },
+  };
+}
+
 export function createMatchRunner(deps: RunnerDeps): MatchRunner {
   const matches = new Map<string, ActiveMatch>();
-  const now = deps.now ?? (() => Date.now());
+  const now = deps.now ?? monotonicEpochMs;
   const maxHoldMs = deps.maxHoldMs ?? 25000;
   const pollIntervalMs = deps.pollIntervalMs ?? 250;
   const sleep = deps.sleep ?? ((ms: number) => Bun.sleep(ms));
@@ -155,26 +190,10 @@ export function createMatchRunner(deps: RunnerDeps): MatchRunner {
     return response;
   }
 
-  function syncClocks(match: ActiveMatch, at: number): void {
+  function syncClocks(match: ActiveMatch): void {
     const session = match.binding.handle.get();
-    for (const seat of Object.keys(match.seatToAgent) as SeatId[]) {
-      const actionable =
-        !match.over &&
-        !isTerminal(session) &&
-        session.game
-          .legalActions(session.state, seat)
-          .some((offer) => !session.senseResolvers.has(offer.tool));
-      if (!actionable) {
-        match.deadline.set(seat, null);
-        match.clockDecision.delete(seat);
-        continue;
-      }
-      const id = decisionId(session, seat);
-      if (match.clockDecision.get(seat) !== id) {
-        match.clockDecision.set(seat, id);
-        match.deadline.set(seat, at + match.perDecisionMs);
-      }
-    }
+    for (const seat of match.spec.config.seats)
+      match.deadline.set(seat, clockSnapshot(session, seat).deadline);
   }
 
   function cancel(match: ActiveMatch, reason: AbortReason, at: number): void {
@@ -190,13 +209,13 @@ export function createMatchRunner(deps: RunnerDeps): MatchRunner {
       seats: match.spec.assignments.map(({ seat, agentId }) => ({ seat, agentId })),
     };
     for (const seat of match.deadline.keys()) match.deadline.set(seat, null);
-    match.clockDecision.clear();
   }
 
   const start = (input: MatchSpec): void => {
+    const plugin = deps.registry.resolve(input.config);
     const spec = structuredClone(input);
     if (matches.has(spec.matchId)) throw new Error(`duplicate match: ${spec.matchId}`);
-    const binding = createMatchServer(deps.registry.resolve(spec.config), spec.config, spec.seed);
+    const binding = createMatchServer(plugin, spec.config, spec.seed);
     const seatByPrincipal = new Map<string, SeatId>();
     const seatToAgent = {} as Record<SeatId, string>;
     const deadline = new Map<SeatId, number | null>();
@@ -211,16 +230,18 @@ export function createMatchRunner(deps: RunnerDeps): MatchRunner {
       seatByPrincipal,
       seatToAgent,
       deadline,
-      clockDecision: new Map(),
       acknowledgedOver: new Set(),
-      perDecisionMs: spec.config.budgets.wallClockMsPerDecision,
+      acknowledgedFinished: new Set(),
+      perDecisionMs: spec.config.timing.decisionLimitMs,
       startedAt: spec.startedAt ?? new Date(now()).toISOString(),
       endedAt: null,
       finalization: "pending",
       over: false,
       result: null,
     };
-    syncClocks(match, now());
+    const at = now();
+    match.binding.handle.advance({ kind: "advanceTime", at });
+    syncClocks(match);
     matches.set(spec.matchId, match);
   };
 
@@ -230,7 +251,7 @@ export function createMatchRunner(deps: RunnerDeps): MatchRunner {
     tool: string,
     input: unknown,
     identity?: SubmissionIdentity,
-  ): Promise<SubmitResult> => {
+  ): Promise<ExecutionResult> => {
     const match = matches.get(matchId);
     if (!match) return { ok: false, reason: "unknown_match" };
     const seat = match.seatByPrincipal.get(principalId);
@@ -238,16 +259,16 @@ export function createMatchRunner(deps: RunnerDeps): MatchRunner {
     const submittedDecision = decisionId(match.binding.handle.get(), seat);
     const deadline = match.deadline.get(seat);
     const expired = deadline != null && now() >= deadline;
-    await advanceTime(match, now()).catch(() => undefined);
+    await advanceTime(match, now(), true).catch(() => undefined);
     if (match.over) return { ok: false, reason: match.aborted ? "match_aborted" : "match_over" };
     if (expired || submittedDecision !== decisionId(match.binding.handle.get(), seat))
       return { ok: false, reason: "deadline_expired" };
     if (identity && identity.decisionId !== decisionId(match.binding.handle.get(), seat))
       return { ok: false, reason: "stale_decision" };
-    let res: SubmitResult;
+    let res: ExecutionResult;
     try {
       res = match.binding.handle.advance({ kind: "callTool", seat, tool, input });
-      syncClocks(match, now());
+      syncClocks(match);
     } catch {
       cancel(match, "game_error", now());
       await finalize(match, now()).catch(() => undefined);
@@ -263,28 +284,51 @@ export function createMatchRunner(deps: RunnerDeps): MatchRunner {
     return res;
   };
 
-  const poll = (principalId: string): NextEnvelope => {
+  const poll = (principalId: string, options: { acknowledge?: boolean } = {}): NextEnvelope => {
     for (const match of matches.values()) {
       const seat = match.seatByPrincipal.get(principalId);
       if (!seat) continue;
       if (match.over) {
         if (!match.persisted) continue;
         if (match.acknowledgedOver.has(seat)) continue;
-        match.acknowledgedOver.add(seat);
+        if (options.acknowledge !== false) match.acknowledgedOver.add(seat);
         if (match.aborted)
           return {
+            protocolVersion: 1,
             kind: "match_aborted",
             matchId: match.spec.matchId,
             reason: match.aborted.reason,
           };
-        return { kind: "match_over", matchId: match.spec.matchId, result: match.result ?? {} };
+        return {
+          protocolVersion: 1,
+          kind: "match_over",
+          matchId: match.spec.matchId,
+          result: match.result ?? {},
+        };
       }
-      const obs = observe(match.binding.handle.get(), seat) as { legalTools: string[] };
-      const deadline = match.deadline.get(seat) ?? null;
-      if (obs.legalTools.length === 0 || deadline === null) continue;
-      return { kind: "turn", matchId: match.spec.matchId, seat, observation: obs, deadline };
+      const state = participation(match.binding.handle.get(), seat);
+      if (state.status === "finished") {
+        if (match.acknowledgedFinished.has(seat)) continue;
+        if (options.acknowledge !== false) match.acknowledgedFinished.add(seat);
+        return {
+          protocolVersion: 1,
+          kind: "seat_finished",
+          matchId: match.spec.matchId,
+          seat,
+          reason: state.reason,
+        };
+      }
+      const observation = observe(match.binding.handle.get(), seat) as Observation;
+      return {
+        protocolVersion: 1,
+        kind: state.status === "acting" ? "turn" : "waiting",
+        matchId: match.spec.matchId,
+        seat,
+        observation: { ...observation, clock: sampleClock(observation.clock, now()) },
+        deadline: observation.clock.deadline,
+      };
     }
-    return { kind: "idle" };
+    return { protocolVersion: 1, kind: "idle" };
   };
 
   const next = async (principalId: string): Promise<NextEnvelope> => {
@@ -301,20 +345,22 @@ export function createMatchRunner(deps: RunnerDeps): MatchRunner {
     }
   };
 
-  async function advanceTime(match: ActiveMatch, at: number): Promise<void> {
+  async function advanceTime(match: ActiveMatch, at: number, force = false): Promise<void> {
     if (!match.over) {
       try {
-        const due = [...match.deadline]
-          .filter(([, deadline]) => deadline !== null && at >= deadline)
-          .map(([seat]) => ({ seat, id: match.clockDecision.get(seat) }));
-        for (const { seat, id } of due) {
-          if (match.clockDecision.get(seat) !== id || match.deadline.get(seat) == null) continue;
-          const result = match.binding.handle.advance({ kind: "commitDefault", seat });
-          if (!result.ok) {
-            cancel(match, "game_error", at);
-            break;
-          }
-          syncClocks(match, at);
+        const session = match.binding.handle.get();
+        const due = match.spec.config.seats.some((seat) => {
+          const clock = clockSnapshot(session, seat);
+          return (
+            (clock.deadline !== null && clock.deadline <= at) ||
+            (clock.phaseDeadline !== null && clock.phaseDeadline <= at)
+          );
+        });
+        // Unexpired reads sample the existing anchor without adding replay commands.
+        if (force || due) {
+          const result = match.binding.handle.advance({ kind: "advanceTime", at });
+          if (!result.ok) cancel(match, "game_error", at);
+          syncClocks(match);
         }
       } catch {
         cancel(match, "game_error", at);
@@ -359,14 +405,10 @@ export function createMatchRunner(deps: RunnerDeps): MatchRunner {
             result,
             startedAt: match.startedAt,
             endedAt,
-            ...(match.spec.config.identity
-              ? {
-                  presentation: {
-                    identity: match.spec.config.identity,
-                    frames: publicFrames(match.binding.handle.get()),
-                  },
-                }
-              : {}),
+            presentation: {
+              identity: match.spec.config.identity,
+              frames: publicFrames(match.binding.handle.get()),
+            },
           },
           replayJsonl: eventsToJsonl(sessionLog(match.binding.handle.get())),
           seats: (Object.keys(match.seatToAgent) as SeatId[]).map((seat) => ({
@@ -416,8 +458,14 @@ export function createMatchRunner(deps: RunnerDeps): MatchRunner {
     }
   };
 
-  const requests = new Map<string, { body: string; response: Promise<SubmitResult> }>();
-  const submit: MatchRunner["submit"] = (principalId, matchId, tool, input, identity) => {
+  const requests = new Map<string, { body: string; response: Promise<ExecutionResult> }>();
+  const submitRequest = (
+    principalId: string,
+    matchId: string,
+    tool: string,
+    input: unknown,
+    identity?: SubmissionIdentity,
+  ): Promise<ExecutionResult> => {
     const key = JSON.stringify([principalId, matchId, identity?.requestId]);
     const body = JSON.stringify([tool, input, identity?.decisionId]);
     if (identity) {
@@ -434,6 +482,16 @@ export function createMatchRunner(deps: RunnerDeps): MatchRunner {
     return response;
   };
 
+  const submit: MatchRunner["submit"] = async (principalId, matchId, tool, input, identity) => {
+    const response = await submitRequest(principalId, matchId, tool, input, identity);
+    const { observation, ...result } = response;
+    return {
+      ...result,
+      protocolVersion: 1,
+      ...(observation === undefined ? {} : { observation: observation as Observation }),
+    };
+  };
+
   const summarize = (match: ActiveMatch): LiveMatchSummary => ({
     matchId: match.spec.matchId,
     gameId: match.spec.gameId,
@@ -443,7 +501,10 @@ export function createMatchRunner(deps: RunnerDeps): MatchRunner {
       seat: a.seat,
       agentId: a.agentId,
       principalId: a.principalId,
-      deadline: match.deadline.get(a.seat) ?? null,
+      deadline:
+        match.spec.config.timing.clockVisibility === "private"
+          ? null
+          : (match.deadline.get(a.seat) ?? null),
     })),
   });
 
@@ -484,7 +545,7 @@ export function createMatchRunner(deps: RunnerDeps): MatchRunner {
     inspect,
     view: (id) => {
       const m = matches.get(id);
-      return m && !m.aborted ? publicView(m.binding.handle.get()) : null;
+      return m && !m.aborted ? sampleView(publicView(m.binding.handle.get()), now()) : null;
     },
   };
 }

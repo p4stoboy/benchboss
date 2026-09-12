@@ -1,32 +1,49 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, it } from "bun:test";
 import { ObservationEnvelope, SubmitResultEnvelope } from "../src/index";
 
-const validObs = {
+const observation = {
+  protocolVersion: 1,
   matchId: "m1",
-  phase: "throw",
+  phase: "discussion",
+  phaseId: "m1:0",
   seat: "seat:0",
-  publicState: { round: 1 },
-  privateState: { role: "loyal" },
-  legalTools: ["match.throw"],
-  budgets: { toolCallsPerTurn: 3 },
+  publicState: {},
+  privateState: {},
+  legalTools: [],
+  decisionId: "m1:seat:0:0",
+  actionOffers: [],
+  resources: { fuel: 0 },
+  participation: { status: "waiting" },
+  clock: {
+    sampledAt: 1,
+    remainingMs: null,
+    running: false,
+    deadline: null,
+    phaseId: "m1:0",
+    phaseDeadline: null,
+  },
 };
 
-describe("shared envelopes", () => {
-  test("observation_envelope_accepts_well_formed_observation", () => {
-    expect(ObservationEnvelope.parse(validObs)).toEqual(validObs);
+describe("protocol schemas", () => {
+  it("accepts observations with explicit lifecycle and disabled clock constraints", () => {
+    expect(ObservationEnvelope.safeParse(observation).success).toBe(true);
   });
-
-  test("strict_observation_rejects_unknown_top_level_key", () => {
-    const bad = { ...validObs, secretLeak: "evil" };
-    expect(() => ObservationEnvelope.parse(bad)).toThrow();
+  it("rejects legacy budgets, negative allowances and unknown nested lifecycle metadata", () => {
+    for (const value of [
+      { ...observation, budgets: {} },
+      { ...observation, resources: { fuel: -1 } },
+      { ...observation, resources: { constructor: 1 } },
+      { ...observation, participation: { status: "waiting", hidden: true } },
+      { ...observation, clock: { ...observation.clock, unknown: 1 } },
+      { ...observation, clock: { ...observation.clock, phaseId: "other" } },
+    ])
+      expect(ObservationEnvelope.safeParse(value).success).toBe(false);
   });
-
-  test("submit_result_envelope_accepts_optional_committed_action_id", () => {
-    const ok = { accepted: true, reason: "ok", committedActionId: "a1" };
-    expect(SubmitResultEnvelope.parse(ok)).toEqual(ok);
-  });
-
-  test("strict_submit_result_rejects_unknown_key", () => {
-    expect(() => SubmitResultEnvelope.parse({ accepted: false, reason: "no", extra: 1 })).toThrow();
+  it("accepts versioned submit responses and rejects unversioned submit responses", () => {
+    expect(
+      SubmitResultEnvelope.safeParse({ protocolVersion: 1, ok: true, reason: "ok", observation })
+        .success,
+    ).toBe(true);
+    expect(SubmitResultEnvelope.safeParse({ accepted: true, reason: "ok" }).success).toBe(false);
   });
 });

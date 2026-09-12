@@ -11,6 +11,7 @@ import {
 } from "@benchboss/referee";
 import { makeSpyGame } from "../src/game";
 import { SPY_PHASE_TOOLS, currentPhase, isReady, spySafeDefault } from "../src/phases";
+import { plugin } from "../src/plugin";
 import { spySenseResolvers } from "../src/sensing";
 import type { SpyState } from "../src/types";
 import { baseConfig } from "./helpers";
@@ -36,7 +37,7 @@ function intelServer(seed = "sense-srv") {
       phaseToTools: SPY_PHASE_TOOLS,
       currentPhase,
       isReady,
-      safeDefault: spySafeDefault,
+      defaultAction: plugin.safeDefault,
       senseResolvers: spySenseResolvers(seed),
     }),
   );
@@ -70,10 +71,10 @@ describe("intel sensing at the server boundary", () => {
       input: { target: seat3 },
     });
     expect(warmup.ok).toBe(true);
-    const before = (warmup.observation as { budgets: Record<string, number> }).budgets;
-    expect(before.intelOrScoutPoints).toBeDefined();
-    expect(before.toolCallsPerTurn).toBeDefined();
-    if (before.intelOrScoutPoints === undefined || before.toolCallsPerTurn === undefined)
+    const before = (warmup.observation as { resources: Record<string, number> }).resources;
+    expect(before.research).toBeDefined();
+    expect(before.actions).toBeDefined();
+    if (before.research === undefined || before.actions === undefined)
       throw new Error("budget keys missing before");
     const r = server.advance({
       kind: "callTool",
@@ -82,13 +83,13 @@ describe("intel sensing at the server boundary", () => {
       input: { target: seat3 },
     });
     expect(r.ok).toBe(true);
-    const after = (observe(server.get(), token) as { budgets: Record<string, number> }).budgets;
-    expect(after.intelOrScoutPoints).toBeDefined();
-    expect(after.toolCallsPerTurn).toBeDefined();
-    if (after.intelOrScoutPoints === undefined || after.toolCallsPerTurn === undefined)
+    const after = (observe(server.get(), token) as { resources: Record<string, number> }).resources;
+    expect(after.research).toBeDefined();
+    expect(after.actions).toBeDefined();
+    if (after.research === undefined || after.actions === undefined)
       throw new Error("budget keys missing after");
-    expect(after.intelOrScoutPoints).toBe(before.intelOrScoutPoints - 1);
-    expect(after.toolCallsPerTurn).toBe(before.toolCallsPerTurn); // sensing does NOT spend tool calls
+    expect(after.research).toBe(before.research - 1);
+    expect(after.actions).toBe(before.actions); // sensing does NOT spend tool calls
     expect(currentPhase(sessionState(server.get()))).toBe("intel"); // phase not advanced
   });
 
@@ -102,7 +103,7 @@ describe("intel sensing at the server boundary", () => {
     expect(seat3).toBeDefined();
     if (seat0 === undefined || seat3 === undefined) throw new Error("seats must be defined");
     const token = seat0;
-    // baseConfig grants intelOrScoutPoints: 3.
+    // baseConfig grants research: 3.
     for (let i = 0; i < 3; i++)
       expect(
         server.advance({
@@ -119,7 +120,7 @@ describe("intel sensing at the server boundary", () => {
       input: { target: seat3 },
     });
     expect(refused.ok).toBe(false);
-    expect(refused.reason).toBe("intelOrScoutPoints-exhausted");
+    expect(refused.reason).toBe("research-exhausted");
   });
 
   test("scan_serve_logs_a_leak_free_sense_serve_event", () => {
@@ -141,8 +142,8 @@ describe("intel sensing at the server boundary", () => {
     const serve = sessionLog(server.get()).find((e) => e.kind === "sense.serve");
     expect(serve).toBeDefined();
     if (serve === undefined) throw new Error("sense.serve event missing");
-    // The public log carries ONLY tool + cost — never the sensed signal.
-    expect(serve.payload).toEqual({ tool: "intel.scan_alignment", cost: 1 });
+    // The public log carries ONLY tool, named resource and cost — never the sensed signal.
+    expect(serve.payload).toEqual({ tool: "intel.scan_alignment", resource: "research", cost: 1 });
     expect(JSON.stringify(serve.payload)).not.toContain("signal");
   });
 

@@ -19,12 +19,26 @@
       "version": "0.1.0",
       "dependencies": {
         "@benchboss/core": "workspace:*",
+        "@benchboss/game-chess": "workspace:*",
         "@benchboss/game-rps-n": "workspace:*",
         "@benchboss/game-spy": "workspace:*",
         "@benchboss/protocol": "workspace:*",
         "@benchboss/referee": "workspace:*",
         "@benchboss/schemas": "workspace:*",
         "zod": "^3.23",
+      },
+    },
+    "games/chess": {
+      "name": "@benchboss/game-chess",
+      "version": "0.1.0",
+      "dependencies": {
+        "@benchboss/core": "workspace:*",
+        "@benchboss/protocol": "workspace:*",
+        "@benchboss/referee": "workspace:*",
+      },
+      "devDependencies": {
+        "@benchboss/host": "workspace:*",
+        "@benchboss/viewer": "workspace:*",
       },
     },
     "games/rps-n": {
@@ -117,6 +131,8 @@
   },
   "packages": {
     "@benchboss/core": ["@benchboss/core@workspace:packages/core"],
+
+    "@benchboss/game-chess": ["@benchboss/game-chess@workspace:games/chess"],
 
     "@benchboss/game-rps-n": ["@benchboss/game-rps-n@workspace:games/rps-n"],
 

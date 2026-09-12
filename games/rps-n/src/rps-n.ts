@@ -110,7 +110,8 @@ export function makeRpsN(): GameModule<RpsState, RpsAction, RpsObservation, numb
       ];
     },
 
-    submit(state: RpsState, seat: SeatId, action: RpsAction): SubmitResult<RpsState> {
+    submit(state: RpsState, seat: SeatId, action: RpsAction, tool: string): SubmitResult<RpsState> {
+      if (tool !== "match.throw") return { accepted: false, reason: "unknown-action", state };
       if (state.phase !== "throw") {
         return {
           accepted: false,
