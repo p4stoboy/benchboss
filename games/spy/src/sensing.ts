@@ -5,7 +5,7 @@ import { auditStatement, scanAlignment, traceOperation } from "./intel";
 import type { IntelResult, SpyState } from "./types";
 
 // The referee spends the named resource at the callTool boundary and forks the rng per
-// call; resolvers never touch budgets and never advance the phase. Results go
+// call; resolvers never touch resources and never advance the phase. Results go
 // to the caller's private intelResults only.
 
 const RESOURCE = "research";

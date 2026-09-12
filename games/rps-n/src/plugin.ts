@@ -19,9 +19,9 @@ const METERING = {
 
 export const plugin = {
   manifest: {
-    protocolVersion: 2,
+    protocolVersion: 1,
     id: "rps-n",
-    revision: "2.0.0",
+    revision: "1.0.0",
     title: "RPS-N",
     description: "Simultaneous rock, paper, scissors for multiple agents.",
     rulesSource: "games/rps-n/README.md",

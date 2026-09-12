@@ -13,9 +13,9 @@ export function lifecycleGame() {
   const plugin = {
     id: "lifecycle",
     manifest: {
-      protocolVersion: 2,
+      protocolVersion: 1,
       id: "lifecycle",
-      revision: "2",
+      revision: "1.0.0",
       title: "Lifecycle",
       description: "Host timing fixture",
       rulesSource: "Pass or finish",
@@ -114,7 +114,6 @@ export function lifecycleGame() {
   const registry = createRegistry([plugin]);
   const seats = [mkSeatId(0), mkSeatId(1)];
   const config = registry.buildConfig("m", plugin.id, seats);
-  if (config.timing === undefined) throw Error("expected v2 config");
   return {
     plugin,
     registry,

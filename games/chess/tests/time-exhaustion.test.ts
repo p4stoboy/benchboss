@@ -1,10 +1,10 @@
 import { expect, test } from "bun:test";
 import { mkSeatId } from "@benchboss/core";
-import type { CurrentMatchConfig } from "@benchboss/core";
+import type { MatchConfig } from "@benchboss/core";
 import { plugin } from "../src/plugin";
 
-const config: CurrentMatchConfig = {
-  identity: { protocolVersion: 2, runtimeVersion: "0.2.0", gameId: "chess", revision: "2.0.0" },
+const config: MatchConfig = {
+  identity: { protocolVersion: 1, runtimeVersion: "0.1.0", gameId: "chess", revision: "1.0.0" },
   matchId: "time-exhaustion",
   gameId: "chess",
   seats: [mkSeatId(0), mkSeatId(1)],

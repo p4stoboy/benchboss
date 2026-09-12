@@ -1,19 +1,21 @@
 import { describe, expect, test } from "bun:test";
-import { mkSeatId, verifyReplay } from "@benchboss/core";
+import { mkSeatId } from "@benchboss/core";
 import type { MatchConfig } from "@benchboss/core";
-import type { LegacyObservation as Observation } from "@benchboss/schemas";
+import type { Observation } from "@benchboss/protocol";
 import {
   type Command,
   type MatchHandle,
   type MatchSession,
+  type SessionOptions,
   isTerminal,
   newSession,
   observe,
   sessionLog,
   sessionState,
   step,
+  verifySessionReplay,
 } from "../src/index";
-import type { LegacySenseResolver as SenseResolver } from "../src/index";
+import type { SenseResolver } from "../src/index";
 import { makeRpsN } from "./fixtures/round-game";
 import type { RpsState } from "./fixtures/round-game";
 
@@ -30,10 +32,10 @@ function harness<State>(session: MatchSession<State>): MatchHandle<State> {
 }
 
 // A SYNTHETIC read-only sensing tool over rps-n: peeks the public round number.
-// budgetKey: intelOrScoutPoints; cost 1; pure read (nextState === state).
+// Each read spends one research unit without changing game state.
 const peekRoundResolver: SenseResolver<RpsState> = {
   tool: "match.peek_round",
-  budgetKey: "intelOrScoutPoints",
+  resource: "research",
   cost: () => 1,
   resolve: (state) => ({ result: { round: state.round }, nextState: state }),
 };
@@ -45,82 +47,84 @@ const senseToolsRpsN: Record<string, string[]> = {
   terminal: [],
 };
 
-function cfg(intel: number, n = 2): MatchConfig {
+function cfg(research: number, n = 2): MatchConfig {
   return {
     matchId: "m-sense",
     gameId: "rps-n",
     seats: Array.from({ length: n }, (_, i) => mkSeatId(i)),
     rules: { rounds: 1 },
-    budgets: {
-      wallClockMsPerDecision: 5000,
-      toolCallsPerTurn: 5,
-      intelOrScoutPoints: intel,
-      simRolloutsPerTurn: 0,
-      invalidRetries: 1,
+    identity: { protocolVersion: 1, runtimeVersion: "0.1.0", gameId: "rps-n", revision: "1.0.0" },
+    timing: {
+      playerTotalMs: null,
+      decisionLimitMs: 5000,
+      phaseLimits: {},
+      clockVisibility: "private",
     },
+    resources: {
+      research: { amount: research, reset: "match", visibility: "private" },
+      actions: { amount: 5, reset: "phase", visibility: "private" },
+    },
+    metering: { action: { resource: "actions", cost: 1 } },
+  };
+}
+
+function sessionOptions(config: MatchConfig, seed: string): SessionOptions<RpsState> {
+  return {
+    game: {
+      ...makeRpsN(),
+      legalActions: (state, seat) => [
+        ...makeRpsN().legalActions(state, seat),
+        {
+          tool: "match.peek_round",
+          phase: "throw",
+          jsonSchema: { type: "object", additionalProperties: false },
+        },
+      ],
+    },
+    config,
+    seed,
+    phaseToTools: senseToolsRpsN,
+    currentPhase: (s) => s.phase,
+    isReady: (s) => config.seats.every((seat) => s.committed[seat] !== null),
+    defaultAction: () => ({ tool: "match.throw", input: { throw: "rock" } }),
+    senseResolvers: [peekRoundResolver],
   };
 }
 
 function server(config: MatchConfig, seed = "sense-seed") {
-  return harness(
-    newSession<RpsState>({
-      game: {
-        ...makeRpsN(),
-        legalActions: (state, seat) => [
-          ...makeRpsN().legalActions(state, seat),
-          {
-            tool: "match.peek_round",
-            phase: "throw",
-            jsonSchema: { type: "object", additionalProperties: false },
-          },
-        ],
-      },
-      config,
-      seed,
-      phaseToTools: senseToolsRpsN,
-      currentPhase: (s) => s.phase,
-      isReady: (s) => config.seats.every((seat) => s.committed[seat] !== null),
-      safeDefault: () => ({ throw: "rock" }),
-      senseResolvers: [peekRoundResolver],
-    }),
-  );
+  return harness(newSession(sessionOptions(config, seed)));
 }
 
-describe("match server — sensing budget at the boundary", () => {
-  test("spends_intel_or_scout_points_and_returns_private_result", () => {
+describe("match server — sensing resources at the boundary", () => {
+  test("spends_research_and_returns_private_result_without_spending_action_resources", () => {
     const config = cfg(1);
     const srv = server(config);
     const seat = mkSeatId(0);
 
-    // Read budget BEFORE the sensing call via the pull-only snapshot.
     const before = observe(srv.get(), seat) as Observation;
-    const budgetBefore = before.budgets.intelOrScoutPoints;
-    const toolCallsPerTurnBefore = before.budgets.toolCallsPerTurn;
-    expect(budgetBefore).toBeDefined();
-    expect(toolCallsPerTurnBefore).toBeDefined();
+    const researchBefore = before.resources.research;
+    const actionsBefore = before.resources.actions;
+    expect(researchBefore).toBeDefined();
+    expect(actionsBefore).toBeDefined();
 
     const res = srv.advance({ kind: "callTool", seat, tool: "match.peek_round", input: {} });
     expect(res.ok).toBe(true);
     expect(res.reason).toBe("sensing served");
     expect(res.result).toEqual({ round: 0 });
 
-    // Read budget AFTER from the observation returned with the tool result.
     const after = res.observation as Observation;
-    const budgetAfter = after.budgets.intelOrScoutPoints;
-    const toolCallsPerTurnAfter = after.budgets.toolCallsPerTurn;
-    expect(budgetAfter).toBeDefined();
-    expect(toolCallsPerTurnAfter).toBeDefined();
+    const researchAfter = after.resources.research;
+    const actionsAfter = after.resources.actions;
+    expect(researchAfter).toBeDefined();
+    expect(actionsAfter).toBeDefined();
 
-    // The sensing call must have consumed exactly 1 intelOrScoutPoints.
     // biome-ignore lint/style/noNonNullAssertion: guarded by expect().toBeDefined() above
-    expect(budgetAfter!).toBe(budgetBefore! - 1);
+    expect(researchAfter!).toBe(researchBefore! - 1);
 
-    // Sensing must NOT consume a per-turn tool call; toolCallsPerTurn is unchanged.
-    // biome-ignore lint/style/noNonNullAssertion: guarded by expect().toBeDefined() above
-    expect(toolCallsPerTurnAfter!).toBe(toolCallsPerTurnBefore!);
+    expect(actionsAfter).toBe(actionsBefore);
   });
 
-  test("refuses_with_intel_or_scout_points_exhausted_once_spent", () => {
+  test("refuses_with_research_exhausted_once_spent", () => {
     const config = cfg(1);
     const srv = server(config);
     expect(
@@ -133,7 +137,7 @@ describe("match server — sensing budget at the boundary", () => {
       input: {},
     });
     expect(second.ok).toBe(false);
-    expect(second.reason).toBe("intelOrScoutPoints-exhausted");
+    expect(second.reason).toBe("research-exhausted");
   });
 
   test("sensing_does_not_advance_the_phase_or_commit_a_throw", () => {
@@ -149,7 +153,7 @@ describe("match server — sensing budget at the boundary", () => {
     expect(isTerminal(srv.get())).toBe(false);
   });
 
-  test("logs_a_sense_serve_event_with_tool_and_cost_only", () => {
+  test("logs_sensing_metadata_without_the_private_answer", () => {
     const config = cfg(1);
     const srv = server(config);
     srv.advance({ kind: "callTool", seat: mkSeatId(0), tool: "match.peek_round", input: {} });
@@ -157,9 +161,8 @@ describe("match server — sensing budget at the boundary", () => {
     expect(ev).toBeDefined();
     // biome-ignore lint/style/noNonNullAssertion: guarded by expect(ev).toBeDefined() above
     const payload = ev!.payload;
-    expect(payload).toEqual({ tool: "match.peek_round", cost: 1 });
-    // Key-exhaustive: the payload must contain ONLY tool and cost — nothing else.
-    expect(Object.keys(payload)).toEqual(["tool", "cost"]);
+    expect(payload).toEqual({ tool: "match.peek_round", resource: "research", cost: 1 });
+    expect(Object.keys(payload)).toEqual(["tool", "resource", "cost"]);
     // Leak-free: the public log carries no hidden-state-revealing content.
     expect(JSON.stringify(payload)).not.toContain("throw");
   });
@@ -167,7 +170,7 @@ describe("match server — sensing budget at the boundary", () => {
   test("replay_reproduces_a_match_that_included_sensing", () => {
     const config = cfg(2);
     const srv = server(config, "sense-term");
-    // Seat A senses (twice, spending its 2 intel points) BEFORE throwing.
+    // Seat A spends both research units before throwing.
     srv.advance({ kind: "callTool", seat: mkSeatId(0), tool: "match.peek_round", input: {} });
     srv.advance({ kind: "callTool", seat: mkSeatId(0), tool: "match.peek_round", input: {} });
     srv.advance({
@@ -184,20 +187,8 @@ describe("match server — sensing budget at the boundary", () => {
     });
     expect(isTerminal(srv.get())).toBe(true);
 
-    const res = verifyReplay({
-      game: {
-        ...makeRpsN(),
-        legalActions: (state, seat) => [
-          ...makeRpsN().legalActions(state, seat),
-          {
-            tool: "match.peek_round",
-            phase: "throw",
-            jsonSchema: { type: "object", additionalProperties: false },
-          },
-        ],
-      },
-      config,
-      seed: "sense-term",
+    const res = verifySessionReplay({
+      options: sessionOptions(config, "sense-term"),
       log: [...sessionLog(srv.get())],
     });
     expect(res.ok).toBe(true);

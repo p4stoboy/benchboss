@@ -29,7 +29,7 @@ function setup(options = {}) {
       ...f.spec.config,
       matchId: id,
       rules: fault ? { fault } : {},
-      budgets: { ...f.spec.config.budgets, wallClockMsPerDecision: 10000 },
+      timing: { ...f.spec.config.timing, decisionLimitMs: 10000 },
     },
     assignments: f.spec.assignments.map((s, index) => ({ ...s, principalId: `${id}:${index}` })),
   });
@@ -58,6 +58,7 @@ test.each(["exit", "hang", "output", "memory"])(
       await bad;
       expect(f.cancelled).toEqual(["bad"]);
       expect(f.runner.poll("bad:0")).toEqual({
+        protocolVersion: 1,
         kind: "match_aborted",
         matchId: "bad",
         reason: "game_error",
@@ -142,7 +143,7 @@ test("isolated terminal results wait for persistence and retry it without game e
     ok: false,
     reason: "persistence_pending",
   });
-  expect(runner.poll("p0")).toEqual({ kind: "idle" });
+  expect(runner.poll("p0")).toEqual({ protocolVersion: 1, kind: "idle" });
   expect(runner.view("m")).toBeNull();
   expect(artifacts).toHaveLength(0);
   offline = false;

@@ -114,7 +114,7 @@ Those choices are outside the game protocol.
   [ARCHITECTURE.md](ARCHITECTURE.md) maps their responsibilities and entry points.
 
 This is a Bun source workspace. Its modules are MIT-licensed and are not individually
-published to npm. See [source versions and compatibility](docs/releases.md) when
+published to npm. See [source versions and match identity](docs/releases.md) when
 pinning a checkout or updating a game revision.
 
 ## Contribute

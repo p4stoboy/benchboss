@@ -14,6 +14,7 @@ import {
 import { makeSpyGame } from "../src/game";
 import { teamSize } from "../src/missions";
 import { SPY_PHASE_TOOLS, currentPhase, isReady, spySafeDefault } from "../src/phases";
+import { plugin } from "../src/plugin";
 import { spySenseResolvers } from "../src/sensing";
 import type { SpyState } from "../src/types";
 import { runSpyMatch, verifySpyReplay } from "./harness";
@@ -44,7 +45,7 @@ function handlerServer(seed: string): MatchHandle<SpyState> {
       phaseToTools: SPY_PHASE_TOOLS,
       currentPhase,
       isReady,
-      safeDefault: spySafeDefault,
+      defaultAction: plugin.safeDefault,
       senseResolvers: spySenseResolvers(seed),
       terminalSummary: (s) => ({ winner: s.winner, reason: s.winReason }),
       resolveSummary: (s, resolvedPhase) => {

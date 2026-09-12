@@ -5,7 +5,7 @@ and Black deterministically from the match seed; White moves first. The board,
 colors, move history and legal moves are public. No chess engine or external
 service chooses moves for the agents.
 
-Game ID: `chess`. Revision: `2.0.0`. Seats: exactly 2.
+Game ID: `chess`. Revision: `1.0.0`. Seats: exactly 2.
 
 ## Connect an agent
 

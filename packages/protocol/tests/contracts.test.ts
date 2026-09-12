@@ -20,7 +20,7 @@ const clock = {
   phaseDeadline: null,
 };
 const observation = {
-  protocolVersion: 2,
+  protocolVersion: 1,
   matchId: "match",
   seat: "seat:0",
   phase: "discussion",
@@ -37,7 +37,13 @@ const observation = {
   clock,
 };
 
-describe("v2 policies", () => {
+describe("protocol policies", () => {
+  it("publishes one protocol and runtime identity", () => {
+    expect(protocol.PROTOCOL_VERSION).toBe(1);
+    expect(protocol.RUNTIME_VERSION).toBe("0.1.0");
+    expect(protocol.SERVER_CAPABILITIES.supportedProtocolVersions).toEqual([1]);
+  });
+
   it("accepts independent timing constraints and a fully disabled policy", () => {
     expect(protocol.validateTimingPolicy(timing).ok).toBe(true);
     expect(
@@ -156,7 +162,7 @@ describe("versioned envelopes", () => {
   it("accepts every current lifecycle message", () => {
     for (const value of [
       {
-        protocolVersion: 2,
+        protocolVersion: 1,
         kind: "turn",
         matchId: "match",
         seat: "seat:0",
@@ -164,7 +170,7 @@ describe("versioned envelopes", () => {
         deadline: 3000,
       },
       {
-        protocolVersion: 2,
+        protocolVersion: 1,
         kind: "waiting",
         matchId: "match",
         seat: "seat:0",
@@ -178,15 +184,15 @@ describe("versioned envelopes", () => {
         deadline: null,
       },
       {
-        protocolVersion: 2,
+        protocolVersion: 1,
         kind: "seat_finished",
         matchId: "match",
         seat: "seat:0",
         reason: "eliminated",
       },
-      { protocolVersion: 2, kind: "match_over", matchId: "match", result: { "seat:0": 1 } },
-      { protocolVersion: 2, kind: "match_aborted", matchId: "match", reason: "game_error" },
-      { protocolVersion: 2, kind: "idle" },
+      { protocolVersion: 1, kind: "match_over", matchId: "match", result: { "seat:0": 1 } },
+      { protocolVersion: 1, kind: "match_aborted", matchId: "match", reason: "game_error" },
+      { protocolVersion: 1, kind: "idle" },
     ])
       expect(protocol.validateNextEnvelope(value).ok).toBe(true);
   });
@@ -194,12 +200,12 @@ describe("versioned envelopes", () => {
   it("rejects unversioned legacy responses and unknown versions, kinds and fields", () => {
     for (const value of [
       { kind: "idle" },
-      { protocolVersion: 1, kind: "idle" },
+      { protocolVersion: 2, kind: "idle" },
       { protocolVersion: 3, kind: "idle" },
-      { protocolVersion: 2, kind: "thinking" },
-      { protocolVersion: 2, kind: "idle", privateClock: clock },
+      { protocolVersion: 1, kind: "thinking" },
+      { protocolVersion: 1, kind: "idle", privateClock: clock },
       {
-        protocolVersion: 2,
+        protocolVersion: 1,
         kind: "match_over",
         matchId: "match",
         result: { "seat:0": Number.NaN },
@@ -210,7 +216,7 @@ describe("versioned envelopes", () => {
 
   it("rejects malformed observation accounting and mismatched assignment identity", () => {
     const valid = {
-      protocolVersion: 2,
+      protocolVersion: 1,
       kind: "turn",
       matchId: "match",
       seat: "seat:0",
@@ -231,14 +237,14 @@ describe("versioned envelopes", () => {
 
   it("validates submit responses without accepting private extra metadata", () => {
     expect(
-      protocol.validateSubmitEnvelope({ protocolVersion: 2, ok: true, reason: "ok", observation })
+      protocol.validateSubmitEnvelope({ protocolVersion: 1, ok: true, reason: "ok", observation })
         .ok,
     ).toBe(true);
     for (const value of [
       { ok: true, reason: "ok" },
-      { protocolVersion: 2, ok: true, reason: "ok", elapsed: 1 },
+      { protocolVersion: 1, ok: true, reason: "ok", elapsed: 1 },
       {
-        protocolVersion: 2,
+        protocolVersion: 1,
         ok: true,
         reason: "ok",
         observation: { ...observation, resources: { fuel: -1 } },
@@ -249,7 +255,7 @@ describe("versioned envelopes", () => {
 
   it("accepts supported capabilities and rejects unknown feature requirements", () => {
     expect(protocol.validateCapabilities(protocol.SERVER_CAPABILITIES).ok).toBe(true);
-    expect(protocol.validateCapabilities({ protocolVersion: 1 }).ok).toBe(false);
+    expect(protocol.validateCapabilities({ protocolVersion: 2 }).ok).toBe(false);
     expect(
       protocol.validateCapabilities({ ...protocol.SERVER_CAPABILITIES, features: ["unknown"] }).ok,
     ).toBe(false);
@@ -257,6 +263,12 @@ describe("versioned envelopes", () => {
       protocol.validateCapabilities({
         ...protocol.SERVER_CAPABILITIES,
         supportedProtocolVersions: [3],
+      }).ok,
+    ).toBe(false);
+    expect(
+      protocol.validateCapabilities({
+        ...protocol.SERVER_CAPABILITIES,
+        supportedProtocolVersions: [1, 2],
       }).ok,
     ).toBe(false);
   });

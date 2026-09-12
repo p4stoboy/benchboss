@@ -3,6 +3,8 @@ import {
   type GameResult,
   type SpectatorBlock,
   type SpectatorView,
+  isResourceAmount,
+  isResourceName,
   validateClockSnapshot,
 } from "@benchboss/protocol";
 
@@ -97,7 +99,9 @@ export const isSpectatorView = (value: unknown): value is SpectatorView =>
         (balances) =>
           isRecord(balances) &&
           Object.keys(balances).length <= MAX_ITEMS &&
-          Object.values(balances).every((amount) => isNumber(amount) && amount >= 0),
+          Object.entries(balances).every(
+            ([name, amount]) => isResourceName(name) && isResourceAmount(amount),
+          ),
       )));
 
 const renderBlock = (block: SpectatorBlock): string => {

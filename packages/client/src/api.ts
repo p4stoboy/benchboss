@@ -1,8 +1,10 @@
 import { randomUUID } from "node:crypto";
 import {
+  type NextEnvelope,
   SERVER_CAPABILITIES,
   type ServerCapabilities,
   type SubmissionIdentity,
+  type SubmitEnvelope,
   validateCapabilities,
   validateNextEnvelope,
   validateSubmitEnvelope,
@@ -16,13 +18,13 @@ export interface ClientDeps {
 }
 export interface BenchBossClient {
   enqueue(gameId: string): Promise<unknown>;
-  next(): Promise<unknown>;
+  next(): Promise<NextEnvelope>;
   submit(
     matchId: string,
     tool: string,
     input: unknown,
     identity?: SubmissionIdentity,
-  ): Promise<unknown>;
+  ): Promise<SubmitEnvelope>;
 }
 
 export async function readJsonResponse(response: Response): Promise<unknown> {
@@ -68,15 +70,8 @@ export function createBenchBossClient({ transport }: ClientDeps): BenchBossClien
   const observedDecisions = new Map<string, { id: string; generation: number }>();
   const inactive = new Set<string>();
   const waitingOffers = new Map<string, Set<string>>();
-  const versionedMatches = new Set<string>();
   let capabilities: Promise<void> | undefined;
-  async function validateResponse(
-    result: unknown,
-    kind: "next" | "submit",
-    versioned = false,
-  ): Promise<void> {
-    const explicitVersion = result && typeof result === "object" && "protocolVersion" in result;
-    if (!explicitVersion && !versioned) return;
+  async function validateResponse(result: unknown, kind: "next" | "submit"): Promise<void> {
     const verdict = kind === "next" ? validateNextEnvelope(result) : validateSubmitEnvelope(result);
     if (!verdict.ok)
       throw Object.assign(Error(`protocol_error: ${verdict.reason ?? "unsupported envelope"}`), {
@@ -86,7 +81,7 @@ export function createBenchBossClient({ transport }: ClientDeps): BenchBossClien
       if (!validateCapabilities(value).ok) throw Error("unsupported_capabilities");
       const supported = value as ServerCapabilities;
       if (
-        !supported.supportedProtocolVersions.includes(2) ||
+        !supported.supportedProtocolVersions.includes(1) ||
         SERVER_CAPABILITIES.features.some((feature) => !supported.features.includes(feature))
       )
         throw Error("unsupported_capabilities");
@@ -160,8 +155,6 @@ export function createBenchBossClient({ transport }: ClientDeps): BenchBossClien
             kind: "stale_observation",
           });
         }
-        if ("protocolVersion" in result && result.protocolVersion === 2)
-          versionedMatches.add(result.matchId);
         rememberDecision(result.matchId, result, startedAt);
         if ("kind" in result && result.kind === "seat_finished") {
           decisions.delete(result.matchId);
@@ -177,7 +170,7 @@ export function createBenchBossClient({ transport }: ClientDeps): BenchBossClien
           if (lastMatchId === result.matchId) lastMatchId = undefined;
         } else lastMatchId = result.matchId;
       }
-      return result;
+      return result as NextEnvelope;
     },
     async submit(matchId, tool, input, suppliedIdentity) {
       const isWaitingOffer = waitingOffers.get(matchId)?.has(tool) === true;
@@ -202,11 +195,11 @@ export function createBenchBossClient({ transport }: ClientDeps): BenchBossClien
       } finally {
         mutationEpoch++;
       }
-      await validateResponse(result, "submit", versionedMatches.has(matchId));
+      await validateResponse(result, "submit");
       const latest = observedDecisions.get(matchId);
       if (!identity || !latest || latest.id === identity.decisionId)
         rememberDecision(matchId, result, ++generation);
-      return result;
+      return result as SubmitEnvelope;
     },
   };
 }

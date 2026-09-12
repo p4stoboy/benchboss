@@ -1,13 +1,7 @@
 import type { ActionOffer, GameManifestBase } from "./index";
-import type {
-  LegacyGameManifest,
-  LegacyGameRevision,
-  LegacyNextEnvelope,
-  LegacySubmitEnvelope,
-} from "./legacy";
 
-export const PROTOCOL_VERSION = 2 as const;
-export const RUNTIME_VERSION = "0.2.0";
+export const PROTOCOL_VERSION = 1 as const;
+export const RUNTIME_VERSION = "0.1.0";
 
 export interface TimingPolicy {
   playerTotalMs: number | null;
@@ -65,25 +59,22 @@ export interface ResultCause {
   seats?: string[];
 }
 
-export interface CurrentGameManifest extends GameManifestBase {
-  protocolVersion: 2;
+export interface GameManifest extends GameManifestBase {
+  protocolVersion: 1;
   defaultTiming: TimingPolicy;
   defaultResources: ResourceAllowances;
   defaultMetering: MeteringPolicy;
 }
-export type GameManifest = CurrentGameManifest;
-export type AnyGameManifest = CurrentGameManifest | LegacyGameManifest;
 
-export interface CurrentGameRevision {
-  protocolVersion: 2;
-  runtimeVersion: string;
+export interface GameRevision {
+  protocolVersion: 1;
+  runtimeVersion: typeof RUNTIME_VERSION;
   gameId: string;
   revision: string;
 }
-export type GameRevision = CurrentGameRevision | LegacyGameRevision;
 
-export interface CurrentObservation {
-  protocolVersion: 2;
+export interface Observation {
+  protocolVersion: 1;
   matchId: string;
   phase: string;
   phaseId: string;
@@ -98,31 +89,27 @@ export interface CurrentObservation {
   clock: ClockSnapshot;
 }
 
-export type CurrentNextEnvelope =
+export type NextEnvelope =
   | {
-      protocolVersion: 2;
+      protocolVersion: 1;
       kind: "turn" | "waiting";
       matchId: string;
       seat: string;
-      observation: CurrentObservation;
+      observation: Observation;
       deadline: number | null;
     }
-  | { protocolVersion: 2; kind: "seat_finished"; matchId: string; seat: string; reason: string }
-  | { protocolVersion: 2; kind: "match_over"; matchId: string; result: Record<string, number> }
-  | { protocolVersion: 2; kind: "match_aborted"; matchId: string; reason: string }
-  | { protocolVersion: 2; kind: "idle" };
-export type NextEnvelope = CurrentNextEnvelope;
-export type AnyNextEnvelope = CurrentNextEnvelope | LegacyNextEnvelope;
+  | { protocolVersion: 1; kind: "seat_finished"; matchId: string; seat: string; reason: string }
+  | { protocolVersion: 1; kind: "match_over"; matchId: string; result: Record<string, number> }
+  | { protocolVersion: 1; kind: "match_aborted"; matchId: string; reason: string }
+  | { protocolVersion: 1; kind: "idle" };
 
-export interface CurrentSubmitEnvelope {
-  protocolVersion: 2;
+export interface SubmitEnvelope {
+  protocolVersion: 1;
   ok: boolean;
   reason: string;
-  observation?: CurrentObservation;
+  observation?: Observation;
   result?: Record<string, unknown>;
 }
-export type SubmitEnvelope = CurrentSubmitEnvelope;
-export type AnySubmitEnvelope = CurrentSubmitEnvelope | LegacySubmitEnvelope;
 
 export const CAPABILITY_FEATURES = [
   "timing.player_total",
@@ -134,12 +121,12 @@ export const CAPABILITY_FEATURES = [
 export type CapabilityFeature = (typeof CAPABILITY_FEATURES)[number];
 
 export interface ServerCapabilities {
-  protocolVersion: 2;
-  supportedProtocolVersions: (1 | 2)[];
+  protocolVersion: 1;
+  supportedProtocolVersions: 1[];
   features: CapabilityFeature[];
 }
 export const SERVER_CAPABILITIES: ServerCapabilities = {
   protocolVersion: PROTOCOL_VERSION,
-  supportedProtocolVersions: [1, 2],
+  supportedProtocolVersions: [1],
   features: [...CAPABILITY_FEATURES],
 };

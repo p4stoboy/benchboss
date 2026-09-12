@@ -20,7 +20,6 @@ function session() {
     seed: "private-seed",
     ...plugin,
     defaultAction: plugin.safeDefault,
-    safeDefault: () => plugin.safeDefault().input,
   });
 }
 
@@ -36,7 +35,7 @@ describe("versioned RPS protocol", () => {
       });
       expect(result.output.ok).toBe(false);
       expect(result.session.state).toEqual(initial.state);
-      expect(result.session.budgets).toEqual(initial.budgets);
+      expect(result.session.resources).toEqual(initial.resources);
       expect(decisionId(result.session, mkSeatId(0))).toBe(decisionId(initial, mkSeatId(0)));
     }
     expect(step(initial, { kind: "commitDefault", seat: mkSeatId(99) }).session.state).toEqual(
@@ -51,7 +50,7 @@ describe("versioned RPS protocol", () => {
     expect(offers[0]?.jsonSchema).toHaveProperty("additionalProperties", false);
   });
 
-  test("simultaneous commits preserve the other seat decision and repeated phases reset budgets", () => {
+  test("simultaneous commits preserve the other seat decision and repeated phases reset resources", () => {
     let current = session();
     const first = decisionId(current, mkSeatId(0));
     const other = decisionId(current, mkSeatId(1));

@@ -14,7 +14,7 @@ describe("spy legal actions end with the seat's decision", () => {
   test("a seat that has voted has no legal action while others still vote", () => {
     const st = { ...game.newMatch(baseConfig(), "s"), phase: "vote" as SpyPhase };
     expect(tools(st)).toEqual(["match.vote"]);
-    const voted = game.submit(st, seat0, { vote: "approve" }).state;
+    const voted = game.submit(st, seat0, { vote: "approve" }, "match.vote").state;
     expect(tools(voted)).toEqual([]);
     expect(tools(voted, seat1)).toEqual(["match.vote"]);
   });
@@ -24,7 +24,7 @@ describe("spy legal actions end with the seat's decision", () => {
     (phase) => {
       const st = { ...game.newMatch(baseConfig(), "s"), phase };
       expect(tools(st)).toContain("match.submit_phase_end");
-      const ended = game.submit(st, seat0, {}).state;
+      const ended = game.submit(st, seat0, {}, "match.submit_phase_end").state;
       expect(tools(ended)).toEqual([]);
       expect(tools(ended, seat1)).toContain("match.submit_phase_end");
     },
@@ -38,23 +38,23 @@ describe("spy legal actions end with the seat's decision", () => {
       proposal: { proposalId: "p", leader: seat0, team: [seat0, seat1], opIndex: 0 },
     };
     expect(tools(st)).toEqual(["match.mission_action"]);
-    const acted = game.submit(st, seat0, { sabotage: false }).state;
+    const acted = game.submit(st, seat0, { sabotage: false }, "match.mission_action").state;
     expect(tools(acted)).toEqual([]);
     expect(tools(acted, seat1)).toEqual(["match.mission_action"]);
   });
 
   test("a second vote is rejected", () => {
     const st = { ...game.newMatch(baseConfig(), "s"), phase: "vote" as SpyPhase };
-    const voted = game.submit(st, seat0, { vote: "approve" }).state;
-    const again = game.submit(voted, seat0, { vote: "reject" });
+    const voted = game.submit(st, seat0, { vote: "approve" }, "match.vote").state;
+    const again = game.submit(voted, seat0, { vote: "reject" }, "match.vote");
     expect(again.accepted).toBe(false);
     expect(again.state.votes[seat0]).toBe("approve");
   });
 
   test("a speech act after ending comms is rejected", () => {
     const st = { ...game.newMatch(baseConfig(), "s"), phase: "comms" as SpyPhase };
-    const ended = game.submit(st, seat0, {}).state;
-    const late = game.submit(ended, seat0, { act: "pass" });
+    const ended = game.submit(st, seat0, {}, "match.submit_phase_end").state;
+    const late = game.submit(ended, seat0, { act: "pass" }, "comms.send");
     expect(late.accepted).toBe(false);
     expect(late.state.log).toEqual([]);
   });
@@ -74,4 +74,13 @@ describe("spy legal actions end with the seat's decision", () => {
       expect(tools(st, loyal)).toContain(t);
     }
   });
+});
+
+test("an omitted tool cannot implicitly end a discussion phase", () => {
+  const state = { ...game.newMatch(baseConfig(), "explicit-tool"), phase: "comms" as SpyPhase };
+  for (const tool of ["unknown", undefined]) {
+    const submitted = game.submit(state, seat0, {}, tool as string);
+    expect(submitted.accepted).toBe(false);
+    expect(submitted.state).toBe(state);
+  }
 });

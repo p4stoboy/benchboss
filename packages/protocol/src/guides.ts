@@ -86,7 +86,7 @@ export const PUBLIC_GUIDES: Guide[] = [
     summary:
       "Implement the public game contract, test it locally and contribute to the official catalog.",
     scope: "public-protocol",
-    revision: "2026-09-11.2",
+    revision: "2026-09-12.1",
     sections: [
       {
         id: "contract",
@@ -121,7 +121,7 @@ export const PUBLIC_GUIDES: Guide[] = [
               "Run the referee conformance harness for every advertised seat count: defaults, generated actions, bounded progress, explicit results and deterministic replay.",
               "Add game-owned rule tests and privacy invariants. Changing hidden state must not disclose it through publicView or another seat's observation before the declared disclosure point.",
               "Test schema rejection, safe defaults and repeated phases. Elapsed time includes inference and transport; hosts may override new-match defaults. Clients obey the server deadline.",
-              "Preserve historical implementations. A changed rules implementation needs a new game revision so old configurations and logs remain verifiable.",
+              "Match identity must name the exact protocol, runtime and game revision. Reject unavailable identities and pin a source commit for reproducible experiments.",
             ],
           },
           {
@@ -160,7 +160,7 @@ export const PUBLIC_GUIDES: Guide[] = [
     title: "Run your own host",
     summary: "Run a local match server, choose your games and supply your own hosting policy.",
     scope: "public-protocol",
-    revision: "2026-09-11.2",
+    revision: "2026-09-12.1",
     sections: [
       {
         id: "local",
@@ -228,7 +228,7 @@ export const PUBLIC_GUIDES: Guide[] = [
               },
               { label: "Protocol and message flow", url: `${repo}/blob/main/docs/protocol.md` },
               {
-                label: "Source versions and compatibility",
+                label: "Source versions and match identity",
                 url: `${repo}/blob/main/docs/releases.md`,
               },
             ],

@@ -5,7 +5,6 @@ import { buildLocalServer } from "../src/local";
 import { createProcessMatchRunner, createProcessVerifier } from "../src/process-runner";
 import { createRegistry } from "../src/registry";
 import { type MatchArtifact, createMatchRunner } from "../src/runner";
-import { clockGame } from "./fixtures/clock-game";
 import { lifecycleGame } from "./fixtures/lifecycle-game";
 
 function setup() {
@@ -30,11 +29,11 @@ function setup() {
     },
   };
 }
-describe("v2 host", () => {
+describe("host clocks and lifecycle", () => {
   test("preserves total time across moves, pauses waiting seats and expires at equality", async () => {
     const f = setup();
     expect(f.runner.poll("p1")).toMatchObject({
-      protocolVersion: 2,
+      protocolVersion: 1,
       kind: "waiting",
       observation: { clock: { remainingMs: 1000, running: false } },
     });
@@ -56,7 +55,7 @@ describe("v2 host", () => {
     const f = setup();
     await f.runner.submit("p0", "m", "finish", {});
     const expected = {
-      protocolVersion: 2,
+      protocolVersion: 1,
       kind: "seat_finished",
       matchId: "m",
       seat: "seat:0",
@@ -67,7 +66,7 @@ describe("v2 host", () => {
     expect(f.runner.poll("p0")).toEqual(expected);
     expect(f.runner.poll("p0").kind).toBe("idle");
     await f.runner.submit("p1", "m", "finish", {});
-    expect(f.runner.poll("p0")).toMatchObject({ protocolVersion: 2, kind: "match_over" });
+    expect(f.runner.poll("p0")).toMatchObject({ protocolVersion: 1, kind: "match_over" });
   });
   test("public metadata excludes private resource balances and hidden clocks", () => {
     const f = setup();
@@ -102,27 +101,21 @@ describe("v2 host", () => {
       expect(() => f.registry.resolve({ ...f.spec.config, ...patch } as MatchConfig)).toThrow();
     expect(() => createRegistry([{ ...f.plugin, onHostEvent: undefined }])).toThrow();
   });
-  test("v2 is latest regardless of legacy insertion order and exact historical identities remain available", () => {
+  test("admission rejects every unsupported protocol and absent identity", () => {
     const f = lifecycleGame();
-    const old = clockGame().plugin;
-    const legacy = {
-      ...old,
-      id: f.plugin.id,
-      manifest: { ...old.manifest, id: f.plugin.id, revision: "1" },
-    };
-    const registry = createRegistry([f.plugin, legacy]);
-    expect(registry.get("lifecycle").manifest.protocolVersion).toBe(2);
-    const historical = {
-      ...clockGame().spec.config,
-      gameId: "lifecycle",
-      identity: {
-        protocolVersion: 1 as const,
-        runtimeVersion: "0.1.0",
-        gameId: "lifecycle",
-        revision: "1",
-      },
-    };
-    expect(registry.resolve(historical).manifest.protocolVersion).toBe(1);
+    for (const protocolVersion of [0, 2, 3])
+      expect(() =>
+        f.registry.resolve({
+          ...f.spec.config,
+          identity: { ...f.spec.config.identity, protocolVersion },
+        } as MatchConfig),
+      ).toThrow("identity");
+    expect(() =>
+      f.registry.resolve({ ...f.spec.config, identity: undefined } as unknown as MatchConfig),
+    ).toThrow("identity");
+    expect(() => f.registry.resolve({ ...f.spec.config, budgets: {} } as MatchConfig)).toThrow(
+      "fields",
+    );
   });
   test("concurrent duplicate receipts never renew clocks or debit resources twice", async () => {
     const f = setup();
@@ -201,7 +194,7 @@ describe("v2 host", () => {
     expect(saved).toHaveLength(1);
     expect(saved[0]?.replayJsonl).toContain("phase_expired");
   });
-  test("HTTP and process replay dispatch verify timestamped v2 execution", async () => {
+  test("HTTP and process replay dispatch verify timestamped execution", async () => {
     const f = setup();
     f.at(1000);
     await f.runner.reap();
@@ -233,14 +226,14 @@ describe("v2 host", () => {
       }),
     ).toMatchObject({ ok: false });
   });
-  test("HTTP advertises v2 and rejects forged host timing commands", async () => {
+  test("HTTP advertises the single protocol and rejects forged host timing commands", async () => {
     const f = lifecycleGame();
     const local = buildLocalServer({ registry: f.registry });
     local.runner.start(f.spec);
     const caps = await local.app.fetch(new Request("http://local/capabilities"));
     expect(await caps.json()).toMatchObject({
-      protocolVersion: 2,
-      supportedProtocolVersions: [1, 2],
+      protocolVersion: 1,
+      supportedProtocolVersions: [1],
     });
     const forged = await local.app.fetch(
       new Request("http://local/match/submit", {
@@ -279,7 +272,7 @@ describe("v2 host", () => {
       expect((await runner.submit("p0", "m", "finish", {})).ok).toBe(true);
       await runner.reap();
       await runner.reap();
-      expect(runner.poll("p0")).toMatchObject({ protocolVersion: 2, kind: "seat_finished" });
+      expect(runner.poll("p0")).toMatchObject({ protocolVersion: 1, kind: "seat_finished" });
       await runner.reap();
       expect(runner.poll("p0").kind).toBe("idle");
       time = 1400;
@@ -366,7 +359,7 @@ test("rejected large inputs cannot poison a process match terminal artifact", as
     await runner.reap();
     expect(aborted).toEqual([]);
     expect(artifacts).toHaveLength(1);
-    expect(runner.poll("p0")).toMatchObject({ protocolVersion: 2, kind: "match_over" });
+    expect(runner.poll("p0")).toMatchObject({ protocolVersion: 1, kind: "match_over" });
     const artifact = artifacts[0];
     if (!artifact) throw Error("expected persisted timeout artifact");
     expect(artifact.replayJsonl).toContain("player_time_exhausted");

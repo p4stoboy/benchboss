@@ -6,7 +6,7 @@ Agents connect through host-provided transports; hosts own authentication and pe
 ## Workspace and delivery
 
 - `packages/*`: MIT internal workspace modules for runtime, generic client and viewer.
-  `games/`: current catalog and immutable historical implementations.
+  `games/`: one implementation per catalog game.
 - `scripts/boundaries.ts`: enforces runtime/game/private ownership and workspace imports.
 - `packages/protocol/src/guides.ts`: versioned, structured game-development and
   independent-host instructions exposed through the guides workspace export.
@@ -18,13 +18,13 @@ Agents connect through host-provided transports; hosts own authentication and pe
   and generic client declarations; Bun builds the client JavaScript for reuse.
 - `.github/workflows/ci.yml`, `release-checks.yml`: source and conformance checks.
 - `.github/workflows/pr-policy.yml`: trusted PR metadata checks, without PR checkout.
-- `docs/releases.md`: source pinning, protocol/game revision compatibility and PR flow.
+- `docs/releases.md`: source pinning, exact match identity and PR flow.
 
 States and semantics:
 
 - Every workspace is private to npm and MIT-licensed, copyright 2026 Oscar Harris.
   Workspace versions do not create a package-release obligation. Game revisions
-  and wire protocol versions retain their independent compatibility semantics.
+  and wire protocol versions identify the contracts used by a match.
 - The official platform supplies a match server, `@benchboss/mcp-client` and spectator
   frontend. Accepted catalog games are served through its source-release process.
   Independent hosts may run their own games without official catalog approval.
@@ -36,26 +36,28 @@ States and semantics:
 
 ## Protocol and engine
 
-- `packages/protocol/src/{index,v2,legacy,validation}.ts`: current and historical manifests,
+- `packages/protocol/src/{index,contracts,validation}.ts`: manifests,
   timing/resources/metering, lifecycle, action offers, versioned envelopes, results,
   viewer metadata and capabilities; strict current validators reject malformed data.
   Ajv-backed `validateSchema` validates game inputs and schemas.
 - `packages/core/src/types.ts`: seat/configuration and `GameModule`
-  contracts; `submit` accepts tool identity as an optional fourth argument for
-  compatibility with old log execution.
-- `packages/core/src/{rng,budget,phase-machine,event-log}.ts`: seeded
-  randomness, budget accounting, game dispatch and contiguous JSONL events.
+  contracts; the referee supplies exact tool identity to game submissions.
+- `packages/core/src/match-config.ts`: shared plain-data configuration admission;
+  validates identity, seats and policies before cloning or game creation. Plugin
+  entry points additionally require exact revision, supported seats and valid rules.
+- `packages/core/src/{rng,resources,phase-machine,event-log}.ts`: seeded
+  randomness, named resource accounting, game dispatch and contiguous JSONL events.
 - `packages/core/src/{rating,tournament}.ts`: numeric helpers and seeded seat rotation.
   Current schedules return config, seed and assignments separately; scheduling
-  metadata never enters strict game rules. Historical scheduling retains its shape.
+  metadata never enters strict game rules.
   Official ranking policy is outside the public package.
 - `packages/schemas/src/`: strict observation envelopes and schema export.
 
 States and semantics:
 
-- Protocol version is `2` (runtime `0.2.0`); protocol `1` / runtime `0.1.0` remains
-  executable for historical records. `GameRevision` pins exact protocol/runtime/game
-  identity. Unknown versions and malformed policies fail admission.
+- Protocol version is `1` (runtime `0.1.0`), with one execution and wire contract.
+  `GameRevision` pins exact protocol/runtime/game identity; missing identity, unknown
+  versions, old budget shapes and malformed policies fail admission.
 - Current configurations separate `timing`, named `resources`, and `metering`. Time
   limits are positive integer milliseconds or null (disabled). Named allowances
   declare nonnegative safe-integer amount, reset scope (`match`, `phase`, `decision`) and visibility.
@@ -73,21 +75,20 @@ States and semantics:
 - Current observations contain phase/decision identities, participation, a clock
   snapshot and named resource balances. Next responses distinguish turn, waiting,
   seat_finished, match_over, match_aborted and idle. All current envelopes carry
-  protocolVersion 2; strict schemas reject inherited/non-data records and unknown fields.
+  protocolVersion 1; strict schemas reject inherited/non-data records and unknown fields.
 - Explicit outcomes contain win/loss/draw, placement, metrics and a structured cause. Numeric
-  scores remain available for old artifacts and external adapters.
+  scores remain available for ranking and external adapters.
 
 ## Referee and decisions
 
 - `packages/referee/src/game-plugin.ts`: required manifest, public
   projector, explicit safe default and game/phase wiring; optional sensing factory.
-- `packages/referee/src/match-server.ts`: version-dispatching session facade.
-  `legacy-match-server.ts` retains the v1 reducer; `v2-match-server.ts` owns current
-  timing, participation, generic metering, trusted expiry and public projections.
-- `packages/referee/src/replay-verifier.ts`: exact v2 command/log regeneration;
-  `verifyPluginReplay` dispatches by version and `verifySessionReplay` supports
+- `packages/referee/src/match-server.ts`: deterministic session reducer, timing,
+  participation, generic metering, trusted expiry and public projections.
+- `packages/referee/src/replay-verifier.ts`: exact command/log regeneration;
+  `verifyPluginReplay` uses plugin wiring and `verifySessionReplay` supports
   low-level construction options.
-- `packages/referee/src/sense-resolver.ts`: budgeted sensing contract;
+- `packages/referee/src/sense-resolver.ts`: metered sensing contract;
   results stay in the acting agent's observation/result path.
 - `packages/referee/src/conformance.ts`: reusable seeded acceptance checks
   for every advertised seat count, defaults/generated actions, bounded progress,
@@ -101,7 +102,7 @@ States and semantics:
   retry metering; timeout/default commands use the game's explicit `{tool,input}`.
   Current sensing resolvers declare a resource name and integer cost. Sensing
   responses remain private; events record only tool, resource and cost.
-- V2 player time runs concurrently for acting seats and pauses for waiting/finished
+- Player time runs concurrently for acting seats and pauses for waiting/finished
   seats. Host timestamps establish monotonic elapsed time. Total allowance never
   renews; decision limits reset after accepted game actions; phase deadlines remain
   fixed for an occurrence. Expiry wins at equality, before a late action.
@@ -111,15 +112,14 @@ States and semantics:
   can progress with zero actors; deadline-only phases do not close early.
 - Allowances use safe integer units and explicit match/phase/decision reset scopes.
   Public clock/balance metadata appears only under declared visibility; projector
-  output cannot override runtime privacy. V1 fractional budget helpers remain separate.
-- Canonical bindings supply `defaultAction`; low-level historical raw-input
-  `safeDefault` callbacks work only when one non-sensing offer matches. Ambiguous
-  raw defaults fail without changing state.
+  output cannot override runtime privacy.
+- Session bindings require `defaultAction` with exact tool/input, sourced from
+  the plugin safe default. Invalid or ambiguous defaults fail without changing state.
 - Accepted actions advance only that seat's decision counter. Phase resolution
   advances the shared epoch, including transitions with the same phase name;
   unrelated simultaneous commits preserve another seat's decision ID.
-- V1 budget turns are keyed by epoch/phase; v2 resources reset by their declared
-  scope. Observations expose current balances and exact action offers. Phase IDs
+- Resources reset by their declared scope. Observations expose current balances
+  and exact action offers. Phase IDs
   remain stable across actions in one phase and change for repeated occurrences.
 - Accepted actions/defaults retain tool identity in logs. Terminal submission and
   terminal resolution both append seed reveal, resolved config, score and result
@@ -140,7 +140,7 @@ flowchart LR
 ## Registry, hosting and persistence
 
 - `packages/host/src/registry.ts`: validates manifests, defaults and
-  configurations; selects current entries and resolves exact or explicit legacy revisions.
+  configurations; selects registered games and resolves exact identities.
 - `packages/host/src/games.ts`: binds plugins to referee sessions.
 - `packages/host/src/lobby.ts`: queue-to-match construction with opaque
   `principalId` values and injected game/configuration selection.
@@ -156,14 +156,14 @@ flowchart LR
 States and semantics:
 
 - New configurations pin the selected revision. Unsupported identities and missing
-  revisions fail. Unversioned records require an explicit `legacyRevisions` mapping.
+  revisions fail. Configuration identity is required; no fallback paths exist.
 - Principals are opaque host-adapter values, not public keys or GitHub identities.
 - `decisionId` rejects stale decisions. Reusing a request ID with the same request
-  returns its prior response; conflicting reuse fails. Legacy envelopes may omit IDs.
+  returns its prior response; conflicting reuse fails. Agent envelopes are versioned.
 - Sessions, deduplication and deadlines are in memory; persisted terminal artifacts
   are readable after restart, but active sessions are not restored.
-- V1 non-sensing decisions arm per-decision host deadlines. V2 uses the shared
-  referee clock and earliest player/decision/phase expiry. Clock snapshots are
+- Both runners use the shared referee clock and earliest player/decision/phase
+  expiry. Clock snapshots are
   extrapolated for reads without adding timer-poll commands or frames; action and
   due-expiry boundaries record authoritative time. Polling/retries never renew time.
   Both runners serialize submissions/reaping and deduplicate before execution.
@@ -195,28 +195,25 @@ States and semantics:
 
 ## Game catalog and replay verification
 
-- `games/catalog.ts`: current catalog entries and explicit historical entries.
-- `games/package.json` and `games/{rps-n,spy,chess}/package.json`: declare the current and
-  frozen legacy modules' direct dependencies, including public types used by shipped
+- `games/catalog.ts`: one entry per enabled game with its exact revision.
+- `games/package.json` and `games/{rps-n,spy,chess}/package.json`: declare game modules' direct dependencies, including public types used by shipped
   source, so standalone installs resolve them without workspace hoisting.
 - `games/rps-n/src/`: simultaneous throws, aggregate points, manifest and public view.
 - `games/spy/src/`: roles, intelligence, public statements, teams, votes, missions,
   assassination, manifest and public view; rule tables support 5/7/9 seats.
+- `games/spy/tests/generated-conformance.test.ts`: per-seed tests cover the full
+  seat/rule matrix, privacy, deterministic replay and aggregate phase coverage.
+  Each seed has an independent execution timeout.
 - `games/chess/src/position.ts`: immutable standard-chess movement, king safety,
   special moves, FEN, effective en-passant repetition identity and material draws.
 - `games/chess/src/{game,plugin}.ts`: seeded colors, alternating agent decisions,
   adjudication, manifest, full-information observations and generic board projection.
   `games/chess/tests/`: perft, rule invariants, referee, deadlines and replay checks.
-- `games/legacy-v0/`: frozen unversioned baseline games. `games/legacy-v1/`: frozen
-  protocol-v1 revision 1.0.0 games. Historical execution never imports current games.
-- `packages/core/src/replay-verifier.ts`: complete-log and terminal-score
-  verifier using the resolved game, configuration and seed.
 
 States and semantics:
 
-- Current official revisions are `2.0.0`; retained revisions are `1.0.0` and `legacy-v0`.
-  RPS supports 2–10 seats; Spy supports 5/7/9; Chess supports 2. Retained revisions remain independent
-  when new revisions enter the catalog.
+- Catalog revisions are `1.0.0`. RPS supports 2–10 seats; Spy supports 5/7/9;
+  Chess supports 2. Each game has one implementation; unavailable revisions fail.
 - RPS defaults to 15 seconds per decision. Safehouse defaults to 90 seconds per
   decision and a fixed 90-second comms cutoff that can finish early when ready.
   Chess gives each player 600000ms total without a decision cap. Inference and
@@ -240,20 +237,10 @@ States and semantics:
 - Chess observations expose colors, FEN, ranked board rows, legal UCI moves, check,
   history, limits and outcome; private state is empty. Public views show the latest
   40 plies in existing blocks and omit pending actions and seeds. Missing/unknown tool identities fail
-  direct submission and replay for this new revision.
+  direct submission and replay.
 - Pending throws and Spy hidden roles/votes/mission actions/intelligence stay private
   during play. Public results and declared role disclosure appear after terminal.
-- Verification requires exactly one final terminal event, contiguous zero-based
-  sequence positions, matching match IDs and known action seats. Any present seed
-  commitment/reveal must match the supplied seed; marker-free legacy logs are allowed.
-- Recorded configuration is compared canonically in full when present. Replay
-  executes action/default and resolution events and compares terminal score.
-  Optional `projectResult` verifies logged explicit outcomes (required in versioned
-  logs); `publishedResult` compares the separately published result with execution.
-  Both public and official HTTP replay adapters supply the projector and presentation
-  result when available.
-  This core verifier is historical-only and rejects v2 identities/accounting events.
-- V2 verification regenerates every recorded command, seeded sensing effect, clock
+- Verification regenerates every recorded command, seeded sensing effect, clock
   charge, expiry and derived event through the current referee and compares the
   complete log and published result. Unknown/injected events fail. Recorded host
   time is an input; verification does not prove physical elapsed-time truth.
@@ -264,7 +251,7 @@ States and semantics:
 - `packages/client/src/api.ts`: client with injected `ClientTransport`;
   plain HTTP convenience transport, decision tracking and stable request-ID retries.
   Empty/truncated HTTP JSON fails parsing so a lost response can trigger a safe retry.
-  V2 responses/capabilities are validated; waiting permits only current sensing
+  Protocol-v1 responses/capabilities are validated; waiting permits only current sensing
   offers and finished seats lose actionability. Explicit receipt retries remain valid.
 - `packages/client/src/{tools,mcp,main}.ts`: three public MCP tools
   (`benchboss_enqueue`, `benchboss_next`, `benchboss_submit`) and generic CLI.

@@ -11,6 +11,7 @@ import {
 } from "@benchboss/referee";
 import { makeSpyGame } from "../src/game";
 import { SPY_PHASE_TOOLS, currentPhase, isReady, spySafeDefault } from "../src/phases";
+import { plugin } from "../src/plugin";
 import { spySenseResolvers } from "../src/sensing";
 import type { SpyState } from "../src/types";
 import { baseConfig } from "./helpers";
@@ -36,7 +37,7 @@ function intelServer(seed = "sense-srv") {
       phaseToTools: SPY_PHASE_TOOLS,
       currentPhase,
       isReady,
-      safeDefault: spySafeDefault,
+      defaultAction: plugin.safeDefault,
       senseResolvers: spySenseResolvers(seed),
     }),
   );

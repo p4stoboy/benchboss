@@ -70,7 +70,7 @@ export function buildLocalServer(opts: {
           const v = runner.view(id);
           if (v) return json(v, 200, "no-store");
           const a = await artifacts.get(id);
-          const frames = a?.record.presentation?.frames;
+          const frames = a?.record.presentation.frames;
           return frames?.length
             ? json(frames[frames.length - 1]?.view, 200, "no-store")
             : json({ error: "not_found" }, 404);
@@ -99,9 +99,7 @@ export function buildLocalServer(opts: {
             return json(
               verifyPluginReplay({
                 plugin: registry.resolve(a.record.config),
-                publishedResult: a.record.presentation
-                  ? (a.record.presentation.frames.at(-1)?.view.result ?? null)
-                  : undefined,
+                publishedResult: a.record.presentation.frames.at(-1)?.view.result ?? null,
                 config: a.record.config,
                 seed: a.record.seed,
                 log: parseJsonl(a.replayJsonl),
@@ -116,9 +114,7 @@ export function buildLocalServer(opts: {
           const a = await artifacts.get(decodeURIComponent(replay[1] as string));
           if (!a) return json({ error: "not_found" }, 404);
           return replay[2]
-            ? a.record.presentation
-              ? json(a.record.presentation, 200, "public, max-age=31536000, immutable")
-              : json({ error: "legacy_presentation_unavailable" }, 404)
+            ? json(a.record.presentation, 200, "public, max-age=31536000, immutable")
             : new Response(a.replayJsonl);
         }
       }
@@ -149,7 +145,7 @@ export function buildLocalServer(opts: {
       if (!token) return json({ error: "unauthenticated" }, 401);
       if (path === "/match/next") {
         const envelope = await runner.next(token);
-        return json(envelope.kind === "idle" ? { protocolVersion: 2, ...envelope } : envelope);
+        return json(envelope);
       }
       if (path === "/match/submit") {
         if (

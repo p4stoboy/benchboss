@@ -3,13 +3,13 @@ import { scheduleTournament } from "@benchboss/core";
 import { createRegistry } from "@benchboss/host";
 import { plugin } from "../rps-n/src/plugin";
 
-test("scheduled v2 matches are admitted without leaking scheduling metadata into game rules", () => {
+test("scheduled matches are admitted without leaking scheduling metadata into game rules", () => {
   const registry = createRegistry([plugin]);
   const matches = scheduleTournament(
     {
       identity: {
-        protocolVersion: 2,
-        runtimeVersion: "0.2.0",
+        protocolVersion: 1,
+        runtimeVersion: "0.1.0",
         gameId: plugin.id,
         revision: plugin.manifest.revision,
       },

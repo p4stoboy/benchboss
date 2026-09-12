@@ -6,14 +6,12 @@ packages and the generic viewer never import the game catalog.
 
 | Game | Current revision | Supported seats |
 | --- | --- | --- |
-| `rps-n` | `2.0.0` | 2–10 |
-| `safehouse-protocol` | `2.0.0` | 5, 7, 9 |
-| `chess` | `2.0.0` | 2 |
+| `rps-n` | `1.0.0` | 2–10 |
+| `safehouse-protocol` | `1.0.0` | 5, 7, 9 |
+| `chess` | `1.0.0` | 2 |
 
-Current revisions use protocol 2 / runtime 0.2.0. `legacy-v1/` preserves the exact
-1.0.0 rules and defaults for protocol 1; `legacy-v0/` retains explicitly mapped
-unversioned history. Unknown revisions fail. Never modify a retained revision to
-match a new game: preserve its implementation and add a new revision.
+Games use protocol 1 / runtime 0.1.0. Each catalog game has one implementation;
+match identity must name its exact revision. Old experimental formats are unsupported.
 
 ## Timing and resources
 
@@ -51,7 +49,7 @@ private clocks do not reveal hidden-role participation to spectators.
 
 ## Plugin contract
 
-A current `GamePlugin` supplies a protocol-v2 manifest: game ID/revision, supported
+A current `GamePlugin` supplies a protocol-v1 manifest: game ID/revision, supported
 seats, rules/schema, `defaultTiming`, `defaultResources`, `defaultMetering`, phase
 descriptions, documentation and disclosure policy. See current RPS for a small
 example and Chess for cumulative timing.
@@ -86,11 +84,10 @@ Ranking policy belongs to the host application.
 
 ## Replay and acceptance
 
-V2 replay regenerates deterministic commands, clock accounting and derived events
+Replay regenerates deterministic commands, clock accounting and derived events
 and compares the complete log and published outcome. It uses recorded host times,
 not the current clock; this verifies the recorded accounting, not whether a host
 reported physical elapsed time honestly. Use `verifyPluginReplay` from the referee.
-The legacy core verifier only accepts protocol-v1 records.
 
 Full execution metadata is terminal-only. Public frames include only disclosed
 state. Test hidden-state invariants alongside the common `checkGameConformance`

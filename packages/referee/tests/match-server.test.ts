@@ -1,16 +1,18 @@
 import { describe, expect, test } from "bun:test";
-import { eventsToJsonl, mkSeatId, sha256Commit, verifyReplay } from "@benchboss/core";
+import { eventsToJsonl, mkSeatId, sha256Commit } from "@benchboss/core";
 import type { GameModule, MatchConfig, SeatId } from "@benchboss/core";
 import {
   type Command,
   type MatchHandle,
   type MatchSession,
+  type SessionOptions,
   isTerminal,
   newSession,
   observe,
   sessionLog,
   sessionState,
   step,
+  verifySessionReplay,
 } from "../src/index";
 import { RPS_PHASE_TOOLS, makeRpsN } from "./fixtures/round-game";
 import type { RpsState } from "./fixtures/round-game";
@@ -33,12 +35,20 @@ function cfg(rounds = 1, n = 2): MatchConfig {
     gameId: "rps-n",
     seats: Array.from({ length: n }, (_, i) => mkSeatId(i)),
     rules: { rounds },
-    budgets: {
-      wallClockMsPerDecision: 5000,
-      toolCallsPerTurn: 2,
-      intelOrScoutPoints: 0,
-      simRolloutsPerTurn: 0,
-      invalidRetries: 1,
+    identity: { protocolVersion: 1, runtimeVersion: "0.1.0", gameId: "rps-n", revision: "1.0.0" },
+    timing: {
+      playerTotalMs: null,
+      decisionLimitMs: 5000,
+      phaseLimits: {},
+      clockVisibility: "private",
+    },
+    resources: {
+      actions: { amount: 2, reset: "phase", visibility: "private" },
+      retries: { amount: 1, reset: "decision", visibility: "private" },
+    },
+    metering: {
+      action: { resource: "actions", cost: 1 },
+      invalidAction: { resource: "retries", cost: 1 },
     },
   };
 }
@@ -52,12 +62,115 @@ function server(config: MatchConfig, seed = "seed-1") {
       phaseToTools: RPS_PHASE_TOOLS,
       currentPhase: (s) => s.phase,
       isReady: (s) => config.seats.every((seat) => s.committed[seat] !== null),
-      safeDefault: () => ({ throw: "rock" }),
+      defaultAction: () => ({ tool: "match.throw", input: { throw: "rock" } }),
     }),
   );
 }
 
+function verifyRoundReplay(args: {
+  game: SessionOptions<RpsState>["game"];
+  config: MatchConfig;
+  seed: string;
+  log: Parameters<typeof verifySessionReplay<RpsState>>[0]["log"];
+}) {
+  return verifySessionReplay({
+    options: {
+      game: args.game,
+      config: args.config,
+      seed: args.seed,
+      phaseToTools: RPS_PHASE_TOOLS,
+      currentPhase: (state) => state.phase,
+      isReady: (state) => args.config.seats.every((seat) => state.committed[seat] !== null),
+      defaultAction: () => ({ tool: "match.throw", input: { throw: "rock" } }),
+    },
+    log: args.log,
+  });
+}
+
 describe("match server", () => {
+  test("low-level admission rejects invalid data before cloning or starting the game", () => {
+    let starts = 0;
+    let reads = 0;
+    const game = makeRpsN();
+    const config = cfg();
+    const badSeats = Object.defineProperty([...config.seats], "0", {
+      enumerable: true,
+      get: () => {
+        reads++;
+        return config.seats[0];
+      },
+    });
+    const invalid = [
+      ...Object.keys(config).map((key) =>
+        Object.fromEntries(Object.entries(config).filter(([name]) => name !== key)),
+      ),
+      { ...config, extra: true },
+      { ...config, identity: { ...config.identity, extra: true } },
+      { ...config, seats: badSeats },
+      { ...config, seats: [] },
+      { ...config, matchId: 7 },
+      { ...config, gameId: "other", identity: { ...config.identity, gameId: "other" } },
+      {
+        ...config,
+        rules: {
+          nested: Object.defineProperty({}, "field", {
+            enumerable: true,
+            get: () => {
+              reads++;
+              return 1;
+            },
+          }),
+        },
+      },
+      Object.defineProperty({ ...config }, "identity", {
+        enumerable: true,
+        get: () => {
+          reads++;
+          return config.identity;
+        },
+      }),
+      Object.assign(Object.create({}), config),
+    ];
+    for (const candidate of invalid) {
+      expect(() =>
+        newSession({
+          game: {
+            ...game,
+            newMatch: (config, seed) => {
+              starts++;
+              return game.newMatch(config, seed);
+            },
+          },
+          config: candidate as MatchConfig,
+          seed: "seed",
+          phaseToTools: RPS_PHASE_TOOLS,
+          currentPhase: (state) => state.phase,
+          isReady: () => false,
+          defaultAction: () => ({ tool: "match.throw", input: { throw: "rock" } }),
+        }),
+      ).toThrow();
+      expect(starts).toBe(0);
+      expect(reads).toBe(0);
+    }
+  });
+
+  test("low-level admission leaves revision availability to the plugin binding", () => {
+    const config = cfg();
+    config.identity.revision = "99.0.0";
+    expect(server(config).get().config.identity.revision).toBe("99.0.0");
+  });
+  test("rejects_unversioned_unknown_and_inconsistent_configuration_before_execution", () => {
+    const config = cfg();
+    for (const invalid of [
+      { ...config, identity: undefined },
+      { ...config, identity: { ...config.identity, protocolVersion: 2 } },
+      { ...config, identity: { ...config.identity, runtimeVersion: "unknown" } },
+      { ...config, identity: { ...config.identity, gameId: "other" } },
+      { ...config, identity: { ...config.identity, revision: "" } },
+      { ...config, budgets: {} },
+    ])
+      expect(() => server(invalid as unknown as MatchConfig)).toThrow();
+  });
   test("defaults_use_the_explicit_tool_when_multiple_tools_have_identical_schemas", () => {
     const game: GameModule<{ outcome: string | null }, unknown, unknown, number> = {
       id: "choices",
@@ -78,7 +191,12 @@ describe("match server", () => {
       isTerminal: (state) => state.outcome !== null,
       score: (state) => ({ [mkSeatId(0)]: state.outcome === "match.pass" ? 1 : 0 }),
     };
-    const config = { ...cfg(), gameId: game.id };
+    const baseConfig = cfg();
+    const config = {
+      ...baseConfig,
+      gameId: game.id,
+      identity: { ...baseConfig.identity, gameId: game.id },
+    };
     const options = {
       game,
       config,
@@ -86,7 +204,7 @@ describe("match server", () => {
       phaseToTools: { choose: ["match.resign", "match.pass"] },
       currentPhase: () => "choose",
       isReady: () => false,
-      safeDefault: () => ({}),
+      defaultAction: () => ({ tool: "match.pass", input: {} }),
     };
     const initial = newSession({
       ...options,
@@ -99,19 +217,18 @@ describe("match server", () => {
       tool: "match.pass",
       action: {},
     });
-    expect(verifyReplay({ game, config, seed: "same-schema", log: result.session.log }).ok).toBe(
-      true,
-    );
+    expect(verifySessionReplay({ options, log: result.session.log }).ok).toBe(true);
 
     for (const defaultAction of [
-      undefined,
       () => ({ tool: "match.unknown", input: {} }),
       () => ({ tool: "match.pass", input: { unexpected: true } }),
     ]) {
       const invalid = newSession({ ...options, defaultAction });
       const rejected = step(invalid, { kind: "commitDefault", seat: mkSeatId(0) });
       expect(rejected.output.ok).toBe(false);
-      expect(rejected.session).toBe(invalid);
+      expect(rejected.session.state).toEqual(invalid.state);
+      expect(rejected.session.resources).toEqual(invalid.resources);
+      expect(rejected.session.log.some((event) => event.kind === "action.default")).toBe(false);
     }
   });
   test("records_terminal_metadata_when_submit_or_default_ends_without_resolution", () => {
@@ -124,7 +241,7 @@ describe("match server", () => {
           seat: SeatId,
           input: { throw: "rock" | "paper" | "scissors" },
         ) => {
-          const result = base.submit(state, seat, input);
+          const result = base.submit(state, seat, input, "match.throw");
           return { ...result, state: { ...result.state, phase: "terminal" as const } };
         },
         step: () => {
@@ -139,7 +256,7 @@ describe("match server", () => {
         phaseToTools: RPS_PHASE_TOOLS,
         currentPhase: (state) => state.phase,
         isReady: () => false,
-        safeDefault: () => ({ throw: "rock" }),
+        defaultAction: () => ({ tool: "match.throw", input: { throw: "rock" } }),
       });
       const result = step(
         initial,
@@ -148,18 +265,16 @@ describe("match server", () => {
           : { kind, seat: mkSeatId(0) },
       );
       expect(result.output.ok).toBe(true);
-      expect(result.session.log.map((event) => event.kind)).toEqual([
-        "rng.commit",
-        kind === "callTool" ? "action.submit" : "action.default",
-        "rng.reveal",
-        "match.terminal",
-      ]);
-      expect(verifyReplay({ game, config, seed: "instant", log: result.session.log }).ok).toBe(
+      const kinds = result.session.log.map((event) => event.kind);
+      expect(kinds).toContain(kind === "callTool" ? "action.submit" : "action.default");
+      expect(kinds.filter((event) => event === "match.terminal")).toHaveLength(1);
+      expect(kinds.slice(-2)).toEqual(["rng.reveal", "match.terminal"]);
+      expect(verifyRoundReplay({ game, config, seed: "instant", log: result.session.log }).ok).toBe(
         true,
       );
       expect(
         step(result.session, { kind: "commitDefault", seat: mkSeatId(0) }).session.log,
-      ).toHaveLength(4);
+      ).toEqual(result.session.log);
     }
   });
   test("commits_seed_hash_on_construction", () => {
@@ -203,11 +318,10 @@ describe("match server", () => {
     expect(obsA).not.toContain("scissors");
   });
 
-  test("enforces_tool_budget_at_the_boundary", () => {
+  test("rejects_actions_for_a_seat_that_already_committed", () => {
     const config = cfg();
     const srv = server(config);
-    // budget toolCallsPerTurn = 2; first throw ok, a second throw same turn is rejected by game
-    // but the third tool call must hit the budget wall.
+    // Committing a throw removes that seat's action offer until the next round.
     expect(
       srv.advance({
         kind: "callTool",
@@ -235,7 +349,7 @@ describe("match server", () => {
   test("rejects_invalid_schema_without_metering_and_allows_clock_default", () => {
     const config = cfg(1);
     const srv = server(config);
-    // Send an invalid action to burn the single retry, then another invalid -> safe default committed.
+    // Schema-invalid calls spend nothing; the host can still commit a default.
     srv.advance({
       kind: "callTool",
       seat: mkSeatId(0),
@@ -274,7 +388,7 @@ describe("match server", () => {
     expect(kinds).toContain("rng.reveal");
     expect(kinds).toContain("match.terminal");
 
-    const res = verifyReplay({
+    const res = verifyRoundReplay({
       game: makeRpsN(),
       config,
       seed: "seed-term",
@@ -286,7 +400,7 @@ describe("match server", () => {
   test("replay_reproduces_committed_safe_default_actions", () => {
     const config = cfg(1);
     const srv = server(config, "seed-default");
-    // Seat A exhausts its single retry, then commits the safe default {throw:"rock"}.
+    // Schema rejection stays a no-op before an explicit default command.
     srv.advance({
       kind: "callTool",
       seat: mkSeatId(0),
@@ -311,7 +425,7 @@ describe("match server", () => {
     const kinds = sessionLog(srv.get()).map((e) => e.kind);
     expect(kinds).toContain("action.default");
 
-    const verify = verifyReplay({
+    const verify = verifyRoundReplay({
       game: makeRpsN(),
       config,
       seed: "seed-default",
@@ -322,9 +436,9 @@ describe("match server", () => {
   });
 });
 
-// A 2-phase fixture game ("comms" then "throw") proving the multi-phase budget
+// A 2-phase fixture game ("comms" then "throw") proving the multi-phase resource
 // cadence and chained resolves. NOT production code — a test fixture, hence inline.
-// - phase "comms": each seat may call `match.say` up to its toolCallsPerTurn budget;
+// - phase "comms": each seat may call `match.say` up to its action allowance;
 //   the phase is ready once every seat has called `match.done` (one per seat).
 // - resolve("comms") -> phase "throw".
 // - phase "throw": each seat throws once; resolve -> terminal.
@@ -407,7 +521,11 @@ function twoPhaseServer(config: MatchConfig, seed = "tp-seed") {
   return harness(
     newSession<TwoPhaseState>({
       game: makeTwoPhase(),
-      config,
+      config: {
+        ...config,
+        gameId: "two-phase",
+        identity: { ...config.identity, gameId: "two-phase" },
+      },
       seed,
       phaseToTools: TWO_PHASE_TOOLS,
       currentPhase: (s) => s.phase,
@@ -417,7 +535,10 @@ function twoPhaseServer(config: MatchConfig, seed = "tp-seed") {
           : s.phase === "throw"
             ? config.seats.every((seat) => s.thrown[seat] === true)
             : false,
-      safeDefault: (s) => ({ kind: s.phase === "comms" ? "done" : "throw" }),
+      defaultAction: (s) => ({
+        tool: s.phase === "comms" ? "match.done" : "match.throw",
+        input: { kind: s.phase === "comms" ? "done" : "throw" },
+      }),
     }),
   );
 }
@@ -427,23 +548,17 @@ function makeRpsServer(seats: ReturnType<typeof mkSeatId>[]) {
     newSession<RpsState>({
       game: makeRpsN(),
       config: {
+        ...cfg(),
         matchId: "m-rps",
         gameId: "rps-n",
         seats,
         rules: { rounds: 1 },
-        budgets: {
-          wallClockMsPerDecision: 5000,
-          toolCallsPerTurn: 8,
-          intelOrScoutPoints: 0,
-          simRolloutsPerTurn: 0,
-          invalidRetries: 1,
-        },
       },
       seed: "rps-seed",
       phaseToTools: RPS_PHASE_TOOLS,
       currentPhase: (s) => s.phase,
       isReady: (s) => seats.every((seat) => s.committed[seat] !== null),
-      safeDefault: () => ({ throw: "rock" }),
+      defaultAction: () => ({ tool: "match.throw", input: { throw: "rock" } }),
     }),
   );
 }
@@ -462,11 +577,10 @@ test("commitDefault forces the seat's safe default and advances", () => {
   expect(defaults.length).toBe(2);
 });
 
-describe("match server — multi-phase budget cadence and chained resolves", () => {
-  test("per_turn_budget_resets_when_seat_opens_its_next_phase_turn", () => {
-    // toolCallsPerTurn = 2. Seat 0 spends both calls in "comms", then both seats
-    // finish "comms", advancing to "throw". Seat 0 must regain its budget in
-    // "throw" and be able to throw — proving reset is per-turn, not per-resolve.
+describe("match server — multi-phase resources and chained resolves", () => {
+  test("phase_resources_reset_when_a_new_phase_begins", () => {
+    // Seat 0 exhausts its two action units in comms. Entering throw renews
+    // the phase allowance, so seat 0 can act again.
     const config = cfg(1, 2);
     const srv = twoPhaseServer(config);
     // Seat 0 burns its 2 tool calls in comms (1 say + 1 done).
@@ -486,7 +600,7 @@ describe("match server — multi-phase budget cadence and chained resolves", () 
         input: { kind: "done" },
       }).ok,
     ).toBe(true);
-    // A 3rd comms call by seat 0 in the SAME turn hits the budget wall.
+    // A third comms call by seat 0 exhausts the phase allowance.
     expect(
       srv.advance({
         kind: "callTool",
@@ -494,7 +608,7 @@ describe("match server — multi-phase budget cadence and chained resolves", () 
         tool: "match.say",
         input: { kind: "say" },
       }).reason,
-    ).toBe("tool budget exhausted");
+    ).toBe("actions-exhausted");
     // Seat 1 finishes comms -> resolve advances to "throw".
     expect(
       srv.advance({
@@ -505,7 +619,7 @@ describe("match server — multi-phase budget cadence and chained resolves", () 
       }).ok,
     ).toBe(true);
     expect(sessionState(srv.get()).phase).toBe("throw");
-    // Seat 0's budget was exhausted in comms; opening its "throw" turn resets it.
+    // Entering throw renewed seat 0's phase allowance.
     expect(
       srv.advance({
         kind: "callTool",
@@ -577,7 +691,7 @@ test("commitDefault does not log a default the game rejects", () => {
     input: { throw: "paper" },
   });
   expect(isTerminal(srv.get())).toBe(true);
-  const verdict = verifyReplay({
+  const verdict = verifyRoundReplay({
     game: makeRpsN(),
     config: srv.get().config,
     seed: srv.get().seed,

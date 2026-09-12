@@ -1,5 +1,5 @@
 import {
-  type CurrentMatchConfig,
+  type MatchConfig,
   type RatingTableRow,
   type SeatId,
   createRng,
@@ -110,8 +110,8 @@ function SpyRandomBot(name: string): Bot {
 
 const policy = {
   identity: {
-    protocolVersion: 2 as const,
-    runtimeVersion: "0.2.0",
+    protocolVersion: 1 as const,
+    runtimeVersion: "0.1.0" as const,
     gameId: SPY_GAME_ID,
     revision: plugin.manifest.revision,
   },
@@ -122,7 +122,7 @@ const policy = {
   },
   metering: plugin.manifest.defaultMetering,
 };
-function spyConfig(seed: string, seats: number, handler = false): CurrentMatchConfig {
+function spyConfig(seed: string, seats: number, handler = false): MatchConfig {
   const config = gameConfig(
     plugin.manifest,
     `spy:${seed}`,
@@ -190,7 +190,7 @@ export function runSpyMatch(opts: {
     phaseToTools: SPY_PHASE_TOOLS,
     currentPhase,
     isReady,
-    safeDefault: spySafeDefault,
+    defaultAction: plugin.safeDefault,
     senseResolvers: spyResolvers(opts.seed, handler),
     terminalSummary,
     resolveSummary,
@@ -239,7 +239,7 @@ export function verifySpyReplay(opts: {
       phaseToTools: SPY_PHASE_TOOLS,
       currentPhase,
       isReady,
-      safeDefault: spySafeDefault,
+      defaultAction: plugin.safeDefault,
       senseResolvers: spyResolvers(opts.seed, opts.handler ?? false),
       terminalSummary,
       resolveSummary,
@@ -280,7 +280,7 @@ export function runSpyTournament(opts: {
   for (const scheduled of configs) {
     const baseConfig = scheduled.config;
     matches++;
-    const config: CurrentMatchConfig = handler
+    const config: MatchConfig = handler
       ? { ...baseConfig, rules: { ...baseConfig.rules, handler: true } }
       : baseConfig;
     const matchSeed = scheduled.seed;
@@ -292,7 +292,7 @@ export function runSpyTournament(opts: {
       phaseToTools: SPY_PHASE_TOOLS,
       currentPhase,
       isReady,
-      safeDefault: spySafeDefault,
+      defaultAction: plugin.safeDefault,
       senseResolvers: spyResolvers(matchSeed, handler),
       terminalSummary,
       resolveSummary,

@@ -14,11 +14,10 @@ export function validateSchema(
   }
 }
 
-export * from "./legacy";
-export * from "./v2";
+export * from "./contracts";
 export * from "./validation";
 
-import type { ClockSnapshot, GameRevision, ResourceBalances, ResultCause } from "./v2";
+import type { ClockSnapshot, GameRevision, ResourceBalances, ResultCause } from "./contracts";
 
 export type JsonValue =
   | null

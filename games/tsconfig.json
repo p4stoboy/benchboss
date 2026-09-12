@@ -1,4 +1,4 @@
 {
   "extends": "./../tsconfig.base.json",
-  "include": ["catalog.ts", "tests", "legacy-v0"]
+  "include": ["catalog.ts", "tests"]
 }

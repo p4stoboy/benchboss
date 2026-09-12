@@ -24,10 +24,9 @@ A **manifest** describes a game's ID and revision, rules, player counts, phases,
 win conditions, timing, named resource allowances and metering defaults. For example, RPS-N has ID
 `rps-n`, supports 2–10 players, and defaults to two players and three rounds.
 
-`GET /capabilities` reports protocol version `2`, supported versions `[1,2]` and
+`GET /capabilities` reports protocol version `1`, supported versions `[1]` and
 features for player-total timing, decision limits, fixed phase deadlines,
-participation and named resources. Check compatibility before play. Version 1
-remains available for historical game revisions; its shapes are explicitly legacy.
+participation and named resources. Hosts and clients validate this single contract.
 The [protocol types](../packages/protocol/src/index.ts) define these structures.
 
 ## Join, observe, act
@@ -44,7 +43,7 @@ On this host, enqueue returns a `seatToken`. Subsequent requests send it in the
 `x-bb-seat` header. This token scheme is specific to the reference host. The
 [local example](../examples/rps-agents.ts) implements it in a small client transport.
 
-A v2 `next` response has `protocolVersion: 2` and one of these `kind` values:
+A `next` response has `protocolVersion: 1` and one of these `kind` values:
 
 | Kind | What the agent does |
 | --- | --- |
@@ -76,7 +75,7 @@ Replace the placeholder IDs with the values for your match and request.
 Use the current offers rather than assuming actions are available in every phase.
 Games may use simultaneous decisions: after submitting, an agent can receive
 `waiting` while opponents are still choosing. A rejected submission reports
-`protocolVersion: 2, ok: false` and a reason; it does not establish that a move was accepted.
+`protocolVersion: 1, ok: false` and a reason; it does not establish that a move was accepted.
 
 The deadline is an absolute Unix time in milliseconds, set by the host. Time spent
 receiving observations, running inference and delivering submissions counts while
@@ -183,22 +182,21 @@ The reference host exposes:
   seed and game revision.
 
 Match and replay routes other than the public view become available after the
-match finishes. V2 verification re-executes deterministic recorded commands, including host time,
+match finishes. Verification re-executes deterministic recorded commands, including host time,
 resource charges and expiry, and compares the entire regenerated log and outcome.
 It does not call an LLM or consult the current clock. It verifies the host's recorded
-accounting, not whether reported physical elapsed time was truthful. V1 artifacts
-use their original action/result verifier. A stored replay retains its game revision so later rule
-changes do not silently reinterpret it.
+accounting, not whether reported physical elapsed time was truthful. A stored replay
+requires an exact game revision; unavailable revisions fail explicitly.
 
 For implementing games, continue with the [game contract](../games/README.md).
 For module boundaries and implementation details, see [ARCHITECTURE.md](../ARCHITECTURE.md).
 
 ## Embedding the runtime
 
-Use `verifyPluginReplay` from `@benchboss/referee` for versioned game verification;
-it dispatches to the correct verifier. The legacy core `verifyReplay` rejects v2
-records, so timing events cannot silently escape verification. Both the in-process
-and process runners use the same referee and shared message contracts.
+Use `verifyPluginReplay` from `@benchboss/referee` for complete game verification,
+or `verifySessionReplay` when supplying custom session summary hooks. Both the
+in-process and process runners use the same referee and shared message contracts.
+Old budget objects and unversioned envelopes are unsupported.
 
 Active sessions and request receipts are still in memory. A restart aborts active
 matches; durable terminal artifacts remain readable. This protocol does not add

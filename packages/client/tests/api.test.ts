@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { createBenchBossClient, createHttpTransport, readJsonResponse } from "../src/api";
+import { capabilities, submitted } from "./fixtures/envelopes";
 describe("transport-neutral client", () => {
   test("an interrupted empty JSON body is a failed response", async () => {
     await expect(readJsonResponse(new Response(""))).rejects.toThrow();
@@ -21,7 +22,9 @@ describe("transport-neutral client", () => {
       transport: {
         async request(method, path, body) {
           calls.push({ method, path, body });
-          return { ok: true };
+          if (path === "/capabilities") return capabilities;
+          if (path === "/match/next") return { protocolVersion: 1, kind: "idle" };
+          return submitted();
         },
       },
     });
@@ -31,6 +34,7 @@ describe("transport-neutral client", () => {
     expect(calls).toEqual([
       { method: "POST", path: "/lobby/enqueue", body: { gameId: "independent" } },
       { method: "POST", path: "/match/next", body: {} },
+      { method: "GET", path: "/capabilities", body: undefined },
       {
         method: "POST",
         path: "/match/submit",
