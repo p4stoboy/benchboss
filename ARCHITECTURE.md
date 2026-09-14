@@ -269,3 +269,15 @@ States and semantics:
   Optional runtime clocks and public named balances use generic presentation.
   Unsupported versions/kinds or malformed metadata fail rendering validation.
   Viewers have no seat controls.
+- Optional `SpectatorView.canvas` carries a renderer identifier, positive integer payload
+  version and JSON public state alongside the required HTML blocks. Absent, unsupported
+  or malformed canvas data falls back to HTML. Execution/game identity is unchanged;
+  incompatible render-state changes require a new canvas version.
+- `packages/viewer/src/canvas.ts` is an opt-in browser export: explicitly registered
+  renderers validate state and draw cloned snapshots into host-owned 2D canvases.
+  Host-supplied CanvasTheme colors/fonts stay outside recorded game state.
+  Resize and pixel-density changes repaint in CSS pixels; disposal removes listeners.
+  Missing contexts or draw failures hide only the canvas. Root exports remain DOM-free.
+- `games/chess/src/{presentation,canvas}.ts` project public board/turn/last-move/check
+  state and render it through `@benchboss/game-chess/canvas`; no engine state, pending
+  action or repetition map is sent to the canvas. The existing board table remains.

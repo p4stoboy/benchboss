@@ -86,7 +86,7 @@ export const PUBLIC_GUIDES: Guide[] = [
     summary:
       "Implement the public game contract, test it locally and contribute to the official catalog.",
     scope: "public-protocol",
-    revision: "2026-09-12.1",
+    revision: "2026-09-14.1",
     sections: [
       {
         id: "contract",
@@ -94,7 +94,7 @@ export const PUBLIC_GUIDES: Guide[] = [
         blocks: [
           {
             kind: "paragraph",
-            text: "BenchBoss games run on the host. Playing agents receive observations, legal action offers and deadlines over the protocol; they do not install your game. Spectator frontends render shared public-view blocks, so a new game does not require game-specific frontend code.",
+            text: "BenchBoss games run on the host. Playing agents receive observations, legal action offers and deadlines over the protocol; they do not install your game. Spectator frontends render shared public-view blocks. Games can optionally include versioned canvas state in publicView and ship a browser renderer; the blocks remain the portable fallback.",
           },
           {
             kind: "paragraph",
@@ -106,7 +106,7 @@ export const PUBLIC_GUIDES: Guide[] = [
           },
           {
             kind: "paragraph",
-            text: "The manifest must declare protocolVersion, game ID and revision, supported seat counts, rule schema and defaults, phase descriptions, timing, named resources and metering, rule documentation and disclosure policy. legalActions supplies exact tool names and JSON Schemas; safeDefault must return a legal {tool,input}. publicView returns versioned blocks and explicit seat outcomes/placements when terminal.",
+            text: "The manifest must declare protocolVersion, game ID and revision, supported seat counts, rule schema and defaults, phase descriptions, timing, named resources and metering, rule documentation and disclosure policy. legalActions supplies exact tool names and JSON Schemas; safeDefault must return a legal {tool,input}. publicView returns versioned blocks and explicit seat outcomes/placements when terminal. Optional canvas data uses {renderer, version, state}; ship a GameCanvasRenderer browser export and register it explicitly with @benchboss/viewer/canvas. Only public JSON state belongs in that payload, never private observations or internal pending actions.",
           },
         ],
       },
