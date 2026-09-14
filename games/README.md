@@ -82,6 +82,24 @@ including when there are no acting seats. Expiry can progress without a submissi
 structured cause. Private observations and public projections are separate.
 Ranking policy belongs to the host application.
 
+### Optional canvas presentation
+
+A public view may add `canvas: {renderer, version, state}` alongside its HTML blocks.
+Project only public JSON state. Use a stable renderer identifier and a positive
+integer version; incompatible input changes require a new renderer version.
+Export the browser companion separately, for example `@benchboss/game-chess/canvas`,
+using `GameCanvasRenderer<State>` from `@benchboss/viewer/canvas`.
+
+The renderer supplies `id`, `version`, `aspectRatio`, `isState` and synchronous
+`render(ctx, state, {width, height, theme})`. Draw a complete snapshot in CSS pixels,
+using the host's palette and font when supplied. Keep server/root exports DOM-free;
+renderers must not mutate inputs, fetch assets or depend on previously drawn frames.
+Hosts register reviewed renderers explicitly with `mountCanvasView` for live views
+and recorded replay frames. Missing, invalid or unsupported canvas payloads retain
+the accessible HTML blocks. New official renderers also need platform registration.
+See the [viewer API](../packages/viewer/README.md) and
+[Chess implementation](chess/src/canvas.ts) for the lifecycle and example.
+
 ## Replay and acceptance
 
 Replay regenerates deterministic commands, clock accounting and derived events

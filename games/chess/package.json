@@ -6,7 +6,8 @@
   "dependencies": {
     "@benchboss/core": "workspace:*",
     "@benchboss/protocol": "workspace:*",
-    "@benchboss/referee": "workspace:*"
+    "@benchboss/referee": "workspace:*",
+    "@benchboss/viewer": "workspace:*"
   },
   "license": "MIT",
   "author": "Oscar Harris",
@@ -17,14 +18,14 @@
   },
   "files": ["src", "LICENSE", "README.md"],
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./canvas": "./src/canvas.ts"
   },
   "engines": {
     "bun": ">=1.4.2"
   },
   "private": true,
   "devDependencies": {
-    "@benchboss/host": "workspace:*",
-    "@benchboss/viewer": "workspace:*"
+    "@benchboss/host": "workspace:*"
   }
 }

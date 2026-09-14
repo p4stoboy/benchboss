@@ -122,3 +122,14 @@ replays recorded tool identities and actions; results and frames are determinist
 
 Changes to these semantics require retaining this implementation for old replays
 and publishing a new game revision.
+
+## Canvas presentation
+
+`plugin.publicView(state)` includes optional version-1 `chess` canvas state alongside
+the board table, FEN and move list. `@benchboss/game-chess/canvas` exports `chessCanvas`
+for browser hosts using `mountCanvasView` from `@benchboss/viewer/canvas`. Register it
+explicitly; the server/root game export does not import browser drawing code.
+
+The renderer draws White at the bottom, labels files/ranks, highlights the last move
+and checked king, and uses local vector pieces. Each call draws a complete snapshot;
+live updates and arbitrary replay seeking use the same public state.

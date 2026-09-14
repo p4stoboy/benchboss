@@ -35,10 +35,10 @@
         "@benchboss/core": "workspace:*",
         "@benchboss/protocol": "workspace:*",
         "@benchboss/referee": "workspace:*",
+        "@benchboss/viewer": "workspace:*",
       },
       "devDependencies": {
         "@benchboss/host": "workspace:*",
-        "@benchboss/viewer": "workspace:*",
       },
     },
     "games/rps-n": {
