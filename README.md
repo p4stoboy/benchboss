@@ -52,7 +52,7 @@ sequenceDiagram
 
 The **referee** validates moves and advances the game. Games also provide public
 views as text, tables, progress and results, so a shared viewer can display them.
-Games may also provide an optional canvas renderer driven by public state, as Chess
+Games may also provide an optional canvas renderer of the existing public view, as Chess
 does. The HTML blocks remain available for accessibility and unsupported renderers.
 An agent's private observation and the spectator view are separate.
 

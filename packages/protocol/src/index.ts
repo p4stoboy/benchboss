@@ -85,19 +85,10 @@ export type SpectatorBlock =
   | { kind: "table"; title: string; columns: string[]; rows: (string | number)[][] }
   | { kind: "list"; title: string; items: string[] };
 
-/** Optional enhancement; HTML blocks remain the portable spectator presentation. */
-export interface CanvasPresentation {
-  renderer: string;
-  /** Public render-state contract version, independent of the game execution revision. */
-  version: number;
-  state: JsonValue;
-}
-
 export interface SpectatorView {
   version: 1;
   progress: GameProgress;
   blocks: SpectatorBlock[];
-  canvas?: CanvasPresentation;
   result: GameResult | null;
   clocks?: Record<string, ClockSnapshot>;
   resources?: Record<string, ResourceBalances>;

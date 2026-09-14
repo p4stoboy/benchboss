@@ -14,7 +14,7 @@ import type { SenseResolver } from "./sense-resolver";
 // seeded off the match seed. Heterogeneous instances are held as GamePlugin<any>.
 export interface GamePlugin<State> {
   manifest: GameManifest;
-  // Public blocks and optional canvas state share the same live/replay projection.
+  // HTML and optional browser drawing consume this same live/replay public view.
   // Browser drawing is an optional game package export implementing GameCanvasRenderer.
   publicView(state: State): SpectatorView;
   id: string;

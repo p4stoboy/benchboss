@@ -16,7 +16,6 @@ import {
   makeChess,
 } from "./game";
 import { boardRows, inCheck, toFen } from "./position";
-import { chessCanvasState } from "./presentation";
 
 const RESOURCES = {
   actions: { amount: 1, reset: "phase", visibility: "public" },
@@ -68,7 +67,6 @@ export function chessPublicView(state: ChessState): SpectatorView {
   const firstShown = Math.max(0, state.moves.length - 40);
   return {
     version: 1,
-    canvas: { renderer: "chess", version: 1, state: { ...chessCanvasState(state) } },
     progress: {
       phase: state.phase,
       label:
