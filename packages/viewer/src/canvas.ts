@@ -1,5 +1,6 @@
 /// <reference lib="dom" />
-import type { CanvasPresentation, JsonValue, SpectatorView } from "@benchboss/protocol";
+import type { GameRevision, SpectatorView } from "@benchboss/protocol";
+import { isSpectatorView } from "./index";
 
 /** Host-owned styling; never recorded in game state or replay frames. */
 export interface CanvasTheme {
@@ -31,41 +32,15 @@ export interface CanvasViewport {
 }
 
 /** Browser-only companion to a game's publicView projector. */
-export interface GameCanvasRenderer<State> {
-  id: string;
-  version: number;
+export interface GameCanvasRenderer {
+  identity: Readonly<GameRevision>;
   aspectRatio: number;
-  isState(value: unknown): value is State;
-  /** Draw a complete snapshot in CSS pixels, with no dependence on previous draws. */
-  render(ctx: CanvasRenderingContext2D, state: State, viewport: Readonly<CanvasViewport>): void;
-}
-
-export function isCanvasPresentation(value: unknown): value is CanvasPresentation {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
-  const data = value as Record<string, unknown>;
-  if (
-    typeof data.renderer !== "string" ||
-    !/^[a-z0-9][a-z0-9._/-]{0,79}$/.test(data.renderer) ||
-    !Number.isSafeInteger(data.version) ||
-    (data.version as number) < 1
-  )
-    return false;
-  let remaining = 4096;
-  const isJson = (item: unknown, depth: number): item is JsonValue => {
-    if (--remaining < 0 || depth > 12) return false;
-    if (item === null || typeof item === "boolean") return true;
-    if (typeof item === "number") return Number.isFinite(item);
-    if (typeof item === "string") return item.length <= 16384;
-    if (Array.isArray(item))
-      return item.length <= 4096 && item.every((child) => isJson(child, depth + 1));
-    if (typeof item !== "object" || Object.getPrototypeOf(item) !== Object.prototype) return false;
-    const entries = Object.entries(item);
-    return (
-      entries.length <= 4096 &&
-      entries.every(([key, child]) => key.length <= 128 && isJson(child, depth + 1))
-    );
-  };
-  return isJson(data.state, 0);
+  /** Draw the existing public snapshot in CSS pixels. False keeps the HTML fallback. */
+  render(
+    ctx: CanvasRenderingContext2D,
+    view: Readonly<SpectatorView>,
+    viewport: Readonly<CanvasViewport>,
+  ): boolean;
 }
 
 export interface CanvasView {
@@ -76,9 +51,9 @@ export interface CanvasView {
 /** The host keeps the textual view mounted alongside this optional canvas. */
 export function mountCanvasView(
   host: HTMLElement,
-  renderers: readonly GameCanvasRenderer<unknown>[],
+  renderers: readonly GameCanvasRenderer[],
   initial: SpectatorView,
-  options: { theme?: () => CanvasTheme } = {},
+  options: { identity: GameRevision | undefined; theme?: () => CanvasTheme },
 ): CanvasView {
   const canvas = host.ownerDocument.createElement("canvas");
   canvas.hidden = true;
@@ -93,14 +68,17 @@ export function mountCanvasView(
     if (destroyed) return;
     canvas.hidden = true;
     try {
-      if (!isCanvasPresentation(view.canvas)) return;
-      const payload = view.canvas;
+      const identity = options.identity;
+      if (!identity || !isSpectatorView(view)) return;
       const renderer = renderers.find(
-        (entry) => entry.id === payload.renderer && entry.version === payload.version,
+        ({ identity: supported }) =>
+          supported.protocolVersion === identity.protocolVersion &&
+          supported.runtimeVersion === identity.runtimeVersion &&
+          supported.gameId === identity.gameId &&
+          supported.revision === identity.revision,
       );
       if (!renderer || !Number.isFinite(renderer.aspectRatio) || renderer.aspectRatio <= 0) return;
-      const state: unknown = structuredClone(payload.state);
-      if (!renderer.isState(state)) return;
+      const snapshot = structuredClone(view);
       // Measure the canvas's CSS content width, including when the host has padding.
       canvas.hidden = false;
       const width = Math.min(4096, canvas.getBoundingClientRect().width);
@@ -122,12 +100,12 @@ export function mountCanvasView(
       canvas.style.height = `${height}px`;
       context.setTransform(ratio, 0, 0, ratio, 0, 0);
       context.clearRect(0, 0, width, height);
-      renderer.render(context, state, {
+      const rendered = renderer.render(context, snapshot, {
         width,
         height,
         theme: options.theme?.() ?? DEFAULT_CANVAS_THEME,
       });
-      canvas.hidden = false;
+      canvas.hidden = rendered !== true;
     } catch {
       // Optional drawing must never take down the host's textual spectator view.
       canvas.hidden = true;

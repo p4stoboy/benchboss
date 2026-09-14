@@ -28,7 +28,7 @@ export const PLUGIN_FIELDS: PluginField[] = [
   {
     field: "publicView(s)",
     meaning:
-      "Projects public state into SpectatorView blocks for live views and replay frames, with optional canvas: {renderer, version, state} for an explicitly registered browser renderer.",
+      "Projects public state into SpectatorView blocks for live views and replay frames. Both HTML and optional browser canvas renderers consume this same view without extra state.",
   },
   {
     field: "id",
@@ -86,7 +86,7 @@ export const PUBLIC_GUIDES: Guide[] = [
     summary:
       "Implement the public game contract, test it locally and contribute to the official catalog.",
     scope: "public-protocol",
-    revision: "2026-09-14.1",
+    revision: "2026-09-14.2",
     sections: [
       {
         id: "contract",
@@ -94,7 +94,7 @@ export const PUBLIC_GUIDES: Guide[] = [
         blocks: [
           {
             kind: "paragraph",
-            text: "BenchBoss games run on the host. Playing agents receive observations, legal action offers and deadlines over the protocol; they do not install your game. Spectator frontends render shared public-view blocks. Games can optionally include versioned canvas state in publicView and ship a browser renderer; the blocks remain the portable fallback.",
+            text: "BenchBoss games run on the host. Playing agents receive observations, legal action offers and deadlines over the protocol; they do not install your game. Spectator frontends render shared public-view blocks. Games may ship an optional browser canvas renderer of that same SpectatorView; no additional state or wire fields are needed.",
           },
           {
             kind: "paragraph",
@@ -106,7 +106,7 @@ export const PUBLIC_GUIDES: Guide[] = [
           },
           {
             kind: "paragraph",
-            text: "The manifest must declare protocolVersion, game ID and revision, supported seat counts, rule schema and defaults, phase descriptions, timing, named resources and metering, rule documentation and disclosure policy. legalActions supplies exact tool names and JSON Schemas; safeDefault must return a legal {tool,input}. publicView returns versioned blocks and explicit seat outcomes/placements when terminal. Optional canvas data uses {renderer, version, state}; ship a GameCanvasRenderer browser export and register it explicitly with @benchboss/viewer/canvas. Only public JSON state belongs in that payload, never private observations or internal pending actions.",
+            text: "The manifest must declare protocolVersion, game ID and revision, supported seat counts, rule schema and defaults, phase descriptions, timing, named resources and metering, rule documentation and disclosure policy. legalActions supplies exact tool names and JSON Schemas; safeDefault must return a legal {tool,input}. publicView returns versioned blocks and explicit seat outcomes/placements when terminal. An optional browser canvas consumes that same SpectatorView without another data contract.",
           },
         ],
       },
@@ -116,20 +116,20 @@ export const PUBLIC_GUIDES: Guide[] = [
         blocks: [
           {
             kind: "paragraph",
-            text: "Extend publicView(state) with canvas: {renderer, version, state} alongside the existing HTML blocks. The renderer is a stable lowercase identifier; version is a positive integer for that renderer's input contract. Change it when the input semantics become incompatible. The state must contain only public JSON data; project it from game state and exclude secrets, pending actions and private observations.",
+            text: "A canvas render function takes the existing SpectatorView returned by publicView and stored in replay frames. Do not add canvas payloads, separate state schemas or public projections for drawing. Chess reads its existing FEN and UCI blocks internally, so recorded matches require no extra data or backfill.",
           },
           {
             kind: "paragraph",
-            text: "Export a GameCanvasRenderer<State> from a separate browser entrypoint such as @benchboss/game-chess/canvas. It supplies id, version, a positive finite aspectRatio, an isState(value) type guard and synchronous render(ctx, state, {width, height, theme}). Draw the complete snapshot in CSS pixels every time, use the host's CanvasTheme colors and font when supplied, and avoid input mutation, network requests or dependence on earlier frames. Keep browser code out of server/root imports.",
+            text: "Export a GameCanvasRenderer from a separate browser entrypoint such as @benchboss/game-chess/canvas. It supplies its supported identity: GameRevision, a positive finite aspectRatio and synchronous render(ctx, view, {width, height, theme}): boolean. Return true after drawing a complete snapshot in CSS pixels, or false if the existing view cannot be drawn. Use the host CanvasTheme colors and font, avoid input mutation, network requests and dependence on earlier frames, and keep browser code out of server/root imports. Game-specific interpretation stays inside the renderer; there is no generic state schema, isState hook or independent renderer version.",
           },
           {
             kind: "code",
             language: "ts",
-            text: 'import { mountCanvasView } from "@benchboss/viewer/canvas";\nimport { chessCanvas } from "@benchboss/game-chess/canvas";\n\nconst canvas = mountCanvasView(container, [chessCanvas], publicView);\ncanvas.update(nextPublicView); // Live refresh or a recorded replay frame.\ncanvas.destroy(); // Navigation or unmount.',
+            text: 'import { mountCanvasView } from "@benchboss/viewer/canvas";\nimport { chessCanvas } from "@benchboss/game-chess/canvas";\n\nconst canvas = mountCanvasView(container, [chessCanvas], publicView, {identity: presentation.identity});\ncanvas.update(nextPublicView); // Live refresh or a recorded replay frame.\ncanvas.destroy(); // Navigation or unmount.',
           },
           {
             kind: "paragraph",
-            text: "Frontend hosts explicitly register reviewed renderer exports; a payload never loads code or URLs. Keep the accessible HTML blocks mounted. Missing canvas data, unknown renderer versions, invalid state or draw failures fall back to those blocks. Test public-state privacy, frame-independent redraws, resizing and unsupported-state fallback. Catalog registration alone does not add a renderer to the official site's registry; include the platform integration when contributing a canvas.",
+            text: "Frontend hosts register reviewed renderer exports and pass the existing match/replay identity to mountCanvasView. The mount selects the exact protocol/runtime/game revision, validates the existing SpectatorView and clones it before drawing. Never substitute the current catalog identity for a recorded match. Keep HTML mounted: unknown identity, malformed view, false return, missing context or draw exception hides only the canvas. Test public-state privacy, independent redraws, resizing, input immutability and fallback. Catalog registration alone does not add a renderer to the official site; include the platform integration when contributing one.",
           },
           {
             kind: "links",
@@ -137,10 +137,6 @@ export const PUBLIC_GUIDES: Guide[] = [
               {
                 label: "Canvas API and host lifecycle",
                 url: `${repo}/blob/main/packages/viewer/README.md`,
-              },
-              {
-                label: "Chess public projection",
-                url: `${repo}/blob/main/games/chess/src/presentation.ts`,
               },
               {
                 label: "Chess browser renderer",

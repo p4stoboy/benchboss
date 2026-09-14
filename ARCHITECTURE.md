@@ -10,7 +10,7 @@ Agents connect through host-provided transports; hosts own authentication and pe
 - `scripts/boundaries.ts`: enforces runtime/game/private ownership and workspace imports.
 - `packages/protocol/src/guides.ts`: versioned, structured game-development and
   independent-host instructions exposed through the guides workspace export, including
-  optional public canvas state, browser renderer lifecycle and explicit host registration.
+  direct public-view canvas rendering, browser lifecycle and explicit host registration.
 - `README.md`, `docs/protocol.md`: introduction, runnable local match and agent/host message flow.
 - `examples/local-server.ts`: loopback reference host with current games and memory storage.
 - `examples/{rps,chess}-agents.ts`: two scripted HTTP agents, completed matches and replay verification;
@@ -270,15 +270,21 @@ States and semantics:
   Optional runtime clocks and public named balances use generic presentation.
   Unsupported versions/kinds or malformed metadata fail rendering validation.
   Viewers have no seat controls.
-- Optional `SpectatorView.canvas` carries a renderer identifier, positive integer payload
-  version and JSON public state alongside the required HTML blocks. Absent, unsupported
-  or malformed canvas data falls back to HTML. Execution/game identity is unchanged;
-  incompatible render-state changes require a new canvas version.
-- `packages/viewer/src/canvas.ts` is an opt-in browser export: explicitly registered
-  renderers validate state and draw cloned snapshots into host-owned 2D canvases.
-  Host-supplied CanvasTheme colors/fonts stay outside recorded game state.
-  Resize and pixel-density changes repaint in CSS pixels; disposal removes listeners.
-  Missing contexts or draw failures hide only the canvas. Root exports remain DOM-free.
-- `games/chess/src/{presentation,canvas}.ts` project public board/turn/last-move/check
-  state and render it through `@benchboss/game-chess/canvas`; no engine state, pending
-  action or repetition map is sent to the canvas. The existing board table remains.
+- Canvas is an optional browser renderer of the existing `SpectatorView`, with no
+  additional wire fields, generic state schema or renderer version. `GameCanvasRenderer`
+  declares an existing `GameRevision`, positive finite aspect ratio and synchronous
+  `render(ctx, view, viewport): boolean`. True shows the completed drawing; false
+  retains HTML. Hosts select explicitly registered code by exact game identity.
+- `packages/viewer/src/canvas.ts` validates the existing public view and draws a
+  cloned snapshot into a host-owned 2D canvas. Unknown identity, invalid public
+  views, missing contexts, false returns and exceptions hide only the canvas.
+  Host-supplied CanvasTheme colors/fonts stay outside recorded state. Resize and
+  pixel-density changes repaint in CSS pixels; disposal removes listeners.
+  Root exports remain DOM-free; no game code is loaded from public data.
+- `games/chess/src/canvas.ts` implements the browser companion exported at
+  `@benchboss/game-chess/canvas`. It reads the existing FEN and UCI blocks for
+  protocol 1/runtime 0.1.0/Chess revision 1.0.0. FEN decoding is internal to the
+  renderer and reuses Chess position/check semantics. Invalid or ambiguous FEN
+  returns false; absent or invalid move text omits only its highlight. Every draw
+  is independent of previous frames, including saved views recorded before canvas
+  support. No extra projection, pending action or repetition map is required.

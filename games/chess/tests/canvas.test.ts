@@ -3,29 +3,24 @@ import { mkSeatId } from "@benchboss/core";
 import { createRegistry } from "@benchboss/host";
 import { chessCanvas } from "../src/canvas";
 import { plugin } from "../src/plugin";
-import { chessCanvasState } from "../src/presentation";
 import { position } from "./fixtures";
 
 const config = createRegistry([plugin]).buildConfig("canvas", "chess", [mkSeatId(0), mkSeatId(1)]);
 const initial = () => plugin.makeGame().newMatch(config, "secret-seed");
 
-test("canvas projection excludes internal state and ignores pending actions", () => {
+test("the existing public view is the entire canvas input and excludes private actions", () => {
   const state = initial();
-  const projected = plugin.publicView(state).canvas;
-  expect(projected).toEqual({
-    renderer: "chess",
-    version: 1,
-    state: { ...chessCanvasState(state) },
-  });
+  const projected = plugin.publicView(state);
+  expect(projected).not.toHaveProperty("canvas");
   expect(
     plugin.publicView({
       ...state,
       pending: { tool: "match.move", move: "e2e4" },
       repetitions: { secret: 999 },
-    }).canvas,
+    }),
   ).toEqual(projected);
   expect(JSON.stringify(projected)).not.toMatch(/pending|repetitions|secret|matchId/);
-  expect(chessCanvas.isState(projected?.state)).toBe(true);
+  expect(chessCanvas.identity).toEqual(config.identity);
 });
 
 test("special positions draw directly from state, independent of previous frames", () => {
@@ -37,8 +32,7 @@ test("special positions draw directly from state, independent of previous frames
   ];
   for (const fen of fens) {
     const state = { ...initial(), position: position(fen) };
-    const data = chessCanvasState(state);
-    expect(chessCanvas.isState(data)).toBe(true);
+    const data = plugin.publicView(state);
     const calls: string[] = [];
     const methods = [
       "save",
@@ -64,33 +58,19 @@ test("special positions draw directly from state, independent of previous frames
         },
       ]),
     ) as unknown as CanvasRenderingContext2D;
-    chessCanvas.render(ctx, data, { width: 400, height: 400 });
+    expect(chessCanvas.render(ctx, data, { width: 400, height: 400 })).toBe(true);
     const first = [...calls];
     calls.length = 0;
-    chessCanvas.render(ctx, chessCanvasState(initial()), { width: 400, height: 400 });
+    chessCanvas.render(ctx, plugin.publicView(initial()), { width: 400, height: 400 });
     calls.length = 0;
-    chessCanvas.render(ctx, data, { width: 400, height: 400 });
+    expect(chessCanvas.render(ctx, data, { width: 400, height: 400 })).toBe(true);
     expect(calls).toEqual(first);
     expect(calls.some((call) => call.startsWith("fillRect:"))).toBe(true);
   }
 });
 
-test("renderer rejects malformed board state", () => {
-  const valid = chessCanvasState(initial());
-  for (const state of [
-    null,
-    {},
-    { ...valid, board: [] },
-    { ...valid, board: Array(64).fill("X") },
-    { ...valid, turn: "red" },
-    { ...valid, lastMove: "h9h1" },
-    { ...valid, checkedKing: 64 },
-  ])
-    expect(chessCanvas.isState(state)).toBe(false);
-});
-
 test("draws every piece with White at the bottom and highlights the checked king", () => {
-  const data = chessCanvasState({
+  const data = plugin.publicView({
     ...initial(),
     position: position("7k/6Q1/6K1/8/8/8/8/8 b - - 0 1"),
   });
@@ -129,7 +109,7 @@ test("draws every piece with White at the bottom and highlights the checked king
 });
 
 test("uses the host palette and font without changing public chess state", () => {
-  const state = chessCanvasState(initial());
+  const state = plugin.publicView(initial());
   const copy = structuredClone(state);
   const palette = {
     background: "background",

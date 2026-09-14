@@ -125,11 +125,18 @@ and publishing a new game revision.
 
 ## Canvas presentation
 
-`plugin.publicView(state)` includes optional version-1 `chess` canvas state alongside
-the board table, FEN and move list. `@benchboss/game-chess/canvas` exports `chessCanvas`
-for browser hosts using `mountCanvasView` from `@benchboss/viewer/canvas`. Register it
-explicitly; the server/root game export does not import browser drawing code.
+`@benchboss/game-chess/canvas` exports `chessCanvas`, a browser renderer of the
+existing `SpectatorView` returned by `plugin.publicView(state)`. It reads the FEN
+and recent UCI moves already present in live views and saved frames. No additional
+canvas state, projection, payload version or replay backfill is required.
+
+Register it explicitly using `mountCanvasView` from `@benchboss/viewer/canvas`,
+passing the recorded match/replay identity. It supports protocol 1/runtime 0.1.0/
+Chess revision 1.0.0. Invalid or ambiguous FEN returns false; missing/invalid move
+text omits the last-move highlight. HTML remains available. The server/root game
+export does not import browser drawing code.
 
 The renderer draws White at the bottom, labels files/ranks, highlights the last move
-and checked king, and uses local vector pieces. Each call draws a complete snapshot;
-live updates and arbitrary replay seeking use the same public state.
+and checked king, and uses local vector pieces with host-supplied colors/fonts.
+Every call draws a complete snapshot, including arbitrary replay seeks, without
+changing the public view or requiring any internal game state.

@@ -1,16 +1,20 @@
 import { describe, expect, test } from "bun:test";
-import type { SpectatorView } from "@benchboss/protocol";
-import { isSpectatorView, renderSpectatorView } from "../src";
-import { type GameCanvasRenderer, isCanvasPresentation, mountCanvasView } from "../src/canvas";
+import type { GameRevision, SpectatorView } from "@benchboss/protocol";
+import { renderSpectatorView } from "../src";
+import { type GameCanvasRenderer, mountCanvasView } from "../src/canvas";
 
-const view = (canvas?: unknown): SpectatorView => ({
+const identity: GameRevision = {
+  protocolVersion: 1,
+  runtimeVersion: "0.1.0",
+  gameId: "fixture",
+  revision: "1.0.0",
+};
+const view = (current = 1): SpectatorView => ({
   version: 1,
-  progress: { phase: "play", label: "Public state", current: 0, total: null },
+  progress: { phase: "play", label: "Public state", current, total: null },
   blocks: [{ kind: "text", title: "Fallback", text: "Visible information" }],
   result: null,
-  ...(canvas === undefined ? {} : { canvas: canvas as SpectatorView["canvas"] }),
 });
-const payload = (value = 1) => ({ renderer: "fixture", version: 1, state: { value } });
 const dom = (hasContext = true) => {
   let resize: (() => void) | undefined;
   let width = 200;
@@ -53,33 +57,112 @@ const dom = (hasContext = true) => {
     },
   };
 };
+
 const renderer = (
-  draw: (state: { value: number }, width: number) => void,
-): GameCanvasRenderer<{ value: number }> => ({
-  id: "fixture",
-  version: 1,
+  draw: (view: Readonly<SpectatorView>, width: number) => boolean,
+): GameCanvasRenderer => ({
+  identity,
   aspectRatio: 1,
-  isState: (state): state is { value: number } =>
-    typeof state === "object" &&
-    state !== null &&
-    "value" in state &&
-    typeof state.value === "number",
-  render: (_ctx, state, viewport) => draw(state, viewport.width),
+  render: (_ctx, view, viewport) => draw(view, viewport.width),
 });
 
-describe("optional canvas presentation", () => {
-  test("keeps HTML available for absent, malformed and future canvas payloads", () => {
-    const malformed = [
+describe("canvas of the existing public view", () => {
+  test("selects only the exact registered game identity and always keeps HTML available", () => {
+    for (const selected of [
       undefined,
-      null,
-      {},
-      { ...payload(), version: 2 },
-      { ...payload(), state: "wrong" },
-    ];
-    for (const canvas of malformed) {
-      const current = view(canvas);
-      expect(isSpectatorView(current)).toBe(true);
+      { ...identity, gameId: "other" },
+      { ...identity, revision: "2.0.0" },
+      { ...identity, protocolVersion: 2 },
+      { ...identity, runtimeVersion: "future" },
+    ]) {
+      const env = dom();
+      let draws = 0;
+      const current = view();
+      const mounted = mountCanvasView(
+        env.host,
+        [
+          renderer(() => {
+            draws++;
+            return true;
+          }),
+        ],
+        current,
+        { identity: selected as GameRevision | undefined },
+      );
+      expect(draws).toBe(0);
+      expect(env.canvas.hidden).toBe(true);
       expect(renderSpectatorView(current)).toContain("Visible information");
+      mounted.destroy();
+    }
+  });
+  test("renders arbitrary public snapshots without extra state and isolates recorded input", () => {
+    const env = dom();
+    const draws: number[] = [];
+    const current = view();
+    const original = structuredClone(current);
+    const mounted = mountCanvasView(
+      env.host,
+      [
+        renderer((snapshot, width) => {
+          draws.push(snapshot.progress.current ?? 0);
+          expect(snapshot).toEqual(view(snapshot.progress.current ?? 0));
+          expect(width).toBe(200);
+          snapshot.progress.current = 99;
+          snapshot.blocks.length = 0;
+          return true;
+        }),
+      ],
+      current,
+      { identity },
+    );
+    mounted.update(view(8));
+    mounted.update(current);
+    expect(draws).toEqual([1, 8, 1]);
+    expect(current).toEqual(original);
+    expect(env.canvas.hidden).toBe(false);
+    expect(env.canvas.width).toBe(400);
+    expect(env.canvas.height).toBe(400);
+    expect(env.transforms.at(-1)).toEqual([2, 0, 0, 2, 0, 0]);
+    mounted.destroy();
+    env.resize();
+    mounted.update(view(3));
+    expect(draws).toEqual([1, 8, 1]);
+    expect(env.hasListener()).toBe(false);
+  });
+  test("clears stale drawings on errors or false returns and recovers on update and resize", () => {
+    const env = dom();
+    const widths: number[] = [];
+    const mounted = mountCanvasView(
+      env.host,
+      [
+        renderer((snapshot, width) => {
+          if (snapshot.progress.current === 2) throw Error("draw failed");
+          if (snapshot.progress.current === 4) return false;
+          widths.push(width);
+          return true;
+        }),
+      ],
+      view(),
+      { identity },
+    );
+    expect(env.canvas.hidden).toBe(false);
+    mounted.update(view(2));
+    expect(env.canvas.hidden).toBe(true);
+    mounted.update(view(3));
+    env.setWidth(300);
+    env.resize();
+    expect(widths).toEqual([200, 200, 300]);
+    expect(env.canvas.width).toBe(600);
+    mounted.update(view(4));
+    expect(env.canvas.hidden).toBe(true);
+    mounted.destroy();
+  });
+  test("uses the existing spectator validator before any game code runs", () => {
+    for (const invalid of [
+      { ...view(), version: 2 },
+      { ...view(), blocks: [{ kind: "unknown" }] },
+      { ...view(), blocks: Array(101).fill(view().blocks[0]) },
+    ]) {
       const env = dom();
       let draws = 0;
       const mounted = mountCanvasView(
@@ -87,94 +170,39 @@ describe("optional canvas presentation", () => {
         [
           renderer(() => {
             draws++;
+            return true;
           }),
         ],
-        current,
+        invalid as SpectatorView,
+        { identity },
       );
       expect(draws).toBe(0);
       expect(env.canvas.hidden).toBe(true);
       mounted.destroy();
     }
   });
-  test("draws arbitrary snapshots at device density without mutating recorded state", () => {
-    const env = dom();
-    const draws: number[] = [];
-    const current = view(payload());
-    const mounted = mountCanvasView(
-      env.host,
-      [
-        renderer((state, width) => {
-          draws.push(state.value);
-          expect(width).toBe(200);
-          state.value = 99;
+  test("does not call a renderer without a context or a usable viewport", () => {
+    for (const [hasContext, width, aspectRatio] of [
+      [false, 200, 1],
+      [true, 0, 1],
+      [true, 200, 0],
+      [true, 200, Number.NaN],
+      [true, 200, 0.001],
+    ] as const) {
+      const env = dom(hasContext);
+      env.setWidth(width);
+      let draws = 0;
+      const drawing = {
+        ...renderer(() => {
+          draws++;
+          return true;
         }),
-      ],
-      current,
-    );
-    mounted.update(view(payload(8)));
-    mounted.update(current);
-    expect(draws).toEqual([1, 8, 1]);
-    expect(current.canvas?.state).toEqual({ value: 1 });
-    expect(env.canvas.width).toBe(400);
-    expect(env.canvas.height).toBe(400);
-    expect(env.transforms.at(-1)).toEqual([2, 0, 0, 2, 0, 0]);
-    mounted.destroy();
-    env.resize();
-    mounted.update(view(payload(3)));
-    expect(draws).toEqual([1, 8, 1]);
-    expect(env.hasListener()).toBe(false);
-  });
-  test("clears stale drawings on failures and redraws after resize or recovery", () => {
-    const env = dom();
-    const widths: number[] = [];
-    const mounted = mountCanvasView(
-      env.host,
-      [
-        renderer((state, width) => {
-          if (state.value === 2) throw Error("draw failed");
-          widths.push(width);
-        }),
-      ],
-      view(payload()),
-    );
-    expect(env.canvas.hidden).toBe(false);
-    mounted.update(view(payload(2)));
-    expect(env.canvas.hidden).toBe(true);
-    mounted.update(view(payload(3)));
-    env.setWidth(300);
-    env.resize();
-    expect(widths).toEqual([200, 200, 300]);
-    expect(env.canvas.width).toBe(600);
-    mounted.update(view());
-    expect(env.canvas.hidden).toBe(true);
-    mounted.destroy();
-  });
-  test("does not draw without a 2D context or for unbounded state", () => {
-    for (const current of [view(payload()), view({ ...payload(), state: Array(10000).fill(1) })]) {
-      const env = dom(false);
-      const mounted = mountCanvasView(
-        env.host,
-        [
-          renderer(() => {
-            throw Error("unexpected");
-          }),
-        ],
-        current,
-      );
+        aspectRatio,
+      };
+      const mounted = mountCanvasView(env.host, [drawing], view(), { identity });
+      expect(draws).toBe(0);
       expect(env.canvas.hidden).toBe(true);
       mounted.destroy();
     }
   });
-});
-
-test("bounds public canvas input independently of optional context availability", () => {
-  expect(isCanvasPresentation(payload())).toBe(true);
-  for (const invalid of [
-    { ...payload(), renderer: "https://example.com/code.js" },
-    { ...payload(), version: 0 },
-    { ...payload(), state: Array(10000).fill(1) },
-    { ...payload(), state: Number.POSITIVE_INFINITY },
-    { ...payload(), state: { missing: undefined } },
-  ])
-    expect(isCanvasPresentation(invalid)).toBe(false);
 });
