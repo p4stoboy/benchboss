@@ -170,7 +170,11 @@ transport in the local example when connecting to the reference host.
 Games produce a public view separately from each player's observation. Views use
 shared blocks such as text, tables, participants and progress, plus explicit
 win/loss/draw outcomes when the match ends. A viewer renders those blocks without
-needing a new interface for every game.
+needing a new interface for every game. An optional versioned `canvas` payload carries
+public JSON state for a separately bundled, explicitly registered browser renderer.
+Live updates and replay seeking use the same render function; unknown or invalid
+canvas payloads leave the HTML blocks available. See the
+[canvas contract](../games/README.md#optional-canvas-presentation).
 
 The reference host exposes:
 
