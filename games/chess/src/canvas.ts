@@ -3,28 +3,59 @@ import {
   DEFAULT_CANVAS_THEME,
   type GameCanvasRenderer,
 } from "@benchboss/viewer/canvas";
-import type { ChessCanvasState } from "./presentation";
+import { type Piece, type Position, inCheck } from "./position";
 
-export type { ChessCanvasState } from "./presentation";
-
-export function isChessCanvasState(value: unknown): value is ChessCanvasState {
-  if (typeof value !== "object" || value === null) return false;
-  const state = value as Record<string, unknown>;
-  return (
-    Array.isArray(state.board) &&
-    state.board.length === 64 &&
-    state.board.every(
-      (piece) => piece === null || (typeof piece === "string" && /^[prnbqkPRNBQK]$/.test(piece)),
-    ) &&
-    (state.turn === "white" || state.turn === "black") &&
-    (state.lastMove === null ||
-      (typeof state.lastMove === "string" &&
-        /^[a-h][1-8][a-h][1-8][qrbn]?$/.test(state.lastMove))) &&
-    (state.checkedKing === null ||
-      (Number.isInteger(state.checkedKing) &&
-        (state.checkedKing as number) >= 0 &&
-        (state.checkedKing as number) < 64))
-  );
+// Decode only the public position already recorded by Chess revision 1.0.0.
+function positionFromFen(fen: string): Position | undefined {
+  if (fen.length > 256) return;
+  const fields = fen.split(" ");
+  if (fields.length !== 6) return;
+  const [placement, side, castling, ep, halfmove, fullmove] = fields;
+  if (
+    !placement ||
+    !side ||
+    !castling ||
+    !ep ||
+    !halfmove ||
+    !fullmove ||
+    !/^[wb]$/.test(side) ||
+    !/^(-|K?Q?k?q?)$/.test(castling) ||
+    !/^(-|[a-h][36])$/.test(ep) ||
+    !/^\d+$/.test(halfmove) ||
+    !/^[1-9]\d*$/.test(fullmove) ||
+    !Number.isSafeInteger(Number(halfmove)) ||
+    !Number.isSafeInteger(Number(fullmove))
+  )
+    return;
+  const ranks = placement.split("/");
+  if (ranks.length !== 8) return;
+  const board = Array.from({ length: 64 }, (): Piece | null => null);
+  for (const [rank, row] of ranks.entries()) {
+    if (!/^[prnbqkPRNBQK1-8]+$/.test(row) || /[1-8]{2}/.test(row)) return;
+    let file = 0;
+    for (const symbol of row) {
+      if (/^[1-8]$/.test(symbol)) file += Number(symbol);
+      else {
+        if (file >= 8) return;
+        board[(7 - rank) * 8 + file++] = symbol as Piece;
+      }
+      if (file > 8) return;
+    }
+    if (file !== 8) return;
+  }
+  if (
+    board.filter((piece) => piece === "K").length !== 1 ||
+    board.filter((piece) => piece === "k").length !== 1
+  )
+    return;
+  return {
+    board,
+    turn: side === "w" ? "white" : "black",
+    castling: castling === "-" ? "" : castling,
+    enPassant: ep === "-" ? null : (Number(ep[1]) - 1) * 8 + ep.charCodeAt(0) - 97,
+    halfmove: Number(halfmove),
+    fullmove: Number(fullmove),
+  };
 }
 
 const polygon = (ctx: CanvasRenderingContext2D, points: readonly (readonly [number, number])[]) => {
@@ -162,12 +193,25 @@ function piece(
 const squareIndex = (square: string): number =>
   (Number(square[1]) - 1) * 8 + square.charCodeAt(0) - 97;
 
-export const chessCanvas: GameCanvasRenderer<ChessCanvasState> = {
-  id: "chess",
-  version: 1,
+export const chessCanvas: GameCanvasRenderer = {
+  identity: { protocolVersion: 1, runtimeVersion: "0.1.0", gameId: "chess", revision: "1.0.0" },
   aspectRatio: 1,
-  isState: isChessCanvasState,
-  render(ctx, state, { width, height, theme = DEFAULT_CANVAS_THEME }) {
+  render(ctx, view, { width, height, theme = DEFAULT_CANVAS_THEME }) {
+    const fenBlocks = view.blocks.filter((block) => block.title === "FEN");
+    const fen = fenBlocks[0];
+    if (fenBlocks.length !== 1 || fen?.kind !== "text") return false;
+    const position = positionFromFen(fen.text);
+    if (!position) return false;
+    const { board, turn } = position;
+    const checkedKing = inCheck(position) ? board.indexOf(turn === "white" ? "K" : "k") : null;
+    const moveBlocks = view.blocks.filter((block) => block.title === "Recent moves (UCI)");
+    const moves = moveBlocks[0];
+    const lastText =
+      moveBlocks.length === 1 && moves?.kind === "list" ? moves.items.at(-1) : undefined;
+    const lastMove =
+      typeof lastText === "string" && lastText.length <= 64
+        ? (lastText.match(/^\d+\.(?:\.\.)? ([a-h][1-8][a-h][1-8][qrbn]?)$/)?.[1] ?? null)
+        : null;
     const side = Math.min(width, height);
     const margin = side * 0.055;
     const cell = (side - margin * 2) / 8;
@@ -175,9 +219,9 @@ export const chessCanvas: GameCanvasRenderer<ChessCanvasState> = {
     ctx.fillStyle = theme.background;
     ctx.fillRect(0, 0, width, height);
     const last =
-      state.lastMove === null
+      lastMove === null
         ? []
-        : [squareIndex(state.lastMove.slice(0, 2)), squareIndex(state.lastMove.slice(2, 4))];
+        : [squareIndex(lastMove.slice(0, 2)), squareIndex(lastMove.slice(2, 4))];
     for (let rank = 0; rank < 8; rank++) {
       for (let file = 0; file < 8; file++) {
         const index = rank * 8 + file;
@@ -190,13 +234,13 @@ export const chessCanvas: GameCanvasRenderer<ChessCanvasState> = {
           ctx.globalAlpha = 0.3;
           ctx.fillRect(x, y, cell, cell);
         }
-        if (state.checkedKing === index) {
+        if (checkedKing === index) {
           ctx.fillStyle = theme.danger;
           ctx.globalAlpha = 0.5;
           ctx.fillRect(x, y, cell, cell);
         }
         ctx.globalAlpha = 1;
-        const symbol = state.board[index];
+        const symbol = board[index];
         if (symbol) piece(ctx, symbol, x, y, cell, theme);
       }
     }
@@ -208,5 +252,6 @@ export const chessCanvas: GameCanvasRenderer<ChessCanvasState> = {
       ctx.fillText(String.fromCharCode(97 + i), margin + (i + 0.5) * cell, side - margin / 2);
       ctx.fillText(String(8 - i), margin / 2, margin + (i + 0.5) * cell);
     }
+    return true;
   },
 };

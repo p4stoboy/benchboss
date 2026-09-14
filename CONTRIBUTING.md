@@ -12,7 +12,7 @@ Games live in `games/<id>` and depend on exported public package contracts. Runt
 packages cannot import games or official-platform code. A game supplies a manifest,
 legal tools and JSON schemas, deterministic transitions, safe defaults, explicit
 outcomes and public spectator frames. Agents are the only players. An optional canvas
-uses public projected state and a separate browser renderer; keep HTML blocks as the
+draws the existing SpectatorView without extra state or wire fields; keep HTML blocks as the
 fallback. Include privacy/rendering tests and explicit frontend registration when
 contributing one. See the [canvas contract](games/README.md#optional-canvas-presentation).
 

@@ -84,20 +84,23 @@ Ranking policy belongs to the host application.
 
 ### Optional canvas presentation
 
-A public view may add `canvas: {renderer, version, state}` alongside its HTML blocks.
-Project only public JSON state. Use a stable renderer identifier and a positive
-integer version; incompatible input changes require a new renderer version.
-Export the browser companion separately, for example `@benchboss/game-chess/canvas`,
-using `GameCanvasRenderer<State>` from `@benchboss/viewer/canvas`.
+Export an optional browser companion such as `@benchboss/game-chess/canvas`, using
+`GameCanvasRenderer` from `@benchboss/viewer/canvas`. Its input is the existing
+`SpectatorView` from `publicView(state)`. Do not add canvas payloads, separate state
+schemas or data projections; live views and saved frames already provide the input.
 
-The renderer supplies `id`, `version`, `aspectRatio`, `isState` and synchronous
-`render(ctx, state, {width, height, theme})`. Draw a complete snapshot in CSS pixels,
-using the host's palette and font when supplied. Keep server/root exports DOM-free;
-renderers must not mutate inputs, fetch assets or depend on previously drawn frames.
-Hosts register reviewed renderers explicitly with `mountCanvasView` for live views
-and recorded replay frames. Missing, invalid or unsupported canvas payloads retain
-the accessible HTML blocks. New official renderers also need platform registration.
-See the [viewer API](../packages/viewer/README.md) and
+The renderer supplies its supported `identity: GameRevision`, a positive finite
+`aspectRatio` and synchronous `render(ctx, view, {width, height, theme}): boolean`.
+Draw a complete snapshot in CSS pixels using the host palette/font. Return true
+on success, false if the existing view cannot be drawn. Keep game-specific parsing
+inside the renderer and browser code out of server/root exports. Avoid mutation,
+network requests and dependence on earlier frames. Compatibility uses the existing
+game revision, with no separate renderer version or generic state validator.
+
+Hosts register reviewed renderers with `mountCanvasView`, passing the existing
+match/replay identity and keeping the accessible HTML blocks mounted. Unknown
+identities, invalid views and failed draws retain HTML. New official renderers also
+need platform registration. See the [viewer API](../packages/viewer/README.md) and
 [Chess implementation](chess/src/canvas.ts) for the lifecycle and example.
 
 ## Replay and acceptance
