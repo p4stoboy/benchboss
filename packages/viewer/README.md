@@ -29,7 +29,7 @@ from the host design tokens. It is read on each draw; call `update` after a them
 change. Theme and font choices never enter persisted game state.
 
 The renderer supplies `id`, `version`, `aspectRatio`, `isState` and synchronous
-`render(ctx, state, { width, height })`. The mount validates bounded JSON and the
+`render(ctx, state, { width, height, theme })`. The mount validates bounded JSON and the
 game-specific state, clones each snapshot, owns sizing and pixel density, and
 redraws on updates/window resize. Each render must draw a complete snapshot without
 network requests, timers, input mutation or dependence on earlier frames. Renderer

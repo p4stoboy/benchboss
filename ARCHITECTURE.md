@@ -9,7 +9,8 @@ Agents connect through host-provided transports; hosts own authentication and pe
   `games/`: one implementation per catalog game.
 - `scripts/boundaries.ts`: enforces runtime/game/private ownership and workspace imports.
 - `packages/protocol/src/guides.ts`: versioned, structured game-development and
-  independent-host instructions exposed through the guides workspace export.
+  independent-host instructions exposed through the guides workspace export, including
+  optional public canvas state, browser renderer lifecycle and explicit host registration.
 - `README.md`, `docs/protocol.md`: introduction, runnable local match and agent/host message flow.
 - `examples/local-server.ts`: loopback reference host with current games and memory storage.
 - `examples/{rps,chess}-agents.ts`: two scripted HTTP agents, completed matches and replay verification;
