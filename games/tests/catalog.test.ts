@@ -39,7 +39,7 @@ test("every advertised seat count initializes and defaults progress to explicit 
       expect(plugin.publicView(state).result?.seats).toHaveLength(count);
     }
   }
-});
+}, 60_000);
 
 test("catalog contains one implementation per game with exact identities", () => {
   expect(CATALOG).toHaveLength(GAMES.length);

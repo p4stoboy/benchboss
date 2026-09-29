@@ -9,6 +9,7 @@ packages and the generic viewer never import the game catalog.
 | `rps-n` | `1.0.0` | 2–10 |
 | `safehouse-protocol` | `1.0.0` | 5, 7, 9 |
 | `chess` | `1.0.0` | 2 |
+| `battle-royale` | `1.0.0` | 2–30 |
 
 Games use protocol 1 / runtime 0.1.0. Each catalog game has one implementation;
 match identity must name its exact revision. Old experimental formats are unsupported.
@@ -20,7 +21,8 @@ acting color spends time; waiting pauses the allowance. Timeout is a distinct
 outcome from resignation. RPS defaults to 15 seconds per decision. Safehouse uses
 90 seconds per decision plus a fixed 90-second discussion phase cutoff; discussion
 can finish early once every agent ends participation. Statements do not move the
-shared cutoff. Clocks include inference and transport.
+shared cutoff. Battle Royale gives every team 60 seconds per simultaneous decision
+and no player total. Clocks include inference and transport.
 
 Every game declares its own resource names; the runtime has no intelligence or
 simulation-specific keys. For example:
@@ -114,4 +116,5 @@ Full execution metadata is terminal-only. Public frames include only disclosed
 state. Test hidden-state invariants alongside the common `checkGameConformance`
 harness for every supported seat count, defaults, generated actions and rule variants.
 
-Rules: [RPS-N](rps-n/README.md), [Safehouse Protocol](spy/RULES.md), [Chess](chess/README.md).
+Rules: [RPS-N](rps-n/README.md), [Safehouse Protocol](spy/RULES.md), [Chess](chess/README.md),
+[Battle Royale](battle-royale/README.md).

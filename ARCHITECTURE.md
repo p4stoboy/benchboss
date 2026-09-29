@@ -199,7 +199,7 @@ States and semantics:
 ## Game catalog and replay verification
 
 - `games/catalog.ts`: one entry per enabled game with its exact revision.
-- `games/package.json` and `games/{rps-n,spy,chess}/package.json`: declare game modules' direct dependencies, including public types used by shipped
+- `games/package.json` and `games/{rps-n,spy,chess,battle-royale}/package.json`: declare game modules' direct dependencies, including public types used by shipped
   source, so standalone installs resolve them without workspace hoisting.
 - `games/rps-n/src/`: simultaneous throws, aggregate points, manifest and public view.
 - `games/spy/src/`: roles, intelligence, public statements, teams, votes, missions,
@@ -212,19 +212,76 @@ States and semantics:
 - `games/chess/src/{game,plugin}.ts`: seeded colors, alternating agent decisions,
   adjudication, manifest, full-information observations and generic board projection.
   `games/chess/tests/`: perft, rule invariants, referee, deadlines and replay checks.
+- `games/battle-royale/src/{map,los,path,vision}.ts`: seeded heightmap generation
+  with spawn clusters and a connectivity retry, symmetric height-aware line of sight,
+  deterministic Dijkstra reachability and per-team vision unions.
+- `games/battle-royale/src/{classes,combat,state,resolve}.ts`: class catalog and
+  budget, range/damage modifiers, planning (reachable tiles with attackable targets)
+  from a seat's own knowledge, sighting memory, and WeGo round resolution:
+  initiative-ordered movement, simultaneous damage/heals, storm, elimination, ranking
+  and host-forced forfeits.
+- `games/battle-royale/src/{game,defaults,plugin}.ts`: loadout/orders phases,
+  fog-filtered observations and round events, semantic order validation, safe
+  defaults, manifest, participation, host events and the fog-safe public view.
+  `games/battle-royale/tests/`: map/LoS/path properties, rule scenarios, privacy
+  invariants, referee integration and generated conformance at sampled seat counts
+  (2, 5, 12, 30) with small rules, since harness cost grows with the square of commands.
 
 States and semantics:
 
 - Catalog revisions are `1.0.0`. RPS supports 2–10 seats; Spy supports 5/7/9;
-  Chess supports 2. Each game has one implementation; unavailable revisions fail.
+  Chess supports 2; Battle Royale supports 2–30 (default 4). Each game has one
+  implementation; unavailable revisions fail.
 - RPS defaults to 15 seconds per decision. Safehouse defaults to 90 seconds per
   decision and a fixed 90-second comms cutoff that can finish early when ready.
   Chess gives each player 600000ms total without a decision cap. Inference and
   transport consume active time. Current defaults are host-configurable.
 - RPS and Chess declare an actions resource of one per phase; Safehouse declares
-  eight actions per phase and three private research units per match. Each current
-  game declares one semantic retry per match. Names are game-owned and generic
+  eight actions per phase and three private research units per match. RPS, Chess
+  and Safehouse declare one semantic retry per match; Battle Royale declares three
+  actions per phase (one accepted submission plus two rejected calls, since every
+  call spends an action) and two retries per decision. Names are game-owned and generic
   metering references them; runtime code contains no game-specific allowance names.
+- Battle Royale defaults to 60 seconds per decision and no player total. Rules
+  `maxRounds` (4..200, default 40) and `tilesPerSeat` (9..100, default 25); unknown
+  keys fail. Phases: `loadout` (every seat acts once), repeated `orders` (every
+  non-eliminated seat acts once per round), `terminal`. Both phases resolve when the
+  last acting seat has committed; decision expiry commits the safe default.
+- Battle Royale map: near-square grid of at least `tilesPerSeat × seats` tiles, tile
+  height 0..3 and kind open/cover/wall, generated from `rng.fork("map")` with up to 24
+  attempts before a flat fallback; spawn clusters are assigned to seats by a seeded
+  shuffle. Terrain is public. Steps: +1 level costs 2, otherwise 1, |Δh| ≥ 2 or wall
+  impassable. Line of sight is symmetric; walls and surfaces above the eye-to-eye line
+  block; cover does not. Vision = class vision + observer height.
+- Battle Royale loadout: exactly three classes from scout/grunt/vanguard/ranger/medic/
+  sniper with total cost ≤ 9; default three grunts. Orders: at most one order per
+  living own unit with optional `moveTo` (must be in that unit's reachable set computed
+  against own units and visible enemies) and optional attack (visible target listed for
+  the destination), heal (medic, another own unit) or hold. Semantic rejection spends a
+  retry; exhaustion commits the default (move each unit to the reachable tile least
+  exposed to next round's zone, no action). Both envelopes take optional `chat`
+  (1..280 chars) appended as `{round, seat, text}` to a global public log only when the
+  envelope is accepted; defaults never post; eliminated seats have no envelope.
+- Battle Royale resolution: movement by rotating seat initiative then order sequence,
+  stopping before any occupied tile (hidden enemies included); attacks and heals resolve
+  against final positions with damage and healing summed before deaths; storm damage
+  `1 + floor(round/10)` outside a Chebyshev zone that shrinks linearly to the centre tile
+  at `floor(3·maxRounds/4)`; teams with no living unit finish together with placement
+  `1 + teams alive`. Terminal at ≤ 1 team or past `maxRounds`; survivors rank by units,
+  hit points, then damage dealt (competition ranking). Score is `(N − placement)/(N − 1)`
+  averaged across tied placements. `player_time_exhausted` forfeits the batch; other host
+  events leave state unchanged so the runtime commits the default.
+- Battle Royale privacy: observations carry own units with reachable/target lists,
+  enemies inside current vision, remembered last sightings, and last-round events only
+  for own units or positions currently visible, plus the 50 most recent chat lines; the
+  map is row-major `heights[y][x]` and `terrain[y][x]` grids. Live public views carry
+  height/terrain tables, counts, zone, eliminations and the same chat window and are
+  independent of positions, rosters and memory. History is an ordered list of entries
+  (spawn, each resolved round, each in-round host forfeit) with zone radius, storm
+  damage, living units and events (moves carry the walked tile path); the terminal
+  view emits it as scalar `Loadouts`,
+  `Rounds`, `Units` and `Events` tables plus the full chat log, enough to replay the
+  match without game code.
 - Chess starts at the standard board with seed-assigned colors and White to move.
   `move` accepts exactly `{move: lowercaseUci}` through `match.move`, including an
   explicit q/r/b/n promotion suffix, or `{}` through `match.resign`. Only the active
