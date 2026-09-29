@@ -21,6 +21,7 @@ import {
   makeBattleRoyale,
   recentChat,
 } from "./game";
+import { itemLabel } from "./loot";
 import { heightGrid, stormDamage, terrainGrid, zoneRadius } from "./map";
 import { forfeitSeats } from "./resolve";
 import { aliveSeats, isEliminated, ownUnits, unitById } from "./state";
@@ -92,7 +93,11 @@ const EVENT_COLUMNS = [
   "Path",
 ];
 
-/** One scalar row per event; blanks mean not applicable. Paths are "x,y" tiles separated by spaces. */
+/**
+ * One scalar row per event; blanks mean not applicable. Paths are "x,y" tiles separated by
+ * spaces. Notes carry the move block flag, fizzle reason, ability id or picked-up item label;
+ * a weapon pickup's value is the weapon left behind.
+ */
 function eventRow(entry: number, event: RoundEvent): (string | number)[] {
   const cells = (
     kind: string,
@@ -157,6 +162,32 @@ function eventRow(entry: number, event: RoundEvent): (string | number)[] {
       );
     case "fizzle":
       return cells("fizzle", event.unit, event.target, "", null, null, "", event.reason, "");
+    case "ability":
+      return cells(
+        "ability",
+        event.unit,
+        event.target ?? "",
+        "",
+        event.from,
+        event.at ?? null,
+        "",
+        event.ability,
+        "",
+      );
+    case "blast":
+      return cells("blast", event.unit, event.target, "", null, event.at, event.damage, "", "");
+    case "pickup":
+      return cells(
+        "pickup",
+        event.unit,
+        "",
+        "",
+        null,
+        event.at,
+        event.dropped ?? "",
+        event.item === "weapon" ? `weapon:${event.weapon}` : event.item,
+        "",
+      );
     case "storm":
       return cells("storm", event.unit, "", "", null, event.at, event.damage, "", "");
     case "death":
@@ -166,7 +197,7 @@ function eventRow(entry: number, event: RoundEvent): (string | number)[] {
   }
 }
 
-/** Live frames carry terrain, counts, eliminations and chat only; positions and rosters appear at terminal. */
+/** Live frames carry terrain, counts, eliminations and chat only; positions, loot and rosters appear at terminal. */
 export function brPublicView(state: BrState): SpectatorView {
   const result = brResult(state);
   const round = Math.max(1, state.round);
@@ -240,12 +271,44 @@ export function brPublicView(state: BrState): SpectatorView {
       {
         kind: "table",
         title: "Units",
-        columns: ["Entry", "Unit", "Seat", "Class", "X", "Y", "HP"],
+        columns: [
+          "Entry",
+          "Unit",
+          "Seat",
+          "Class",
+          "X",
+          "Y",
+          "HP",
+          "Armour",
+          "Weapon",
+          "Ready round",
+          "Hidden until",
+        ],
         rows: state.history.flatMap((entry, i) =>
           entry.units.map((u) => {
             const unit = unitById(state, u.id);
-            return [i, u.id, unit?.seat ?? "", unit?.cls ?? "", u.x, u.y, u.hp];
+            return [
+              i,
+              u.id,
+              unit?.seat ?? "",
+              unit?.cls ?? "",
+              u.x,
+              u.y,
+              u.hp,
+              u.armour,
+              u.weapon,
+              u.readyRound,
+              u.hiddenUntil,
+            ];
           }),
+        ),
+      },
+      {
+        kind: "table",
+        title: "Loot",
+        columns: ["Entry", "X", "Y", "Item"],
+        rows: state.history.flatMap((entry, i) =>
+          entry.items.map((item) => [i, item.x, item.y, itemLabel(item)]),
         ),
       },
       {
@@ -275,10 +338,10 @@ export const plugin = {
   manifest: {
     protocolVersion: 1,
     id: BR_GAME_ID,
-    revision: "1.0.0",
+    revision: "2.0.0",
     title: "Battle Royale",
     description:
-      "Teams of three actors fight on a fogged heightmap; simultaneous orders, a closing storm and last team standing.",
+      "Teams of three armed actors with class abilities fight over loot on a fogged heightmap; simultaneous orders, a closing storm and last team standing.",
     rulesSource: "games/battle-royale/README.md",
     seatCounts: Array.from({ length: MAX_SEATS - MIN_SEATS + 1 }, (_, i) => MIN_SEATS + i),
     defaultSeats: 4,
@@ -294,7 +357,7 @@ export const plugin = {
       },
       {
         phase: "orders",
-        what: "Every living team submits one order per unit. Movement resolves in rotating initiative, attacks and heals land simultaneously, then the storm damages units outside the zone. Repeats until one team remains or the round cap.",
+        what: "Every living team submits one order per unit: a move plus an attack, class ability, loot pickup or hold. Movement resolves in rotating initiative, pickups and self-abilities apply, attacks, blasts and heals land simultaneously, then the storm damages units outside the zone. Repeats until one team remains or the round cap.",
       },
     ],
     winConditions: [

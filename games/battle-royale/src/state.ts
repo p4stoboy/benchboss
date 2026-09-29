@@ -1,9 +1,9 @@
 import type { SeatId } from "@benchboss/core";
-import { CLASSES } from "./classes";
+import { ABILITIES, CLASSES } from "./classes";
 import { attackBlocker } from "./combat";
-import { key } from "./map";
+import { type GameMap, chebyshev, inBounds, key } from "./map";
 import { type Reach, reachableTiles } from "./path";
-import type { BrState, Point, SeenUnit, Unit } from "./types";
+import type { BrState, Point, Reveal, SeenItem, SeenUnit, Unit } from "./types";
 import { visibleTiles } from "./vision";
 
 export const unitById = (state: BrState, id: string): Unit | undefined =>
@@ -15,6 +15,8 @@ export const isEliminated = (state: BrState, seat: SeatId): boolean =>
 export const aliveSeats = (state: BrState): SeatId[] =>
   state.seats.filter((seat) => !isEliminated(state, seat));
 export const maxHp = (unit: Unit): number => CLASSES[unit.cls].hp;
+export const abilityReady = (state: BrState, unit: Unit): boolean => state.round >= unit.readyRound;
+export const isHidden = (state: BrState, unit: Unit): boolean => unit.hiddenUntil >= state.round;
 
 /** Seats rotate through first initiative each round; eliminated seats are skipped. */
 export function initiative(state: BrState): SeatId[] {
@@ -24,11 +26,40 @@ export function initiative(state: BrState): SeatId[] {
   return rotated.filter((seat) => !isEliminated(state, seat));
 }
 
-export const visionOf = (state: BrState, seat: SeatId): Set<string> =>
-  visibleTiles(state.map, state.units, seat);
+export const activeReveals = (state: BrState, seat: SeatId): Reveal[] =>
+  state.reveals.filter((r) => r.seat === seat && r.untilRound >= state.round);
 
+const inReveal = (reveals: readonly Reveal[], p: Point): boolean =>
+  reveals.some((r) => chebyshev(r.center, p) <= r.radius);
+
+/** Line-of-sight vision of the seat's living units plus its active recon discs. */
+export function visionOf(state: BrState, seat: SeatId): Set<string> {
+  const seen = visibleTiles(state.map, state.units, seat);
+  for (const reveal of activeReveals(state, seat)) addDisc(state.map, seen, reveal);
+  return seen;
+}
+
+function addDisc(map: GameMap, seen: Set<string>, reveal: Reveal): void {
+  const { center, radius } = reveal;
+  for (let y = center.y - radius; y <= center.y + radius; y++)
+    for (let x = center.x - radius; x <= center.x + radius; x++)
+      if (inBounds(map, { x, y })) seen.add(key({ x, y }));
+}
+
+/**
+ * Living enemies on seen tiles. A camouflaged enemy is only visible when one of the seat's
+ * living units is adjacent to it or it stands inside one of the seat's active recon discs.
+ */
 export function visibleEnemies(state: BrState, seat: SeatId, seen = visionOf(state, seat)): Unit[] {
-  return state.units.filter((u) => u.alive && u.seat !== seat && seen.has(key(u)));
+  const own = ownUnits(state, seat);
+  const reveals = activeReveals(state, seat);
+  return state.units.filter(
+    (u) =>
+      u.alive &&
+      u.seat !== seat &&
+      seen.has(key(u)) &&
+      (!isHidden(state, u) || own.some((o) => chebyshev(o, u) <= 1) || inReveal(reveals, u)),
+  );
 }
 
 export interface UnitPlan {
@@ -68,10 +99,33 @@ function computePlans(state: BrState, seat: SeatId): UnitPlan[] {
     ].map((reach) => ({
       ...reach,
       targets: enemies
-        .filter((enemy) => attackBlocker(state.map, reach, unit.cls, enemy) === null)
+        .filter((enemy) => attackBlocker(state.map, reach, unit.weapon, enemy) === null)
         .map((enemy) => enemy.id),
     })),
   }));
+}
+
+/** Items a seat knows about: everything last seen on a tile it could see. */
+export const knownItems = (state: BrState, seat: SeatId): SeenItem[] =>
+  Object.values(state.itemMemory[seat] ?? {});
+
+export const knownItemAt = (state: BrState, seat: SeatId, p: Point): SeenItem | undefined =>
+  state.itemMemory[seat]?.[key(p)];
+
+/** Every visible tile's item knowledge is refreshed; unseen tiles keep their last sighting. */
+export function rememberItems(state: BrState): BrState {
+  const itemMemory: BrState["itemMemory"] = {};
+  for (const seat of state.seats) {
+    const known: Record<string, SeenItem> = { ...(state.itemMemory[seat] ?? {}) };
+    if (!isEliminated(state, seat)) {
+      const seen = visionOf(state, seat);
+      for (const tile of Object.keys(known)) if (seen.has(tile)) delete known[tile];
+      for (const item of state.items)
+        if (seen.has(key(item))) known[key(item)] = { ...item, round: state.round };
+    }
+    itemMemory[seat] = known;
+  }
+  return { ...state, itemMemory };
 }
 
 export function rememberSightings(state: BrState): BrState {
@@ -87,11 +141,13 @@ export function rememberSightings(state: BrState): BrState {
           x: enemy.x,
           y: enemy.y,
           hp: enemy.hp,
+          armour: enemy.armour,
+          weapon: enemy.weapon,
           round: state.round,
         };
     memory[seat] = entries;
   }
-  return { ...state, memory };
+  return rememberItems({ ...state, memory });
 }
 
 export const samePoint = (a: Point, b: Point): boolean => a.x === b.x && a.y === b.y;
