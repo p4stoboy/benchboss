@@ -3,7 +3,7 @@ import { ABILITIES, CLASSES } from "./classes";
 import { attackBlocker } from "./combat";
 import { type GameMap, chebyshev, inBounds, key } from "./map";
 import { type Reach, reachableTiles } from "./path";
-import type { BrState, Point, Reveal, SeenUnit, Unit } from "./types";
+import type { BrState, Point, Reveal, SeenItem, SeenUnit, Unit } from "./types";
 import { visibleTiles } from "./vision";
 
 export const unitById = (state: BrState, id: string): Unit | undefined =>
@@ -105,6 +105,29 @@ function computePlans(state: BrState, seat: SeatId): UnitPlan[] {
   }));
 }
 
+/** Items a seat knows about: everything last seen on a tile it could see. */
+export const knownItems = (state: BrState, seat: SeatId): SeenItem[] =>
+  Object.values(state.itemMemory[seat] ?? {});
+
+export const knownItemAt = (state: BrState, seat: SeatId, p: Point): SeenItem | undefined =>
+  state.itemMemory[seat]?.[key(p)];
+
+/** Every visible tile's item knowledge is refreshed; unseen tiles keep their last sighting. */
+export function rememberItems(state: BrState): BrState {
+  const itemMemory: BrState["itemMemory"] = {};
+  for (const seat of state.seats) {
+    const known: Record<string, SeenItem> = { ...(state.itemMemory[seat] ?? {}) };
+    if (!isEliminated(state, seat)) {
+      const seen = visionOf(state, seat);
+      for (const tile of Object.keys(known)) if (seen.has(tile)) delete known[tile];
+      for (const item of state.items)
+        if (seen.has(key(item))) known[key(item)] = { ...item, round: state.round };
+    }
+    itemMemory[seat] = known;
+  }
+  return { ...state, itemMemory };
+}
+
 export function rememberSightings(state: BrState): BrState {
   const memory: BrState["memory"] = {};
   for (const seat of state.seats) {
@@ -124,7 +147,7 @@ export function rememberSightings(state: BrState): BrState {
         };
     memory[seat] = entries;
   }
-  return { ...state, memory };
+  return rememberItems({ ...state, memory });
 }
 
 export const samePoint = (a: Point, b: Point): boolean => a.x === b.x && a.y === b.y;

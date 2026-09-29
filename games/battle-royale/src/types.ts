@@ -87,6 +87,9 @@ export type RoundEvent =
   | { kind: "death"; unit: string; at: Point }
   | { kind: "eliminated"; seat: SeatId; placement: number };
 
+/** An item as last seen by a team, at the round it was seen. */
+export type SeenItem = Item & { round: number };
+
 export interface SeenUnit {
   id: string;
   seat: SeatId;
@@ -142,9 +145,11 @@ export interface BrState {
   round: number;
   loadouts: Record<SeatId, ClassId[]>;
   units: Unit[];
-  /** Public loot; at most one item per tile. */
+  /** Loot on the ground; at most one item per tile. Teams only learn of items they can see. */
   items: Item[];
   reveals: Reveal[];
+  /** Per seat, items by tile key as last seen; refreshed for every visible tile each round. */
+  itemMemory: Record<SeatId, Record<string, SeenItem>>;
   orders: Record<SeatId, Orders>;
   /** Resolved movement per ordered unit, computed when the order was accepted. */
   paths: Record<SeatId, Record<string, Point[]>>;

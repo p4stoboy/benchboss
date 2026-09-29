@@ -40,6 +40,14 @@ function assertObservationPrivacy(state: BrState, seat: ReturnType<typeof mkSeat
     const memory = state.memory[seat]?.[remembered.id];
     expect(memory).toEqual(remembered);
   }
+  for (const item of observation.privateState.items) {
+    expect(state.itemMemory[seat]?.[key(item)]).toEqual(item);
+    if (seen.has(key(item))) {
+      const { round: _round, ...actual } = item;
+      expect(state.items).toContainEqual(actual);
+    }
+  }
+  expect(JSON.stringify(observation.publicState)).not.toContain('"items"');
   for (const event of observation.privateState.lastRound) {
     if (event.kind === "eliminated") continue;
     if (own.has(event.unit) || ("target" in event && own.has(event.target ?? ""))) continue;
@@ -135,6 +143,8 @@ test("live public views depend only on disclosed state; terminal views disclose 
     lastRound: [{ kind: "death", unit: "seat:0/0", at: { x: 1, y: 1 } }],
     history: [],
     paths: {},
+    items: [],
+    itemMemory: {},
   };
   expect(plugin.publicView(scrambled)).toEqual(plugin.publicView(state));
   expect(JSON.stringify(plugin.publicView(state))).not.toContain("ranger");
@@ -187,6 +197,8 @@ test("generated matches never leak unseen positions through observations or live
         ...state,
         units: state.units.map((u) => ({ ...u, x: 0, y: 0 })),
         memory: {},
+        items: [],
+        itemMemory: {},
         history: [],
       };
       expect(plugin.publicView(hidden)).toEqual(plugin.publicView(state));

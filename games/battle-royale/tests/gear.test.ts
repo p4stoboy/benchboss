@@ -148,7 +148,7 @@ test("a pickup is rejected without an item at the destination and fizzles when t
     { unit: "seat:0/0", moveTo: { x: 4, y: 0 }, action: { kind: "pickup" } },
   ]);
   expect(rejected.accepted).toBe(false);
-  expect(rejected.reason).toContain("nothing to pick up");
+  expect(rejected.reason).toContain("no known item");
   const blocked = submitAll(state, {
     [s0]: { orders: [{ unit: "seat:0/0", moveTo: { x: 3, y: 0 }, action: { kind: "pickup" } }] },
   });
@@ -329,7 +329,7 @@ test("recon reveals enemies behind walls and through camouflage for the next ord
   expect(faded.reveals).toEqual([]);
 });
 
-test("loot is seeded, one item per tile, never on walls or beside spawns, and public to all", () => {
+test("loot is seeded, one item per tile, never on walls or beside spawns, and hidden until seen", () => {
   for (const seats of [2, 5, 12]) {
     const map = generateMap(createRng(`loot-${seats}`).fork("map"), seats, 150, 3);
     const items = scatterLoot(createRng(`loot-${seats}`).fork("loot"), map);
@@ -346,13 +346,78 @@ test("loot is seeded, one item per tile, never on walls or beside spawns, and pu
     expect(scatterLoot(createRng("other").fork("loot"), map)).not.toEqual(items);
     expect(items.some((item) => item.kind === "weapon")).toBe(true);
   }
-  const state = newMatch(4, "loot-public");
+  const state = newMatch(4, "loot-fogged");
   expect(state.items.length).toBeGreaterThan(0);
-  expect(game.observe(state, s1).publicState.items).toEqual(state.items);
-  const live = plugin
-    .publicView(state)
-    .blocks.find((b) => b.kind === "table" && b.title === "Items");
-  expect(live && "rows" in live ? live.rows.length : -1).toBe(state.items.length);
+  expect(game.observe(state, s1).privateState.items).toEqual([]);
+  expect(JSON.stringify(plugin.publicView(state))).not.toContain("Items");
   const first = state.items[0] as Item;
   expect(itemAt(state.items, first)).toEqual(first);
+});
+
+test("a team learns of an item when it sees the tile, remembers it out of sight and cannot probe fogged tiles", () => {
+  const state = scenario(
+    ["00#00000000"],
+    [
+      { seat: 0, cls: "grunt", x: 0, y: 0 },
+      { seat: 1, cls: "grunt", x: 10, y: 0 },
+    ],
+    {},
+    [
+      { x: 1, y: 0, kind: "armour" },
+      { x: 4, y: 0, kind: "health" },
+    ],
+  );
+  const known = game.observe(state, s0).privateState.items;
+  expect(known).toEqual([{ x: 1, y: 0, kind: "armour", round: 1 }]);
+  // Seat 0 walks over the armour and away again; seat 1 reaches sight of the health pack.
+  const scouted = submitAll(state, {
+    [s0]: { orders: [{ unit: "seat:0/0", moveTo: { x: 1, y: 0 } }] },
+    [s1]: { orders: [{ unit: "seat:1/0", moveTo: { x: 9, y: 0 } }] },
+  });
+  expect(game.observe(scouted, s1).privateState.items).toEqual([
+    { x: 4, y: 0, kind: "health", round: 2 },
+  ]);
+  // Seat 1 takes the health pack while seat 0 has never seen that tile.
+  const taken = submitAll(scouted, {
+    [s1]: {
+      orders: [{ unit: "seat:1/0", moveTo: { x: 5, y: 0 } }],
+    },
+  });
+  const grabbed = submitAll(taken, {
+    [s1]: {
+      orders: [{ unit: "seat:1/0", moveTo: { x: 4, y: 0 }, action: { kind: "pickup" } }],
+    },
+  });
+  expect(grabbed.items).toEqual([{ x: 1, y: 0, kind: "armour" }]);
+  expect(game.observe(grabbed, s1).privateState.items).toEqual([]);
+  expect(game.observe(grabbed, s0).privateState.items).toEqual([
+    { x: 1, y: 0, kind: "armour", round: 4 },
+  ]);
+  // The wall keeps the armour tile out of seat 1's sight throughout.
+  const seat1Knows = game.observe(grabbed, s1).privateState.items.map((i) => i.kind);
+  expect(seat1Knows).toEqual([]);
+});
+
+test("a pickup ordered onto a fogged tile is rejected identically whether or not an item lies there", () => {
+  // The wall hides (6,0) and (6,1) from the grunt at (10,2); both stay reachable around it.
+  const fog = scenario(
+    ["00000000000", "0000000#000", "0000000#000"],
+    [
+      { seat: 0, cls: "grunt", x: 0, y: 0 },
+      { seat: 1, cls: "grunt", x: 10, y: 2 },
+    ],
+    {},
+    [{ x: 6, y: 1, kind: "health" }],
+  );
+  expect(game.observe(fog, s1).privateState.items).toEqual([]);
+  const order = (x: number, y: number, pickup: boolean) =>
+    orders(fog, s1, [
+      { unit: "seat:1/0", moveTo: { x, y }, ...(pickup ? { action: { kind: "pickup" } } : {}) },
+    ]);
+  expect(order(6, 1, false).accepted).toBe(true);
+  expect(order(6, 0, false).accepted).toBe(true);
+  const withItem = order(6, 1, true);
+  const without = order(6, 0, true);
+  expect(withItem.accepted).toBe(false);
+  expect(withItem.reason.replace("6,1", "")).toBe(without.reason.replace("6,0", ""));
 });

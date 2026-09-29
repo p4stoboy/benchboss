@@ -115,10 +115,13 @@ ignores it. Units spawn with none; the cap is 6.
 
 Loot is scattered at match start over non-wall tiles at least 3 tiles from every
 spawn tile, about one item per 30 tiles: health packs (+5 hit points, up to the
-maximum), armour plates (+4 armour, up to the cap) and loot weapons. Loot
-positions are public: every observation lists `items` and spectators see them.
-A unit takes the item on its final tile with the `pickup` action; a weapon
-pickup leaves the unit's old weapon on the tile, so items are never lost.
+maximum), armour plates (+4 armour, up to the cap) and loot weapons. Loot is
+fogged like units: a team learns of an item when one of its units can see the
+tile and remembers it afterwards; every visible tile's knowledge is refreshed
+each round, so an item taken while nobody of yours was watching stays in your
+list until you look again. A unit takes the item on its final tile with the
+`pickup` action; a weapon pickup leaves the unit's old weapon on the tile, so
+items are never lost. Spectators see loot only in the terminal frame.
 
 ### Rounds
 
@@ -140,7 +143,8 @@ Every living team submits `match.orders` with at most one order per unit:
 - One action per unit: `attack` (a target visible now and listed under `targets`
   for the chosen destination), `ability` (the class ability when ready, with
   `at` for grenade, `target` for volley and heal, nothing otherwise), `pickup`
-  (an item must lie on the destination when ordered) or `hold`. Omitted actions
+  (your `items` list must show one on the destination; a fogged tile is rejected
+  the same way whether or not anything lies there) or `hold`. Omitted actions
   and omitted units hold.
 - Orders that break these rules are rejected with a reason and cost one of two
   retries per decision; exhausting them commits the safe default.
@@ -151,7 +155,7 @@ Resolution order:
    seat per round and is listed in the observation), units in the order given.
    A unit stops in front of any occupied tile, including hidden enemies.
 2. Pickups, brace, camo and recon, in the same order. A pickup whose unit was
-   stopped short of its item fizzles.
+   stopped short of its item, or whose item is no longer there, fizzles.
 3. Attacks, grenades, volleys and heals against post-movement positions, all at
    once. An attack whose target is dead, out of range or out of sight fizzles;
    a grenade thrown from a unit stopped out of range fizzles. Damage and
@@ -190,16 +194,17 @@ no envelope and cannot post.
 `publicState`: round, `maxRounds`, `map` (width, height, and row-major
 `heights[y][x]` numbers and `terrain[y][x]` of `open`/`cover`/`wall`), `zone` (centre, current and next radius, current and next storm damage),
 `teams` (units alive and placement per seat), `initiative`, the class, weapon
-and ability catalogs, `maxArmour`, budget, team size, `items` (every item on the
-ground as `{x, y, kind, weapon?}`) and `chat` (the most recent 50 lines of
-`{round, seat, text}`).
+and ability catalogs, `maxArmour`, budget, team size and `chat` (the most recent
+50 lines of `{round, seat, text}`).
 
 `privateState`: your `loadout`; your `units` with hit points, armour, weapon
 (id, range, damage), `ability` (`id`, `ready`, `readyRound`), `hiddenUntil` and a
 `reachable` list of `{x, y, cost, targets}` (targets are visible enemies
 attackable from that tile with the unit's current weapon; the unit's own tile
 appears with cost 0); `visibleEnemies` with their armour and weapon; `lastSeen`
-memories of enemies no longer in view; and `lastRound` events involving your
+memories of enemies no longer in view; `items` you know of as
+`{x, y, kind, weapon?, round}` (every item on a tile you can see now, plus the
+last sighting on tiles you cannot); and `lastRound` events involving your
 units or tiles you can see now. A `move` event carries the tiles walked in
 order; a move whose destination you can see discloses its whole path. An
 `ability` event is disclosed when its origin tile is visible, so an enemy watches
@@ -208,10 +213,9 @@ a sniper vanish but learns nothing after.
 ## Public view
 
 Live frames show heights and terrain as tables (one row per `y`, one column per
-`x`), the items on the ground, team unit counts, the round, zone radius, storm
-damage, eliminations and the recent all chat. Unit positions, rosters and
-memories stay hidden until the terminal frame, which is information-complete for
-a broadcaster:
+`x`), team unit counts, the round, zone radius, storm damage, eliminations and
+the recent all chat. Unit positions, loot, rosters and memories stay hidden
+until the terminal frame, which is information-complete for a broadcaster:
 
 - `Loadouts`: seat, actors.
 - `Rounds`: one row per history entry with round, zone radius and storm damage.

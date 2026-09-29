@@ -286,14 +286,18 @@ States and semantics:
   `weapon`, `armour` (0 at spawn, cap 6), `readyRound` (ability usable when
   `round >= readyRound`; a use in round r sets `r + cooldown + 1`) and `hiddenUntil`
   (camouflaged while `round <= hiddenUntil`). Loot: `state.items`, at most one per
-  tile, public, scattered from `rng.fork("loot")` over non-wall tiles ≥ 3 from every
-  spawn tile at one item per 30 tiles (health +5 hp, armour +4, or a loot weapon).
+  tile, scattered from `rng.fork("loot")` over non-wall tiles ≥ 3 from every spawn
+  tile at one item per 30 tiles (health +5 hp, armour +4, or a loot weapon). Loot is
+  fogged: `state.itemMemory[seat]` maps tile keys to the item last seen there with its
+  round; every visible tile is refreshed each round (deleted when empty) and unseen
+  tiles keep their last sighting.
   Orders: at most one order per living own unit with optional `moveTo` (must be in
   that unit's reachable set computed against own units and visible enemies) and one
   optional action: attack (visible target listed for the destination), ability (must
   be ready; recon/brace/camo take nothing, grenade takes `at` within 4 of the
-  destination, volley a listed target, heal another own unit), pickup (an item on the
-  destination) or hold. Semantic rejection spends a retry; exhaustion commits the
+  destination, volley a listed target, heal another own unit), pickup (the seat's item
+  memory must hold one on the destination, so a fogged tile rejects identically with or
+  without an item; a vanished item fizzles at resolution) or hold. Semantic rejection spends a retry; exhaustion commits the
   default (move each unit to the reachable tile least exposed to next round's zone,
   no action). Both envelopes take optional `chat` (1..280 chars) appended as
   `{round, seat, text}` to a global public log only when the envelope is accepted;
@@ -317,12 +321,12 @@ States and semantics:
   recon discs; a camouflaged enemy is visible only when adjacent to an own unit or
   inside an own recon disc. Observations carry own units with weapon, armour, ability
   readiness and reachable/target lists, visible enemies (with armour and weapon),
-  remembered last sightings, the public loot list, and last-round events only for own
+  remembered last sightings, the seat's item memory, and last-round events only for own
   units or positions currently visible (ability events by origin tile, blasts and
   pickups by their tile), plus the 50 most recent chat lines; the map is row-major
   `heights[y][x]` and `terrain[y][x]` grids. Live public views carry height/terrain
-  tables, the loot table, counts, zone, eliminations and the same chat window and are
-  independent of positions, rosters and memory. History is an ordered list of entries
+  tables, counts, zone, eliminations and the same chat window and are independent of
+  positions, loot, rosters and memory. History is an ordered list of entries
   (spawn, each resolved round, each in-round host forfeit) with zone radius, storm
   damage, living units (position, hp, armour, weapon, ready round, hidden until),
   remaining items and events (moves carry the walked tile path); the terminal view

@@ -5,6 +5,7 @@ import { makeBattleRoyale } from "../src/game";
 import type { GameMap, Tile, TileKind } from "../src/map";
 import { plugin } from "../src/plugin";
 import { snapshot } from "../src/resolve";
+import { rememberItems } from "../src/state";
 import type { BrState, Item, Unit } from "../src/types";
 
 export const game = makeBattleRoyale();
@@ -42,7 +43,7 @@ export interface UnitSpec {
   hiddenUntil?: number;
 }
 
-/** A mid-match state in the orders phase with the given units already placed and no loot unless given. */
+/** A mid-match state in the orders phase with the given units placed and no loot unless given; teams know the items they can see. */
 export function scenario(
   rows: string[],
   specs: UnitSpec[],
@@ -88,8 +89,9 @@ export function scenario(
     units,
     items,
     reveals: [],
+    itemMemory: {},
   };
-  return { ...built, history: [snapshot(built, 0, [])], ...overrides };
+  return rememberItems({ ...built, history: [snapshot(built, 0, [])], ...overrides });
 }
 
 export const unit = (state: BrState, id: string): Unit => {

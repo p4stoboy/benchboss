@@ -197,7 +197,7 @@ function eventRow(entry: number, event: RoundEvent): (string | number)[] {
   }
 }
 
-/** Live frames carry terrain, loot, counts, eliminations and chat only; positions and rosters appear at terminal. */
+/** Live frames carry terrain, counts, eliminations and chat only; positions, loot and rosters appear at terminal. */
 export function brPublicView(state: BrState): SpectatorView {
   const result = brResult(state);
   const round = Math.max(1, state.round);
@@ -240,12 +240,6 @@ export function brPublicView(state: BrState): SpectatorView {
     },
     { kind: "table", title: "Heights", columns, rows: heightGrid(state.map) },
     { kind: "table", title: "Terrain", columns, rows: terrainGrid(state.map) },
-    {
-      kind: "table",
-      title: "Items",
-      columns: ["X", "Y", "Item"],
-      rows: state.items.map((item) => [item.x, item.y, itemLabel(item)]),
-    },
     { kind: "list", title: "Eliminations", items: eliminations },
     {
       kind: "list",

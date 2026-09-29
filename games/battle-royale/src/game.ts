@@ -20,7 +20,7 @@ import {
   isAffordable,
 } from "./classes";
 import { generateMap } from "./generate";
-import { itemAt, scatterLoot } from "./loot";
+import { scatterLoot } from "./loot";
 import {
   type TileKind,
   chebyshev,
@@ -45,6 +45,8 @@ import {
   aliveSeats,
   initiative,
   isEliminated,
+  knownItemAt,
+  knownItems,
   maxHp,
   ownUnits,
   plans,
@@ -57,10 +59,10 @@ import {
 import type {
   BrState,
   ChatMessage,
-  Item,
   Orders,
   Point,
   RoundEvent,
+  SeenItem,
   SeenUnit,
   Unit,
 } from "./types";
@@ -109,8 +111,6 @@ export interface BrObservation {
     maxArmour: number;
     budget: number;
     teamSize: number;
-    /** Every item still on the ground; loot positions are common knowledge. */
-    items: Item[];
     chat: ChatMessage[];
   };
   privateState: {
@@ -144,6 +144,8 @@ export interface BrObservation {
       weapon: WeaponId;
     }[];
     lastSeen: SeenUnit[];
+    /** Items on tiles this team has seen, as of the round it last saw each tile. */
+    items: SeenItem[];
     lastRound: RoundEvent[];
   };
   legalTools: string[];
@@ -259,7 +261,8 @@ function validateOrders(
       continue;
     }
     if (action.kind === "pickup") {
-      if (!itemAt(state.items, reach)) return fail(`nothing to pick up at ${reach.x},${reach.y}`);
+      if (!knownItemAt(state, seat, reach))
+        return fail(`no known item to pick up at ${reach.x},${reach.y}`);
       continue;
     }
     if (!abilityReady(state, plan.unit))
@@ -333,6 +336,7 @@ export function makeBattleRoyale(): GameModule<BrState, unknown, BrObservation, 
         units: [],
         items: scatterLoot(createRng(seed).fork("loot"), map),
         reveals: [],
+        itemMemory: {},
         orders: {},
         paths: {},
         teams,
@@ -384,7 +388,6 @@ export function makeBattleRoyale(): GameModule<BrState, unknown, BrObservation, 
           maxArmour: MAX_ARMOUR,
           budget: TEAM_BUDGET,
           teamSize: TEAM_SIZE,
-          items: state.items.map((item) => ({ ...item })),
           chat: recentChat(state),
         },
         privateState: {
@@ -430,6 +433,7 @@ export function makeBattleRoyale(): GameModule<BrState, unknown, BrObservation, 
             weapon: u.weapon,
           })),
           lastSeen: remembered.map((entry) => ({ ...entry })),
+          items: knownItems(state, seat).map((item) => ({ ...item })),
           lastRound: eventsFor(state, seat),
         },
         legalTools: canLoadout(state, seat)
@@ -454,7 +458,7 @@ export function makeBattleRoyale(): GameModule<BrState, unknown, BrObservation, 
           {
             tool: "match.orders",
             phase: "orders",
-            description: `Order your living units for this round: an optional moveTo from the unit's reachable list and one optional action: attack (a target listed for that destination), ability (the unit's class ability when ready: recon, brace and camo take nothing; grenade takes a tile "at" within ${ABILITIES.grenade.range}; volley takes a listed target; heal takes another of your units that will be adjacent), pickup (the item on the destination tile) or hold. Omitted units hold. All teams' orders resolve together: movement in initiative order, then pickups and self-abilities, then attacks, blasts and heals simultaneously, then storm damage outside the zone. Optional chat (up to ${CHAT_MAX_LENGTH} characters) posts to the public all-chat every team and spectator can read.`,
+            description: `Order your living units for this round: an optional moveTo from the unit's reachable list and one optional action: attack (a target listed for that destination), ability (the unit's class ability when ready: recon, brace and camo take nothing; grenade takes a tile "at" within ${ABILITIES.grenade.range}; volley takes a listed target; heal takes another of your units that will be adjacent), pickup (an item you have seen on the destination tile) or hold. Omitted units hold. All teams' orders resolve together: movement in initiative order, then pickups and self-abilities, then attacks, blasts and heals simultaneously, then storm damage outside the zone. Optional chat (up to ${CHAT_MAX_LENGTH} characters) posts to the public all-chat every team and spectator can read.`,
             jsonSchema: ORDERS_INPUT_SCHEMA,
           },
         ];
