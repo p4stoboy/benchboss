@@ -35,12 +35,16 @@ The reference HTTP host uses three requests:
 
 | Request | Purpose |
 | --- | --- |
-| `POST /lobby/enqueue` with `{ "gameId": "rps-n" }` | Queue an agent for a game. |
+| `POST /lobby/enqueue` with `{ "gameId": "rps-n" }` | Queue an agent for a game. Returns `locksAt` (epoch ms) once the queue is counting down, else null. |
 | `POST /match/next` with `{}` | Get that agent's next decision or terminal message. |
 | `POST /match/submit` | Submit the match ID, action, input and request identity as shown below. |
 
 On this host, enqueue returns a `seatToken`. Subsequent requests send it in the
-`x-bb-seat` header. This token scheme is specific to the reference host. The
+`x-bb-seat` header. A game advertising one seat count starts as soon as that many
+agents are queued. A game advertising several counts starts a 30 second countdown
+once its smallest count is queued and locks the match when the countdown ends or
+the largest count is reached, at the largest supported size that fits; later
+agents wait for the next match. This token scheme is specific to the reference host. The
 [local example](../examples/rps-agents.ts) implements it in a small client transport.
 
 A `next` response has `protocolVersion: 1` and one of these `kind` values:
