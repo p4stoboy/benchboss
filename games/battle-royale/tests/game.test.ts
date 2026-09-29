@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { mkSeatId } from "@benchboss/core";
-import { CLASSES, type ClassId, TEAM_BUDGET } from "../src/classes";
+import { ABILITIES, CLASSES, type ClassId, TEAM_BUDGET, WEAPONS } from "../src/classes";
 import { plugin } from "../src/plugin";
 import { initiative } from "../src/state";
 import { flatRows, game, newMatch, scenario, seatsOf, submitAll, unit } from "./helpers";
@@ -29,7 +29,7 @@ function configWith(seats: ReturnType<typeof seatsOf>) {
       protocolVersion: 1 as const,
       runtimeVersion: "0.1.0" as const,
       gameId: "battle-royale",
-      revision: "1.0.0",
+      revision: plugin.manifest.revision,
     },
     matchId: base.matchId,
     gameId: "battle-royale",
@@ -191,7 +191,7 @@ test("an attack fizzles when its target has moved out of reach, and a kill credi
   });
   expect(unit(shot, "seat:1/0").alive).toBe(false);
   expect(shot.teams[s0]?.kills).toBe(1);
-  expect(shot.teams[s0]?.damageDealt).toBe(CLASSES.grunt.damage);
+  expect(shot.teams[s0]?.damageDealt).toBe(WEAPONS[CLASSES.grunt.weapon].damage);
   expect(shot.phase).toBe("orders");
 });
 
@@ -206,7 +206,9 @@ test("height advantage and cover change damage but never below one point", () =>
   const uphill = submitAll(high, {
     [s0]: { orders: [{ unit: "seat:0/0", action: { kind: "attack", target: "seat:1/0" } }] },
   });
-  expect(unit(uphill, "seat:1/0").hp).toBe(CLASSES.vanguard.hp - CLASSES.grunt.damage - 1);
+  expect(unit(uphill, "seat:1/0").hp).toBe(
+    CLASSES.vanguard.hp - WEAPONS[CLASSES.grunt.weapon].damage - 1,
+  );
   const covered = scenario(
     ["00+"],
     [
@@ -218,7 +220,7 @@ test("height advantage and cover change damage but never below one point", () =>
     [s0]: { orders: [{ unit: "seat:0/0", action: { kind: "attack", target: "seat:1/0" } }] },
   });
   expect(unit(behindCover, "seat:1/0").hp).toBe(CLASSES.vanguard.hp - 1);
-  expect(CLASSES.medic.damage - 1).toBeLessThan(1);
+  expect(WEAPONS[CLASSES.medic.weapon].damage - 1).toBeLessThan(1);
 });
 
 test("medics heal an adjacent ally up to full and fizzle when the ally is not adjacent", () => {
@@ -228,13 +230,24 @@ test("medics heal an adjacent ally up to full and fizzle when the ally is not ad
     { seat: 1, cls: "grunt", x: 5, y: 0 },
   ]);
   const healed = submitAll(state, {
-    [s0]: { orders: [{ unit: "seat:0/0", action: { kind: "heal", target: "seat:0/1" } }] },
+    [s0]: { orders: [{ unit: "seat:0/0", action: { kind: "ability", target: "seat:0/1" } }] },
   });
-  expect(unit(healed, "seat:0/1").hp).toBe(Math.min(CLASSES.vanguard.hp, 3 + CLASSES.medic.heal));
+  expect(unit(healed, "seat:0/1").hp).toBe(
+    Math.min(CLASSES.vanguard.hp, 3 + ABILITIES.heal.amount),
+  );
+  // Healing has no cooldown, so the medic may heal again next round.
+  expect(
+    game.submit(
+      healed,
+      s0,
+      { orders: [{ unit: "seat:0/0", action: { kind: "ability", target: "seat:0/1" } }] },
+      "match.orders",
+    ).accepted,
+  ).toBe(true);
   const apart = submitAll(state, {
     [s0]: {
       orders: [
-        { unit: "seat:0/0", action: { kind: "heal", target: "seat:0/1" } },
+        { unit: "seat:0/0", action: { kind: "ability", target: "seat:0/1" } },
         { unit: "seat:0/1", moveTo: { x: 4, y: 0 } },
       ],
     },
@@ -407,11 +420,16 @@ test("observations carry the map as row-major grids", () => {
 });
 
 test("the terminal view carries every history entry as scalar tables a broadcaster can replay", () => {
-  const start = scenario(flatRows(6, 1), [
-    { seat: 0, cls: "grunt", x: 0, y: 0 },
-    { seat: 1, cls: "grunt", x: 3, y: 0, hp: 2 },
-    { seat: 2, cls: "grunt", x: 5, y: 0 },
-  ]);
+  const start = scenario(
+    flatRows(6, 1),
+    [
+      { seat: 0, cls: "grunt", x: 0, y: 0 },
+      { seat: 1, cls: "grunt", x: 3, y: 0, hp: 2 },
+      { seat: 2, cls: "grunt", x: 5, y: 0 },
+    ],
+    {},
+    [{ x: 4, y: 0, kind: "armour" }],
+  );
   // Round 1: seat 0 walks in and kills seat 1's last unit; seat 2 holds.
   const round2 = submitAll(start, {
     [s0]: {
@@ -446,12 +464,17 @@ test("the terminal view carries every history entry as scalar tables a broadcast
     [2, 2, 6, 1],
   ]);
   expect(table("Units").rows).toEqual([
-    [0, "seat:0/0", s0, "grunt", 0, 0, 8],
-    [0, "seat:1/0", s1, "grunt", 3, 0, 2],
-    [0, "seat:2/0", s2, "grunt", 5, 0, 8],
-    [1, "seat:0/0", s0, "grunt", 1, 0, 8],
-    [1, "seat:2/0", s2, "grunt", 5, 0, 8],
-    [2, "seat:0/0", s0, "grunt", 1, 0, 8],
+    [0, "seat:0/0", s0, "grunt", 0, 0, 8, 0, "rifle", 1, 0],
+    [0, "seat:1/0", s1, "grunt", 3, 0, 2, 0, "rifle", 1, 0],
+    [0, "seat:2/0", s2, "grunt", 5, 0, 8, 0, "rifle", 1, 0],
+    [1, "seat:0/0", s0, "grunt", 1, 0, 8, 0, "rifle", 1, 0],
+    [1, "seat:2/0", s2, "grunt", 5, 0, 8, 0, "rifle", 1, 0],
+    [2, "seat:0/0", s0, "grunt", 1, 0, 8, 0, "rifle", 1, 0],
+  ]);
+  expect(table("Loot").rows).toEqual([
+    [0, 4, 0, "armour"],
+    [1, 4, 0, "armour"],
+    [2, 4, 0, "armour"],
   ]);
   const events = table("Events");
   expect(events.columns).toEqual([

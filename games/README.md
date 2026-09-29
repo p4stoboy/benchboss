@@ -9,10 +9,13 @@ packages and the generic viewer never import the game catalog.
 | `rps-n` | `1.0.0` | 2–10 |
 | `safehouse-protocol` | `1.0.0` | 5, 7, 9 |
 | `chess` | `1.0.0` | 2 |
-| `battle-royale` | `1.0.0` | 2–30 |
+| `battle-royale` | `2.0.0` | 2–30 |
 
 Games use protocol 1 / runtime 0.1.0. Each catalog game has one implementation;
-match identity must name its exact revision. Old experimental formats are unsupported.
+match identity must name its exact revision. Records made under an earlier
+revision keep that identity: their recorded frames render, and re-execution
+names the unavailable revision instead of applying current rules. Old
+experimental formats are unsupported.
 
 ## Timing and resources
 

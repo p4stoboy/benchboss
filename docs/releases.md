@@ -32,10 +32,14 @@ and use their exported interfaces. Select and test source updates explicitly.
 | Game revision | The specific rules implementation used to execute and replay a match. |
 
 Match configuration requires exact protocol, runtime, game ID and game revision.
-The protocol is `1`, the runtime is `0.1.0`, and all catalog games have revision
-`1.0.0`. This pre-release source has one supported contract and one implementation
-per game. Experimental older configs, budget shapes and replay formats are unsupported.
-Unknown or unavailable identities fail rather than silently selecting another game.
+The protocol is `1`, the runtime is `0.1.0`, RPS, Safehouse and Chess have revision
+`1.0.0` and Battle Royale has `2.0.0`. This pre-release source has one supported
+contract and one implementation per game. A rules change ships as a new game
+revision; records made under the previous revision keep their identity, keep
+rendering from their recorded frames, and fail re-execution as an unavailable
+revision rather than being replayed under different rules. Experimental older
+configs, budget shapes and replay formats are unsupported. Unknown or unavailable
+identities fail rather than silently selecting another game.
 
 ## Maintainer workflow
 

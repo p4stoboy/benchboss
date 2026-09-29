@@ -5,7 +5,8 @@ import { makeBattleRoyale } from "../src/game";
 import type { GameMap, Tile, TileKind } from "../src/map";
 import { plugin } from "../src/plugin";
 import { snapshot } from "../src/resolve";
-import type { BrState, Unit } from "../src/types";
+import { rememberItems } from "../src/state";
+import type { BrState, Item, Unit } from "../src/types";
 
 export const game = makeBattleRoyale();
 export const seatsOf = (n: number): SeatId[] => Array.from({ length: n }, (_, i) => mkSeatId(i));
@@ -36,13 +37,18 @@ export interface UnitSpec {
   x: number;
   y: number;
   hp?: number;
+  armour?: number;
+  weapon?: Unit["weapon"];
+  readyRound?: number;
+  hiddenUntil?: number;
 }
 
-/** A mid-match state in the orders phase with the given units already placed. */
+/** A mid-match state in the orders phase with the given units placed and no loot unless given; teams know the items they can see. */
 export function scenario(
   rows: string[],
   specs: UnitSpec[],
   overrides: Partial<BrState> = {},
+  items: Item[] = [],
 ): BrState {
   const seatCount = Math.max(2, ...specs.map((s) => s.seat + 1));
   const base = newMatch(seatCount);
@@ -61,6 +67,10 @@ export function scenario(
       y: spec.y,
       hp: spec.hp ?? CLASSES[spec.cls].hp,
       alive: true,
+      weapon: spec.weapon ?? CLASSES[spec.cls].weapon,
+      armour: spec.armour ?? 0,
+      readyRound: spec.readyRound ?? 1,
+      hiddenUntil: spec.hiddenUntil ?? 0,
     };
   });
   const loadouts = Object.fromEntries(
@@ -77,8 +87,11 @@ export function scenario(
     map: mapFromRows(rows),
     loadouts,
     units,
+    items,
+    reveals: [],
+    itemMemory: {},
   };
-  return { ...built, history: [snapshot(built, 0, [])], ...overrides };
+  return rememberItems({ ...built, history: [snapshot(built, 0, [])], ...overrides });
 }
 
 export const unit = (state: BrState, id: string): Unit => {

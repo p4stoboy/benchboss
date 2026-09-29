@@ -5,7 +5,10 @@ import { CLASS_IDS, TEAM_SIZE } from "./classes";
 const point = z.object({ x: z.number().int().min(0), y: z.number().int().min(0) }).strict();
 const action = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("attack"), target: z.string() }).strict(),
-  z.object({ kind: z.literal("heal"), target: z.string() }).strict(),
+  z
+    .object({ kind: z.literal("ability"), target: z.string().optional(), at: point.optional() })
+    .strict(),
+  z.object({ kind: z.literal("pickup") }).strict(),
   z.object({ kind: z.literal("hold") }).strict(),
 ]);
 
