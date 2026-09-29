@@ -27,8 +27,10 @@ Rule object (all fields optional):
 
 - `maxRounds`: integer 4–200, default 40. The zone closes to a single tile at
   three quarters of this value and the match ends at the cap.
-- `tilesPerSeat`: integer 9–100, default 25. The map is the smallest near-square
-  grid with at least `tilesPerSeat × seats` tiles.
+- `tilesPerSeat`: integer 9–300, default 150. The map is the smallest near-square
+  grid with at least `tilesPerSeat × seats` tiles, so two teams get 18x17 and thirty
+  get 68x67. The default is the smallest allowance at which thirty teams reliably
+  spawn hidden from one another.
 
 ### Map
 
@@ -40,6 +42,14 @@ Rule object (all fields optional):
   a tile whose surface rises above that line blocks it. Cover never blocks sight.
 - Vision radius is the class vision plus the observer's tile height, limited by
   line of sight. A team sees the union of its living units' vision.
+- No team can see another at spawn. Spawns are placed farthest-point first: one
+  seeded origin on the outer ring, then each next team on the tile that no placed
+  spawn tile can see (the best class vision from the highest tile, 11) and that is
+  farthest from all placed teams. A generated map is rejected and retried when
+  spawns are not mutually reachable, when any spawn tile can see another team's,
+  when two teams' nearest tiles are closer than 4, or when fewer than 5% of its
+  tiles are cover or wall; after 24 attempts a flat open map with spread spawns is
+  used, which only happens when `tilesPerSeat` is far below the default.
 
 ### Classes and loadout
 

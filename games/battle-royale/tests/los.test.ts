@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { createRng } from "@benchboss/core";
+import { generateMap } from "../src/generate";
 import { hasLineOfSight } from "../src/los";
-import { generateMap } from "../src/map";
 import { mapFromRows } from "./helpers";
 
 test("line of sight is symmetric on generated terrain", () => {
