@@ -134,7 +134,8 @@ budget, team size and `chat` (the most recent 50 lines of `{round, seat, text}`)
 `{x, y, cost, targets}` (targets are visible enemies attackable from that tile;
 the unit's own tile appears with cost 0); `visibleEnemies`; `lastSeen` memories of
 enemies no longer in view; and `lastRound` events involving your units or tiles
-you can see now.
+you can see now. A `move` event carries the tiles walked in order; a move whose
+destination you can see discloses its whole path.
 
 ## Public view
 
@@ -149,8 +150,9 @@ terminal frame, which is information-complete for a broadcaster:
   round's number.
 - `Units`: entry, unit, seat, class, x, y, hp for every living unit after that
   entry.
-- `Events`: entry, kind, unit, target, seat, from x/y, at x/y, value, note for
-  every move (note `blocked`), attack/heal (value = damage/amount), fizzle (note =
-  reason), storm (value = damage), death and elimination (value = placement), in
-  resolution order. Blank cells mean not applicable.
+- `Events`: entry, kind, unit, target, seat, from x/y, at x/y, value, note, path
+  for every move (note `blocked`; path = every tile stepped onto as space-separated
+  `x,y`, ending at the destination), attack/heal (value = damage/amount), fizzle
+  (note = reason), storm (value = damage), death and elimination (value =
+  placement), in resolution order. Blank cells mean not applicable.
 - `Chat`: the complete log.

@@ -43,7 +43,8 @@ export interface ChatMessage {
 }
 
 export type RoundEvent =
-  | { kind: "move"; unit: string; from: Point; to: Point; blocked: boolean }
+  /** `path` lists every tile stepped onto in order, ending at `to`; `from` is excluded. */
+  | { kind: "move"; unit: string; from: Point; to: Point; path: Point[]; blocked: boolean }
   | { kind: "attack"; unit: string; from: Point; target: string; at: Point; damage: number }
   | { kind: "fizzle"; unit: string; target: string; reason: string }
   | { kind: "heal"; unit: string; from: Point; target: string; at: Point; amount: number }

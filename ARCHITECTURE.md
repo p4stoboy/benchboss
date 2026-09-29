@@ -277,7 +277,8 @@ States and semantics:
   height/terrain tables, counts, zone, eliminations and the same chat window and are
   independent of positions, rosters and memory. History is an ordered list of entries
   (spawn, each resolved round, each in-round host forfeit) with zone radius, storm
-  damage, living units and events; the terminal view emits it as scalar `Loadouts`,
+  damage, living units and events (moves carry the walked tile path); the terminal
+  view emits it as scalar `Loadouts`,
   `Rounds`, `Units` and `Events` tables plus the full chat log, enough to replay the
   match without game code.
 - Chess starts at the standard board with seed-assigned colors and White to move.

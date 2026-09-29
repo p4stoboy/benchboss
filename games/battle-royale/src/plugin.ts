@@ -24,7 +24,7 @@ import {
 import { heightGrid, stormDamage, terrainGrid, zoneRadius } from "./map";
 import { forfeitSeats } from "./resolve";
 import { aliveSeats, isEliminated, ownUnits, unitById } from "./state";
-import type { BrState, RoundEvent } from "./types";
+import type { BrState, Point, RoundEvent } from "./types";
 
 // The runtime spends an action on every call, rejected or not, so the phase allowance must
 // cover the accepted submission plus both semantic retries. The game itself accepts one
@@ -89,61 +89,80 @@ const EVENT_COLUMNS = [
   "At y",
   "Value",
   "Note",
+  "Path",
 ];
 
-/** One scalar row per event; blanks mean not applicable. */
+/** One scalar row per event; blanks mean not applicable. Paths are "x,y" tiles separated by spaces. */
 function eventRow(entry: number, event: RoundEvent): (string | number)[] {
+  const cells = (
+    kind: string,
+    unit: string,
+    target: string,
+    seat: string,
+    from: Point | null,
+    at: Point | null,
+    value: string | number,
+    note: string,
+    path: string,
+  ): (string | number)[] => [
+    entry,
+    kind,
+    unit,
+    target,
+    seat,
+    from?.x ?? "",
+    from?.y ?? "",
+    at?.x ?? "",
+    at?.y ?? "",
+    value,
+    note,
+    path,
+  ];
   switch (event.kind) {
     case "move":
-      return [
-        entry,
+      return cells(
         "move",
         event.unit,
         "",
         "",
-        event.from.x,
-        event.from.y,
-        event.to.x,
-        event.to.y,
+        event.from,
+        event.to,
         "",
         event.blocked ? "blocked" : "",
-      ];
+        event.path.map((p) => `${p.x},${p.y}`).join(" "),
+      );
     case "attack":
-      return [
-        entry,
+      return cells(
         "attack",
         event.unit,
         event.target,
         "",
-        event.from.x,
-        event.from.y,
-        event.at.x,
-        event.at.y,
+        event.from,
+        event.at,
         event.damage,
         "",
-      ];
+        "",
+      );
     case "heal":
-      return [
-        entry,
+      return cells(
         "heal",
         event.unit,
         event.target,
         "",
-        event.from.x,
-        event.from.y,
-        event.at.x,
-        event.at.y,
+        event.from,
+        event.at,
         event.amount,
         "",
-      ];
+        "",
+      );
     case "fizzle":
-      return [entry, "fizzle", event.unit, event.target, "", "", "", "", "", "", event.reason];
+      return cells("fizzle", event.unit, event.target, "", null, null, "", event.reason, "");
     case "storm":
-      return [entry, "storm", event.unit, "", "", "", "", event.at.x, event.at.y, event.damage, ""];
+      return cells("storm", event.unit, "", "", null, event.at, event.damage, "", "");
     case "death":
-      return [entry, "death", event.unit, "", "", "", "", event.at.x, event.at.y, "", ""];
+      return cells("death", event.unit, "", "", null, event.at, "", "", "");
     case "eliminated":
-      return [entry, "eliminated", "", "", event.seat, "", "", "", "", event.placement, ""];
+      return cells("eliminated", "", "", event.seat, null, null, event.placement, "", "");
   }
 }
 

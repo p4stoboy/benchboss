@@ -3,7 +3,7 @@ import { CLASSES } from "./classes";
 import { attackBlocker, damageFor } from "./combat";
 import { chebyshev, inZone, key, stormDamage, zoneRadius } from "./map";
 import { aliveSeats, initiative, isEliminated, maxHp, rememberSightings, unitById } from "./state";
-import type { BrState, RoundEvent, RoundSnapshot, Unit } from "./types";
+import type { BrState, Point, RoundEvent, RoundSnapshot, Unit } from "./types";
 
 /** History entry for `round` from the given living units and the events that produced them. */
 export function snapshot(state: BrState, round: number, events: RoundEvent[]): RoundSnapshot {
@@ -28,6 +28,7 @@ function moveUnits(state: BrState, events: RoundEvent[]): Unit[] {
       const unit = units.find((u) => u.id === order.unit);
       if (!path?.length || !unit?.alive) continue;
       const from = { x: unit.x, y: unit.y };
+      const walked: Point[] = [];
       let blocked = false;
       for (const step of path) {
         if (occupied(units, step)) {
@@ -36,8 +37,16 @@ function moveUnits(state: BrState, events: RoundEvent[]): Unit[] {
         }
         unit.x = step.x;
         unit.y = step.y;
+        walked.push({ x: step.x, y: step.y });
       }
-      events.push({ kind: "move", unit: unit.id, from, to: { x: unit.x, y: unit.y }, blocked });
+      events.push({
+        kind: "move",
+        unit: unit.id,
+        from,
+        to: { x: unit.x, y: unit.y },
+        path: walked,
+        blocked,
+      });
     }
   return units;
 }

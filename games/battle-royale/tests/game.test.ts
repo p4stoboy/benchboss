@@ -142,6 +142,10 @@ test("initiative rotates by round and movement stops in front of an occupied til
     unit: "seat:1/0",
     from: { x: 7, y: 0 },
     to: { x: 5, y: 0 },
+    path: [
+      { x: 6, y: 0 },
+      { x: 5, y: 0 },
+    ],
     blocked: true,
   });
   expect(next.round).toBe(2);
@@ -462,14 +466,15 @@ test("the terminal view carries every history entry as scalar tables a broadcast
     "At y",
     "Value",
     "Note",
+    "Path",
   ]);
   expect(events.rows).toEqual([
-    [1, "move", "seat:0/0", "", "", 0, 0, 1, 0, "", ""],
-    [1, "attack", "seat:0/0", "seat:1/0", "", 1, 0, 3, 0, 2, ""],
-    [1, "death", "seat:1/0", "", "", "", "", 3, 0, "", ""],
-    [1, "eliminated", "", "", s1, "", "", "", "", 3, ""],
-    [2, "death", "seat:2/0", "", "", "", "", 5, 0, "", ""],
-    [2, "eliminated", "", "", s2, "", "", "", "", 2, ""],
+    [1, "move", "seat:0/0", "", "", 0, 0, 1, 0, "", "", "1,0"],
+    [1, "attack", "seat:0/0", "seat:1/0", "", 1, 0, 3, 0, 2, "", ""],
+    [1, "death", "seat:1/0", "", "", "", "", 3, 0, "", "", ""],
+    [1, "eliminated", "", "", s1, "", "", "", "", 3, "", ""],
+    [2, "death", "seat:2/0", "", "", "", "", 5, 0, "", "", ""],
+    [2, "eliminated", "", "", s2, "", "", "", "", 2, "", ""],
   ]);
   for (const block of view.blocks)
     if (block.kind === "table")
