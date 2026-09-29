@@ -296,6 +296,41 @@ describe("independent public host", () => {
     const result = await app.fetch(new Request("http://local/replay/m/verify"));
     expect(await result.json()).toMatchObject({ ok: true });
   });
+  test("local enqueue counts a variable-size queue down and the reaper drain locks it", async () => {
+    const f = fixture();
+    const variable = {
+      ...f.plugin,
+      manifest: { ...f.plugin.manifest, seatCounts: [1, 2, 3] },
+    };
+    let now = 1_000;
+    const { app, runner, drain } = buildLocalServer({
+      registry: createRegistry([variable]),
+      lockWindowMs: 30_000,
+      now: () => now,
+    });
+    const enqueue = async () =>
+      (await (
+        await app.fetch(
+          new Request("http://local/lobby/enqueue", {
+            method: "POST",
+            body: JSON.stringify({ gameId: "third-party" }),
+          }),
+        )
+      ).json()) as { queued: boolean; seatToken: string; locksAt: number | null };
+    expect((await enqueue()).locksAt).toBe(31_000);
+    expect(runner.inspect()).toHaveLength(0);
+    now = 20_000;
+    expect((await enqueue()).locksAt).toBe(31_000);
+    expect(runner.inspect()).toHaveLength(0);
+    now = 30_999;
+    drain();
+    expect(runner.inspect()).toHaveLength(0);
+    now = 31_000;
+    drain();
+    const [match] = runner.inspect();
+    expect(match?.gameId).toBe("third-party");
+    expect(match?.seats).toHaveLength(2);
+  });
   test("local lifecycle starts an independent listener and closes it", async () => {
     const f = fixture();
     f.spec.config.timing.decisionLimitMs = 1;

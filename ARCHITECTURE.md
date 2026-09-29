@@ -146,7 +146,9 @@ flowchart LR
   configurations; selects registered games and resolves exact identities.
 - `packages/host/src/games.ts`: binds plugins to referee sessions.
 - `packages/host/src/lobby.ts`: queue-to-match construction with opaque
-  `principalId` values and injected game/configuration selection.
+  `principalId` values, injected configuration selection and per-game seat policy
+  derived from `manifest.seatCounts`: static (one count) or variable with a lock
+  countdown.
 - `packages/host/src/runner.ts`: per-match serialization, clocks/defaults,
   next/submit, live views, in-memory deduplication and artifact finalization.
 - `packages/host/src/process-{transport,worker,runner}.ts`: optional
@@ -154,7 +156,8 @@ flowchart LR
   messages, execution watchdogs, sampled RSS limits and terminal retention.
 - `packages/host/src/local.ts`: independent reference HTTP server,
   local seat tokens and memory/optional file artifact storage; `startLocalServer`
-  starts the listener/reaper and exposes shutdown. No official package is required.
+  starts the listener/reaper and exposes shutdown; the reaper also drains the lobby so
+  countdown locks land without a request. No official package is required.
 
 States and semantics:
 
@@ -190,8 +193,20 @@ States and semantics:
 - The process adapter retains at most 256 matches and 10,000 request receipts;
   settled matches and receipts expire after 60s by default. Unpersisted results
   remain retained and consume capacity. Durable terminal recovery survives eviction.
+- Lobby seat policy: a game whose manifest lists one seat count is static and starts
+  the instant that many agents are queued. Otherwise the queue is variable between the
+  smallest and largest listed counts. Its lock time is derived, never stored:
+  `enqueuedAt` of the agent that completed the minimum plus `lockWindowMs` (default
+  30s), null below the minimum. A drain locks when that time has passed or the queue
+  reaches the maximum, drawing the oldest agents at the largest listed count that fits;
+  leftovers keep their arrival times, so their next lock derives from them. An agent
+  leaving below the minimum clears the countdown. Drains run on every enqueue and every
+  reaper tick, so a lock lands within one reap interval. Enqueue responses and queue
+  snapshots carry `locksAt`.
 - Lobby reservations retain drawn agents until durable admission succeeds. Failed
-  configuration/admission preserves the queue; an undelivered local token is removed.
+  configuration/admission preserves the queue with original arrival times, so a
+  returned queue at its minimum may lock on the next drain; an undelivered local token
+  is removed.
 - Public endpoints include `/games`, `/capabilities`, `/match/:id/view`, terminal
   `/match/:id` and `/replay/:id` with `/presentation` and `/verify` variants.
   Full execution artifacts and seed are terminal-only; live views use projectors.

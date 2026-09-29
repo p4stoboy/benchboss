@@ -43,11 +43,30 @@ export function buildLocalServer(opts: {
   registry: GameRegistry;
   dir?: string;
   artifacts?: ArtifactStore;
+  /** Countdown before a variable-size queue at its minimum locks into a match. Default 30s. */
+  lockWindowMs?: number;
+  now?: () => number;
 }) {
   const { registry } = opts;
+  const now = opts.now ?? Date.now;
   const artifacts = opts.artifacts ?? createArtifactStore(opts.dir);
-  const runner = createMatchRunner({ registry, persist: artifacts.save });
-  const lobby = createLobby();
+  const runner = createMatchRunner({ registry, persist: artifacts.save, now });
+  const lobby = createLobby({
+    seatCountsForGame: registry.seatCountsFor,
+    lockWindowMs: opts.lockWindowMs,
+  });
+  // Locks fall due between requests, so the reaper drains as well as enqueue.
+  const drain = () => {
+    for (const spec of lobby.matchmake(
+      {
+        nextMatchId: (id) => `${id}:${randomUUID()}`,
+        nextSeed: () => randomBytes(16).toString("hex"),
+        buildConfig: registry.buildConfig,
+      },
+      now(),
+    ))
+      runner.start(spec);
+  };
   const json = (body: unknown, status = 200, cache?: string) =>
     new Response(JSON.stringify(body), {
       status,
@@ -131,15 +150,9 @@ export function buildLocalServer(opts: {
         if (typeof body.gameId !== "string" || !registry.has(body.gameId))
           return json({ error: "unsupported_game" }, 400);
         const token = randomUUID();
-        lobby.enqueue({ agentId: token, principalId: token, gameId: body.gameId }, Date.now());
-        for (const spec of lobby.matchmake({
-          nextMatchId: (id) => `${id}:${randomUUID()}`,
-          nextSeed: () => randomBytes(16).toString("hex"),
-          seatsForGame: registry.seatsFor,
-          buildConfig: registry.buildConfig,
-        }))
-          runner.start(spec);
-        return json({ queued: true, seatToken: token });
+        lobby.enqueue({ agentId: token, principalId: token, gameId: body.gameId }, now());
+        drain();
+        return json({ queued: true, seatToken: token, locksAt: lobby.locksAt(body.gameId) });
       }
       const token = req.headers.get("x-bb-seat");
       if (!token) return json({ error: "unauthenticated" }, 401);
@@ -172,7 +185,7 @@ export function buildLocalServer(opts: {
       return json({ error: "not_found" }, 404);
     },
   };
-  return { app, runner, artifacts };
+  return { app, runner, artifacts, lobby, drain };
 }
 
 export function startLocalServer(
@@ -190,6 +203,11 @@ export function startLocalServer(
     fetch: built.app.fetch,
   });
   const reaper = setInterval(() => {
+    try {
+      built.drain();
+    } catch (error) {
+      (opts.onError ?? console.error)(error);
+    }
     void built.runner.reap().catch((error) => (opts.onError ?? console.error)(error));
   }, opts.reapIntervalMs ?? 1000);
   return {
