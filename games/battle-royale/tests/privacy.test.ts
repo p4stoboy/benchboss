@@ -16,8 +16,22 @@ function assertObservationPrivacy(state: BrState, seat: ReturnType<typeof mkSeat
   const observation = game.observe(state, seat);
   const seen = visionOf(state, seat);
   const own = new Set(state.units.filter((u) => u.seat === seat).map((u) => u.id));
-  for (const enemy of observation.privateState.visibleEnemies)
+  const mine = state.units.filter((u) => u.seat === seat && u.alive);
+  for (const enemy of observation.privateState.visibleEnemies) {
     expect(seen.has(key(enemy))).toBe(true);
+    const actual = state.units.find((u) => u.id === enemy.id);
+    if (actual && actual.hiddenUntil >= state.round)
+      expect(
+        mine.some((u) => Math.max(Math.abs(u.x - actual.x), Math.abs(u.y - actual.y)) <= 1) ||
+          state.reveals.some(
+            (r) =>
+              r.seat === seat &&
+              r.untilRound >= state.round &&
+              Math.max(Math.abs(r.center.x - actual.x), Math.abs(r.center.y - actual.y)) <=
+                r.radius,
+          ),
+      ).toBe(true);
+  }
   for (const unit of observation.privateState.units)
     for (const reach of unit.reachable)
       for (const target of reach.targets)
@@ -28,14 +42,16 @@ function assertObservationPrivacy(state: BrState, seat: ReturnType<typeof mkSeat
   }
   for (const event of observation.privateState.lastRound) {
     if (event.kind === "eliminated") continue;
-    if (own.has(event.unit) || ("target" in event && own.has(event.target))) continue;
+    if (own.has(event.unit) || ("target" in event && own.has(event.target ?? ""))) continue;
     if (event.kind === "move") expect(seen.has(key(event.to))).toBe(true);
     if (event.kind === "attack" || event.kind === "heal") {
       expect(seen.has(key(event.from))).toBe(true);
       expect(seen.has(key(event.at))).toBe(true);
     }
-    if (event.kind === "storm" || event.kind === "death")
+    if (event.kind === "storm" || event.kind === "death" || event.kind === "pickup")
       expect(seen.has(key(event.at))).toBe(true);
+    if (event.kind === "ability") expect(seen.has(key(event.from))).toBe(true);
+    if (event.kind === "blast") expect(seen.has(key(event.at))).toBe(true);
     expect(event.kind).not.toBe("fizzle");
   }
 }
@@ -84,7 +100,17 @@ test("memory keeps the last sighting after an enemy walks out of view", () => {
   const observation = game.observe(after, s0);
   expect(observation.privateState.visibleEnemies).toEqual([]);
   expect(observation.privateState.lastSeen).toEqual([
-    { id: "seat:1/0", seat: s1, cls: "scout", x: 3, y: 0, hp: 6, round: 2 },
+    {
+      id: "seat:1/0",
+      seat: s1,
+      cls: "scout",
+      x: 3,
+      y: 0,
+      hp: 6,
+      armour: 0,
+      weapon: "knife",
+      round: 2,
+    },
   ]);
   expect(
     observation.privateState.lastRound.some((e) => e.kind === "move" && e.unit === "seat:1/0"),
@@ -128,7 +154,19 @@ test("live public views depend only on disclosed state; terminal views disclose 
   const rows = units && "rows" in units ? units.rows : [];
   const spawn = state.units.find((u) => u.id === "seat:0/0");
   if (!spawn) throw Error("missing spawn unit");
-  expect(rows).toContainEqual([0, "seat:0/0", s0, "scout", spawn.x, spawn.y, spawn.hp]);
+  expect(rows).toContainEqual([
+    0,
+    "seat:0/0",
+    s0,
+    "scout",
+    spawn.x,
+    spawn.y,
+    spawn.hp,
+    0,
+    "knife",
+    1,
+    0,
+  ]);
 });
 
 test("generated matches never leak unseen positions through observations or live public views", () => {

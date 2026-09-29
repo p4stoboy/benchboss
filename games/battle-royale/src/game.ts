@@ -6,11 +6,26 @@ import {
   createRng,
 } from "@benchboss/core";
 import { validateSchema } from "@benchboss/protocol";
-import { CLASSES, CLASS_IDS, type ClassId, TEAM_BUDGET, TEAM_SIZE, isAffordable } from "./classes";
+import {
+  ABILITIES,
+  type AbilityId,
+  CLASSES,
+  CLASS_IDS,
+  type ClassId,
+  MAX_ARMOUR,
+  TEAM_BUDGET,
+  TEAM_SIZE,
+  WEAPONS,
+  type WeaponId,
+  isAffordable,
+} from "./classes";
 import { generateMap } from "./generate";
+import { itemAt, scatterLoot } from "./loot";
 import {
   type TileKind,
+  chebyshev,
   heightGrid,
+  inBounds,
   key,
   stormDamage,
   terrainGrid,
@@ -26,6 +41,7 @@ import {
   ordersSchema,
 } from "./schemas";
 import {
+  abilityReady,
   aliveSeats,
   initiative,
   isEliminated,
@@ -38,7 +54,16 @@ import {
   visibleEnemies,
   visionOf,
 } from "./state";
-import type { BrState, ChatMessage, Orders, Point, RoundEvent, SeenUnit, Unit } from "./types";
+import type {
+  BrState,
+  ChatMessage,
+  Item,
+  Orders,
+  Point,
+  RoundEvent,
+  SeenUnit,
+  Unit,
+} from "./types";
 
 export const BR_GAME_ID = "battle-royale";
 export const MIN_SEATS = 2;
@@ -79,8 +104,13 @@ export interface BrObservation {
     teams: { seat: SeatId; unitsAlive: number; placement: number | null }[];
     initiative: SeatId[];
     classes: typeof CLASSES;
+    weapons: typeof WEAPONS;
+    abilities: typeof ABILITIES;
+    maxArmour: number;
     budget: number;
     teamSize: number;
+    /** Every item still on the ground; loot positions are common knowledge. */
+    items: Item[];
     chat: ChatMessage[];
   };
   privateState: {
@@ -92,11 +122,14 @@ export interface BrObservation {
       y: number;
       hp: number;
       maxHp: number;
+      armour: number;
       move: number;
+      vision: number;
+      weapon: WeaponId;
       range: number;
       damage: number;
-      vision: number;
-      heal: number;
+      ability: { id: AbilityId; ready: boolean; readyRound: number };
+      hiddenUntil: number;
       reachable: { x: number; y: number; cost: number; targets: string[] }[];
     }[];
     visibleEnemies: {
@@ -107,6 +140,8 @@ export interface BrObservation {
       y: number;
       hp: number;
       maxHp: number;
+      armour: number;
+      weapon: WeaponId;
     }[];
     lastSeen: SeenUnit[];
     lastRound: RoundEvent[];
@@ -141,6 +176,11 @@ export function eventsFor(state: BrState, seat: SeatId): RoundEvent[] {
         return own(event.unit) || own(event.target) || (visible(event.from) && visible(event.at));
       case "fizzle":
         return own(event.unit);
+      case "ability":
+        return own(event.unit) || visible(event.from);
+      case "blast":
+        return own(event.unit) || own(event.target) || visible(event.at);
+      case "pickup":
       case "storm":
       case "death":
         return own(event.unit) || visible(event.at);
@@ -172,6 +212,10 @@ function spawn(state: BrState): BrState {
         y: tile.y,
         hp: CLASSES[cls].hp,
         alive: true,
+        weapon: CLASSES[cls].weapon,
+        armour: 0,
+        readyRound: 1,
+        hiddenUntil: 0,
       });
     });
   });
@@ -196,32 +240,55 @@ function validateOrders(
   const enemies = new Set(visibleEnemies(state, seat).map((u) => u.id));
   const paths: Record<string, Point[]> = {};
   const used = new Set<string>();
+  const fail = (reason: string) => ({ ok: false as const, reason });
   for (const order of orders.orders) {
-    if (used.has(order.unit)) return { ok: false, reason: `duplicate order for ${order.unit}` };
+    if (used.has(order.unit)) return fail(`duplicate order for ${order.unit}`);
     used.add(order.unit);
     const plan = planned.find((p) => p.unit.id === order.unit);
-    if (!plan) return { ok: false, reason: `${order.unit} is not one of your living units` };
+    if (!plan) return fail(`${order.unit} is not one of your living units`);
     const destination = order.moveTo ?? plan.unit;
     const reach = plan.reaches.find((r) => samePoint(r, destination));
-    if (!reach)
-      return { ok: false, reason: `${order.unit} cannot reach ${destination.x},${destination.y}` };
+    if (!reach) return fail(`${order.unit} cannot reach ${destination.x},${destination.y}`);
     paths[order.unit] = reach.path;
     const action = order.action;
     if (!action || action.kind === "hold") continue;
     if (action.kind === "attack") {
-      if (!enemies.has(action.target))
-        return { ok: false, reason: `${action.target} is not a visible enemy` };
+      if (!enemies.has(action.target)) return fail(`${action.target} is not a visible enemy`);
       if (!reach.targets.includes(action.target))
-        return {
-          ok: false,
-          reason: `${order.unit} cannot attack ${action.target} from ${reach.x},${reach.y}`,
-        };
+        return fail(`${order.unit} cannot attack ${action.target} from ${reach.x},${reach.y}`);
       continue;
     }
-    if (CLASSES[plan.unit.cls].heal <= 0) return { ok: false, reason: `${order.unit} cannot heal` };
+    if (action.kind === "pickup") {
+      if (!itemAt(state.items, reach)) return fail(`nothing to pick up at ${reach.x},${reach.y}`);
+      continue;
+    }
+    if (!abilityReady(state, plan.unit))
+      return fail(`${order.unit} ability is ready on round ${plan.unit.readyRound}`);
+    const ability = CLASSES[plan.unit.cls].ability;
+    const spec = ABILITIES[ability];
+    if (spec.target === "none") {
+      if (action.target !== undefined || action.at !== undefined)
+        return fail(`${ability} takes no target`);
+      continue;
+    }
+    if (spec.target === "point") {
+      if (!action.at || action.target !== undefined) return fail(`${ability} needs a tile at`);
+      if (!inBounds(state.map, action.at) || chebyshev(reach, action.at) > spec.range)
+        return fail(
+          `${order.unit} cannot throw to ${action.at.x},${action.at.y} from ${reach.x},${reach.y}`,
+        );
+      continue;
+    }
+    if (!action.target || action.at !== undefined) return fail(`${ability} needs a target unit`);
+    if (spec.target === "enemy") {
+      if (!enemies.has(action.target)) return fail(`${action.target} is not a visible enemy`);
+      if (!reach.targets.includes(action.target))
+        return fail(`${order.unit} cannot attack ${action.target} from ${reach.x},${reach.y}`);
+      continue;
+    }
     const ally = unitById(state, action.target);
     if (!ally?.alive || ally.seat !== seat || ally.id === order.unit)
-      return { ok: false, reason: `${action.target} is not another living unit of yours` };
+      return fail(`${action.target} is not another living unit of yours`);
   }
   return { ok: true, paths };
 }
@@ -264,6 +331,8 @@ export function makeBattleRoyale(): GameModule<BrState, unknown, BrObservation, 
         round: 0,
         loadouts: {},
         units: [],
+        items: scatterLoot(createRng(seed).fork("loot"), map),
+        reveals: [],
         orders: {},
         paths: {},
         teams,
@@ -310,8 +379,12 @@ export function makeBattleRoyale(): GameModule<BrState, unknown, BrObservation, 
           })),
           initiative: state.phase === "orders" ? initiative(state) : [],
           classes: CLASSES,
+          weapons: WEAPONS,
+          abilities: ABILITIES,
+          maxArmour: MAX_ARMOUR,
           budget: TEAM_BUDGET,
           teamSize: TEAM_SIZE,
+          items: state.items.map((item) => ({ ...item })),
           chat: recentChat(state),
         },
         privateState: {
@@ -326,11 +399,18 @@ export function makeBattleRoyale(): GameModule<BrState, unknown, BrObservation, 
             y: unit.y,
             hp: unit.hp,
             maxHp: maxHp(unit),
+            armour: unit.armour,
             move: CLASSES[unit.cls].move,
-            range: CLASSES[unit.cls].range,
-            damage: CLASSES[unit.cls].damage,
             vision: CLASSES[unit.cls].vision,
-            heal: CLASSES[unit.cls].heal,
+            weapon: unit.weapon,
+            range: WEAPONS[unit.weapon].range,
+            damage: WEAPONS[unit.weapon].damage,
+            ability: {
+              id: CLASSES[unit.cls].ability,
+              ready: abilityReady(state, unit),
+              readyRound: unit.readyRound,
+            },
+            hiddenUntil: unit.hiddenUntil,
             reachable: reaches.map((r) => ({
               x: r.x,
               y: r.y,
@@ -346,6 +426,8 @@ export function makeBattleRoyale(): GameModule<BrState, unknown, BrObservation, 
             y: u.y,
             hp: u.hp,
             maxHp: maxHp(u),
+            armour: u.armour,
+            weapon: u.weapon,
           })),
           lastSeen: remembered.map((entry) => ({ ...entry })),
           lastRound: eventsFor(state, seat),
@@ -372,7 +454,7 @@ export function makeBattleRoyale(): GameModule<BrState, unknown, BrObservation, 
           {
             tool: "match.orders",
             phase: "orders",
-            description: `Order your living units for this round: an optional moveTo from the unit's reachable list and an optional attack (a target listed for that destination), heal (an adjacent ally, medics only) or hold. Omitted units hold. All teams' orders resolve together: movement in initiative order, then attacks and heals simultaneously, then storm damage outside the zone. Optional chat (up to ${CHAT_MAX_LENGTH} characters) posts to the public all-chat every team and spectator can read.`,
+            description: `Order your living units for this round: an optional moveTo from the unit's reachable list and one optional action: attack (a target listed for that destination), ability (the unit's class ability when ready: recon, brace and camo take nothing; grenade takes a tile "at" within ${ABILITIES.grenade.range}; volley takes a listed target; heal takes another of your units that will be adjacent), pickup (the item on the destination tile) or hold. Omitted units hold. All teams' orders resolve together: movement in initiative order, then pickups and self-abilities, then attacks, blasts and heals simultaneously, then storm damage outside the zone. Optional chat (up to ${CHAT_MAX_LENGTH} characters) posts to the public all-chat every team and spectator can read.`,
             jsonSchema: ORDERS_INPUT_SCHEMA,
           },
         ];
