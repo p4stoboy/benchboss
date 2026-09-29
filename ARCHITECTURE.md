@@ -224,7 +224,8 @@ States and semantics:
   fog-filtered observations and round events, semantic order validation, safe
   defaults, manifest, participation, host events and the fog-safe public view.
   `games/battle-royale/tests/`: map/LoS/path properties, rule scenarios, privacy
-  invariants, referee integration and generated conformance across 2–30 seats.
+  invariants, referee integration and generated conformance at sampled seat counts
+  (2, 5, 12, 30) with small rules, since harness cost grows with the square of commands.
 
 States and semantics:
 
