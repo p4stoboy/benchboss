@@ -2,12 +2,16 @@ import { expect, test } from "bun:test";
 import { createRng } from "@benchboss/core";
 import { TEAM_SIZE } from "../src/classes";
 import {
-  closeRound,
+  MAX_SPAWN_VISION,
+  MIN_SPAWN_GAP,
   generateMap,
+  spawnGap,
+  spawnsHidden,
+} from "../src/generate";
+import {
+  closeRound,
   key,
   mapSize,
-  requiredSpawnGap,
-  spawnGap,
   stepCost,
   stormDamage,
   zoneCenter,
@@ -16,29 +20,37 @@ import {
 
 test("map area covers every seat's tile allowance with a near-square shape", () => {
   for (const seats of [2, 3, 5, 8, 13, 30])
-    for (const tilesPerSeat of [9, 25, 50, 200]) {
+    for (const tilesPerSeat of [9, 25, 150, 300]) {
       const { width, height } = mapSize(seats, tilesPerSeat);
       expect(width * height).toBeGreaterThanOrEqual(seats * tilesPerSeat);
       expect(Math.abs(width - height)).toBeLessThanOrEqual(1);
     }
-  expect(mapSize(2, 50)).toEqual({ width: 10, height: 10 });
+  expect(mapSize(2, 150)).toEqual({ width: 18, height: 17 });
 });
 
-test("teams spawn far apart and every accepted map has terrain features", () => {
-  for (const tilesPerSeat of [9, 50])
-    for (const seats of [2, 5, 12, 30])
-      for (const seed of ["a", "b", "c"]) {
-        const map = generateMap(createRng(`${seed}:${seats}`), seats, tilesPerSeat, TEAM_SIZE);
-        expect(spawnGap(map)).toBeGreaterThanOrEqual(requiredSpawnGap(tilesPerSeat));
-        const tiles = map.tiles.flat();
-        expect(tiles.filter((t) => t.kind !== "open").length).toBeGreaterThanOrEqual(
-          Math.ceil(tiles.length * 0.05),
-        );
-      }
-  // Two teams on the default map start on opposite sides, out of every class's range.
-  const duel = generateMap(createRng("c23af099485043edd91ce108dd7003d5"), 2, 50, TEAM_SIZE);
-  expect([duel.width, duel.height]).toEqual([10, 10]);
-  expect(spawnGap(duel)).toBeGreaterThanOrEqual(6);
+test("at the default allowance no team can see another at spawn and every map has terrain", () => {
+  expect(MAX_SPAWN_VISION).toBe(11);
+  for (const seats of [2, 5, 12, 30])
+    for (const seed of ["a", "b", "c"]) {
+      const map = generateMap(createRng(`${seed}:${seats}`), seats, 150, TEAM_SIZE);
+      expect(spawnsHidden(map)).toBe(true);
+      expect(spawnGap(map)).toBeGreaterThanOrEqual(MIN_SPAWN_GAP);
+      const tiles = map.tiles.flat();
+      expect(tiles.filter((t) => t.kind !== "open").length).toBeGreaterThanOrEqual(
+        Math.ceil(tiles.length * 0.05),
+      );
+    }
+  // The live duel that spawned four tiles apart on bare ground, regenerated at the new default.
+  const duel = generateMap(createRng("c23af099485043edd91ce108dd7003d5"), 2, 150, TEAM_SIZE);
+  expect(spawnsHidden(duel)).toBe(true);
+  expect(spawnGap(duel)).toBeGreaterThanOrEqual(MAX_SPAWN_VISION);
+});
+
+test("an allowance too small to hide spawns still yields a connected, spread-out map", () => {
+  const map = generateMap(createRng("tiny"), 30, 9, TEAM_SIZE);
+  expect(map.spawns).toHaveLength(30);
+  expect(new Set(map.spawns.flat().map(key)).size).toBe(90);
+  expect(spawnGap(map)).toBeGreaterThanOrEqual(1);
 });
 
 test("generated maps are seeded, give every team distinct spawns and connect all spawns", () => {
@@ -70,8 +82,8 @@ test("generated maps are seeded, give every team distinct spawns and connect all
 });
 
 test("different seeds change the map", () => {
-  expect(generateMap(createRng("a"), 4, 25, TEAM_SIZE)).not.toEqual(
-    generateMap(createRng("b"), 4, 25, TEAM_SIZE),
+  expect(generateMap(createRng("a"), 4, 150, TEAM_SIZE)).not.toEqual(
+    generateMap(createRng("b"), 4, 150, TEAM_SIZE),
   );
 });
 

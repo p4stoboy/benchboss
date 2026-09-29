@@ -7,9 +7,9 @@ import {
 } from "@benchboss/core";
 import { validateSchema } from "@benchboss/protocol";
 import { CLASSES, CLASS_IDS, type ClassId, TEAM_BUDGET, TEAM_SIZE, isAffordable } from "./classes";
+import { generateMap } from "./generate";
 import {
   type TileKind,
-  generateMap,
   heightGrid,
   key,
   stormDamage,
@@ -43,12 +43,12 @@ import type { BrState, ChatMessage, Orders, Point, RoundEvent, SeenUnit, Unit } 
 export const BR_GAME_ID = "battle-royale";
 export const MIN_SEATS = 2;
 export const MAX_SEATS = 30;
-export const BR_DEFAULT_RULES = { maxRounds: 40, tilesPerSeat: 50 };
+export const BR_DEFAULT_RULES = { maxRounds: 40, tilesPerSeat: 150 };
 export const BR_RULES_SCHEMA = {
   type: "object",
   properties: {
     maxRounds: { type: "integer", minimum: 4, maximum: 200 },
-    tilesPerSeat: { type: "integer", minimum: 9, maximum: 200 },
+    tilesPerSeat: { type: "integer", minimum: 9, maximum: 300 },
   },
   additionalProperties: false,
 };
