@@ -258,14 +258,20 @@ States and semantics:
   call spends an action) and two retries per decision. Names are game-owned and generic
   metering references them; runtime code contains no game-specific allowance names.
 - Battle Royale defaults to 60 seconds per decision and no player total. Rules
-  `maxRounds` (4..200, default 40) and `tilesPerSeat` (9..100, default 25); unknown
+  `maxRounds` (4..200, default 40) and `tilesPerSeat` (9..300, default 150); unknown
   keys fail. Phases: `loadout` (every seat acts once), repeated `orders` (every
   non-eliminated seat acts once per round), `terminal`. Both phases resolve when the
   last acting seat has committed; decision expiry commits the safe default.
 - Battle Royale map: near-square grid of at least `tilesPerSeat × seats` tiles, tile
-  height 0..3 and kind open/cover/wall, generated from `rng.fork("map")` with up to 24
-  attempts before a flat fallback; spawn clusters are assigned to seats by a seeded
-  shuffle. Terrain is public. Steps: +1 level costs 2, otherwise 1, |Δh| ≥ 2 or wall
+  height 0..3 and kind open/cover/wall, generated from `rng.fork("map")` in
+  `games/battle-royale/src/generate.ts`. Spawn origins are farthest-point placed
+  (seeded outer-ring start, then the tile farthest from all placed origins among tiles
+  no placed spawn can see within `MAX_SPAWN_VISION` = best class vision + max height =
+  11) and clustered by breadth-first claim; an attempt is rejected unless spawns are
+  mutually reachable, hidden from every other team, at least `MIN_SPAWN_GAP` = 4 apart
+  and at least 5% of tiles are non-open; after 24 attempts a flat open map with spread
+  spawns is used. The default allowance is the smallest at which 30 seats reliably pass.
+  Spawn clusters are assigned to seats by a seeded shuffle. Terrain is public. Steps: +1 level costs 2, otherwise 1, |Δh| ≥ 2 or wall
   impassable. Line of sight is symmetric; walls and surfaces above the eye-to-eye line
   block; cover does not. Vision = class vision + observer height.
 - Battle Royale loadout: exactly three classes from scout/grunt/vanguard/ranger/medic/

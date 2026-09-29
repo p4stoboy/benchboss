@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { createRng } from "@benchboss/core";
-import { chebyshev, generateMap, key, stepCost } from "../src/map";
+import { generateMap } from "../src/generate";
+import { chebyshev, key, stepCost } from "../src/map";
 import { reachableTiles } from "../src/path";
 import { mapFromRows } from "./helpers";
 
