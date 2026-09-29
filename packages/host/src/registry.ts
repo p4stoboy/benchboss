@@ -23,7 +23,7 @@ export interface GameRegistry {
   // biome-ignore lint/suspicious/noExplicitAny: registry holds heterogeneous game plugins
   get(id: string): GamePlugin<any>;
   resolve(config: MatchConfig): GamePlugin<unknown>;
-  seatsFor(id: string): number;
+  seatCountsFor(id: string): number[];
   buildConfig(matchId: string, gameId: string, seats: SeatId[]): MatchConfig;
   list(): GameInfo[];
 }
@@ -110,7 +110,7 @@ export function createRegistry(
       validateConfig(plugin.manifest, config, plugin.onHostEvent);
       return plugin;
     },
-    seatsFor: (id) => require(id).defaultSeats,
+    seatCountsFor: (id) => [...require(id).manifest.seatCounts],
     list: () =>
       [...byId.values()].map((plugin) =>
         structuredClone({

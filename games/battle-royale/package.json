@@ -1,16 +1,10 @@
 {
-  "name": "@benchboss/games",
+  "name": "@benchboss/game-battle-royale",
   "version": "0.1.0",
   "type": "module",
-  "exports": {
-    ".": "./catalog.ts"
-  },
+  "main": "src/index.ts",
   "dependencies": {
     "@benchboss/core": "workspace:*",
-    "@benchboss/game-battle-royale": "workspace:*",
-    "@benchboss/game-chess": "workspace:*",
-    "@benchboss/game-rps-n": "workspace:*",
-    "@benchboss/game-spy": "workspace:*",
     "@benchboss/protocol": "workspace:*",
     "@benchboss/referee": "workspace:*",
     "@benchboss/schemas": "workspace:*",
@@ -21,11 +15,17 @@
   "repository": {
     "type": "git",
     "url": "https://github.com/p4stoboy/benchboss.git",
-    "directory": "games"
+    "directory": "games/battle-royale"
   },
-  "files": ["catalog.ts", "LICENSE", "README.md"],
+  "files": ["src", "LICENSE", "README.md"],
+  "exports": {
+    ".": "./src/index.ts"
+  },
   "engines": {
     "bun": ">=1.4.2"
   },
-  "private": true
+  "private": true,
+  "devDependencies": {
+    "@benchboss/host": "workspace:*"
+  }
 }
