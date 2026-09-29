@@ -4,6 +4,7 @@ import { CLASSES, type ClassId } from "../src/classes";
 import { makeBattleRoyale } from "../src/game";
 import type { GameMap, Tile, TileKind } from "../src/map";
 import { plugin } from "../src/plugin";
+import { snapshot } from "../src/resolve";
 import type { BrState, Unit } from "../src/types";
 
 export const game = makeBattleRoyale();
@@ -68,7 +69,7 @@ export function scenario(
       units.filter((u) => u.seat === seat).map((u) => u.cls),
     ]),
   ) as BrState["loadouts"];
-  return {
+  const built: BrState = {
     ...base,
     phase: "orders",
     round: 1,
@@ -76,9 +77,8 @@ export function scenario(
     map: mapFromRows(rows),
     loadouts,
     units,
-    history: [{ round: 0, units: units.map((u) => ({ id: u.id, x: u.x, y: u.y, hp: u.hp })) }],
-    ...overrides,
   };
+  return { ...built, history: [snapshot(built, 0, [])], ...overrides };
 }
 
 export const unit = (state: BrState, id: string): Unit => {

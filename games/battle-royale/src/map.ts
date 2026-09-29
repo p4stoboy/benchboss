@@ -214,9 +214,7 @@ export function generateMap(
   return map;
 }
 
-export const heightRows = (map: GameMap): string[] =>
-  map.tiles.map((row) => row.map((t) => String(t.h)).join(""));
-export const terrainRows = (map: GameMap): string[] =>
-  map.tiles.map((row) =>
-    row.map((t) => (t.kind === "wall" ? "#" : t.kind === "cover" ? "+" : ".")).join(""),
-  );
+/** Row-major copies: grid[y][x]. */
+export const heightGrid = (map: GameMap): number[][] => map.tiles.map((row) => row.map((t) => t.h));
+export const terrainGrid = (map: GameMap): TileKind[][] =>
+  map.tiles.map((row) => row.map((t) => t.kind));

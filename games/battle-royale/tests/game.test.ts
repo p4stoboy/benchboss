@@ -378,3 +378,100 @@ test("live chat is windowed to the most recent lines while the terminal view car
     .blocks.find((block) => block.kind === "list" && block.title === "Chat");
   expect(terminalBlock && "items" in terminalBlock ? terminalBlock.items : []).toHaveLength(60);
 });
+
+test("observations carry the map as row-major grids", () => {
+  const state = scenario(
+    ["01#", "2+0"],
+    [
+      { seat: 0, cls: "grunt", x: 0, y: 0 },
+      { seat: 1, cls: "grunt", x: 2, y: 1 },
+    ],
+  );
+  const { map } = game.observe(state, s0).publicState;
+  expect(map).toEqual({
+    width: 3,
+    height: 2,
+    heights: [
+      [0, 1, 0],
+      [2, 0, 0],
+    ],
+    terrain: [
+      ["open", "open", "wall"],
+      ["open", "cover", "open"],
+    ],
+  });
+});
+
+test("the terminal view carries every history entry as scalar tables a broadcaster can replay", () => {
+  const start = scenario(flatRows(6, 1), [
+    { seat: 0, cls: "grunt", x: 0, y: 0 },
+    { seat: 1, cls: "grunt", x: 3, y: 0, hp: 2 },
+    { seat: 2, cls: "grunt", x: 5, y: 0 },
+  ]);
+  // Round 1: seat 0 walks in and kills seat 1's last unit; seat 2 holds.
+  const round2 = submitAll(start, {
+    [s0]: {
+      orders: [
+        {
+          unit: "seat:0/0",
+          moveTo: { x: 1, y: 0 },
+          action: { kind: "attack", target: "seat:1/0" },
+        },
+      ],
+    },
+  });
+  expect(round2.teams[s1]?.placement).toBe(3);
+  // Round 2 forfeits seat 2 by host event while orders are open.
+  const terminal = plugin.onHostEvent?.(round2, {
+    kind: "player_time_exhausted",
+    seats: [s2],
+    phaseId: "p",
+    at: 1,
+  }) as typeof round2;
+  expect(terminal.phase).toBe("terminal");
+  expect(terminal.history.map((entry) => entry.round)).toEqual([0, 1, 2]);
+  const view = plugin.publicView(terminal);
+  const table = (title: string) => {
+    const block = view.blocks.find((b) => b.kind === "table" && b.title === title);
+    if (!block || !("rows" in block)) throw Error(`missing table ${title}`);
+    return block;
+  };
+  expect(table("Rounds").rows).toEqual([
+    [0, 0, 6, 1],
+    [1, 1, 6, 1],
+    [2, 2, 6, 1],
+  ]);
+  expect(table("Units").rows).toEqual([
+    [0, "seat:0/0", s0, "grunt", 0, 0, 8],
+    [0, "seat:1/0", s1, "grunt", 3, 0, 2],
+    [0, "seat:2/0", s2, "grunt", 5, 0, 8],
+    [1, "seat:0/0", s0, "grunt", 1, 0, 8],
+    [1, "seat:2/0", s2, "grunt", 5, 0, 8],
+    [2, "seat:0/0", s0, "grunt", 1, 0, 8],
+  ]);
+  const events = table("Events");
+  expect(events.columns).toEqual([
+    "Entry",
+    "Kind",
+    "Unit",
+    "Target",
+    "Seat",
+    "From x",
+    "From y",
+    "At x",
+    "At y",
+    "Value",
+    "Note",
+  ]);
+  expect(events.rows).toEqual([
+    [1, "move", "seat:0/0", "", "", 0, 0, 1, 0, "", ""],
+    [1, "attack", "seat:0/0", "seat:1/0", "", 1, 0, 3, 0, 2, ""],
+    [1, "death", "seat:1/0", "", "", "", "", 3, 0, "", ""],
+    [1, "eliminated", "", "", s1, "", "", "", "", 3, ""],
+    [2, "death", "seat:2/0", "", "", "", "", 5, 0, "", ""],
+    [2, "eliminated", "", "", s2, "", "", "", "", 2, ""],
+  ]);
+  for (const block of view.blocks)
+    if (block.kind === "table")
+      for (const row of block.rows) expect(row).toHaveLength(block.columns.length);
+});

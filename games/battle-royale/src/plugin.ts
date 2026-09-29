@@ -21,10 +21,10 @@ import {
   makeBattleRoyale,
   recentChat,
 } from "./game";
-import { heightRows, stormDamage, terrainRows, zoneRadius } from "./map";
+import { heightGrid, stormDamage, terrainGrid, zoneRadius } from "./map";
 import { forfeitSeats } from "./resolve";
-import { aliveSeats, isEliminated, ownUnits } from "./state";
-import type { BrState } from "./types";
+import { aliveSeats, isEliminated, ownUnits, unitById } from "./state";
+import type { BrState, RoundEvent } from "./types";
 
 // The runtime spends an action on every call, rejected or not, so the phase allowance must
 // cover the accepted submission plus both semantic retries. The game itself accepts one
@@ -77,6 +77,76 @@ export function brResult(state: BrState): GameResult | null {
   };
 }
 
+const EVENT_COLUMNS = [
+  "Entry",
+  "Kind",
+  "Unit",
+  "Target",
+  "Seat",
+  "From x",
+  "From y",
+  "At x",
+  "At y",
+  "Value",
+  "Note",
+];
+
+/** One scalar row per event; blanks mean not applicable. */
+function eventRow(entry: number, event: RoundEvent): (string | number)[] {
+  switch (event.kind) {
+    case "move":
+      return [
+        entry,
+        "move",
+        event.unit,
+        "",
+        "",
+        event.from.x,
+        event.from.y,
+        event.to.x,
+        event.to.y,
+        "",
+        event.blocked ? "blocked" : "",
+      ];
+    case "attack":
+      return [
+        entry,
+        "attack",
+        event.unit,
+        event.target,
+        "",
+        event.from.x,
+        event.from.y,
+        event.at.x,
+        event.at.y,
+        event.damage,
+        "",
+      ];
+    case "heal":
+      return [
+        entry,
+        "heal",
+        event.unit,
+        event.target,
+        "",
+        event.from.x,
+        event.from.y,
+        event.at.x,
+        event.at.y,
+        event.amount,
+        "",
+      ];
+    case "fizzle":
+      return [entry, "fizzle", event.unit, event.target, "", "", "", "", "", "", event.reason];
+    case "storm":
+      return [entry, "storm", event.unit, "", "", "", "", event.at.x, event.at.y, event.damage, ""];
+    case "death":
+      return [entry, "death", event.unit, "", "", "", "", event.at.x, event.at.y, "", ""];
+    case "eliminated":
+      return [entry, "eliminated", "", "", event.seat, "", "", "", "", event.placement, ""];
+  }
+}
+
 /** Live frames carry terrain, counts, eliminations and chat only; positions and rosters appear at terminal. */
 export function brPublicView(state: BrState): SpectatorView {
   const result = brResult(state);
@@ -88,6 +158,7 @@ export function brPublicView(state: BrState): SpectatorView {
       const record = state.teams[seat];
       return `Round ${record?.eliminatedRound ?? "-"}: ${seat} out (${ordinal(record?.placement ?? 0)})`;
     });
+  const columns = Array.from({ length: state.map.width }, (_, x) => String(x));
   const blocks: SpectatorView["blocks"] = [
     {
       kind: "participants",
@@ -117,16 +188,8 @@ export function brPublicView(state: BrState): SpectatorView {
         { label: "Storm damage", value: stormDamage(round) },
       ],
     },
-    {
-      kind: "text",
-      title: `Heights (${state.map.width}x${state.map.height})`,
-      text: heightRows(state.map).join("\n"),
-    },
-    {
-      kind: "text",
-      title: "Terrain (. open, + cover, # wall)",
-      text: terrainRows(state.map).join("\n"),
-    },
+    { kind: "table", title: "Heights", columns, rows: heightGrid(state.map) },
+    { kind: "table", title: "Terrain", columns, rows: terrainGrid(state.map) },
     { kind: "list", title: "Eliminations", items: eliminations },
     {
       kind: "list",
@@ -145,14 +208,32 @@ export function brPublicView(state: BrState): SpectatorView {
         rows: state.seats.map((seat) => [seat, (state.loadouts[seat] ?? []).join(", ")]),
       },
       {
-        kind: "text",
-        title: "History (round: unit@x,y:hp ...)",
-        text: state.history
-          .map(
-            (snapshot) =>
-              `${snapshot.round}: ${snapshot.units.map((u) => `${u.id}@${u.x},${u.y}:${u.hp}`).join(" ")}`,
-          )
-          .join("\n"),
+        kind: "table",
+        title: "Rounds",
+        columns: ["Entry", "Round", "Zone radius", "Storm damage"],
+        rows: state.history.map((entry, i) => [
+          i,
+          entry.round,
+          entry.zoneRadius,
+          entry.stormDamage,
+        ]),
+      },
+      {
+        kind: "table",
+        title: "Units",
+        columns: ["Entry", "Unit", "Seat", "Class", "X", "Y", "HP"],
+        rows: state.history.flatMap((entry, i) =>
+          entry.units.map((u) => {
+            const unit = unitById(state, u.id);
+            return [i, u.id, unit?.seat ?? "", unit?.cls ?? "", u.x, u.y, u.hp];
+          }),
+        ),
+      },
+      {
+        kind: "table",
+        title: "Events",
+        columns: EVENT_COLUMNS,
+        rows: state.history.flatMap((entry, i) => entry.events.map((event) => eventRow(i, event))),
       },
     );
   return {

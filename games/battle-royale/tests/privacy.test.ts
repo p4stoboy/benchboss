@@ -124,7 +124,11 @@ test("live public views depend only on disclosed state; terminal views disclose 
   const view = plugin.publicView(terminal);
   expect(view.result?.seats.find((s) => s.seat === s0)?.placement).toBe(1);
   expect(JSON.stringify(view.blocks)).toContain("scout, ranger, medic");
-  expect(JSON.stringify(view.blocks)).toContain("seat:0/0@");
+  const units = view.blocks.find((b) => b.kind === "table" && b.title === "Units");
+  const rows = units && "rows" in units ? units.rows : [];
+  const spawn = state.units.find((u) => u.id === "seat:0/0");
+  if (!spawn) throw Error("missing spawn unit");
+  expect(rows).toContainEqual([0, "seat:0/0", s0, "scout", spawn.x, spawn.y, spawn.hp]);
 });
 
 test("generated matches never leak unseen positions through observations or live public views", () => {

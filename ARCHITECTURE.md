@@ -272,10 +272,14 @@ States and semantics:
   events leave state unchanged so the runtime commits the default.
 - Battle Royale privacy: observations carry own units with reachable/target lists,
   enemies inside current vision, remembered last sightings, and last-round events only
-  for own units or positions currently visible, plus the 50 most recent chat lines.
-  Live public views carry terrain, counts, zone, eliminations and the same chat window
-  and are independent of positions, rosters and memory; the terminal view adds every
-  loadout, a per-round position history and the full chat log.
+  for own units or positions currently visible, plus the 50 most recent chat lines; the
+  map is row-major `heights[y][x]` and `terrain[y][x]` grids. Live public views carry
+  height/terrain tables, counts, zone, eliminations and the same chat window and are
+  independent of positions, rosters and memory. History is an ordered list of entries
+  (spawn, each resolved round, each in-round host forfeit) with zone radius, storm
+  damage, living units and events; the terminal view emits it as scalar `Loadouts`,
+  `Rounds`, `Units` and `Events` tables plus the full chat log, enough to replay the
+  match without game code.
 - Chess starts at the standard board with seed-assigned colors and White to move.
   `move` accepts exactly `{move: lowercaseUci}` through `match.move`, including an
   explicit q/r/b/n promotion suffix, or `{}` through `match.resign`. Only the active

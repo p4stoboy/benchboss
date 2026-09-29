@@ -1,9 +1,21 @@
 import type { SeatId } from "@benchboss/core";
 import { CLASSES } from "./classes";
 import { attackBlocker, damageFor } from "./combat";
-import { chebyshev, inZone, key, stormDamage } from "./map";
+import { chebyshev, inZone, key, stormDamage, zoneRadius } from "./map";
 import { aliveSeats, initiative, isEliminated, maxHp, rememberSightings, unitById } from "./state";
-import type { BrState, RoundEvent, Unit } from "./types";
+import type { BrState, RoundEvent, RoundSnapshot, Unit } from "./types";
+
+/** History entry for `round` from the given living units and the events that produced them. */
+export function snapshot(state: BrState, round: number, events: RoundEvent[]): RoundSnapshot {
+  const effective = Math.max(1, round);
+  return {
+    round,
+    zoneRadius: zoneRadius(state.map, state.rules.maxRounds, effective),
+    stormDamage: stormDamage(effective),
+    units: state.units.filter((u) => u.alive).map((u) => ({ id: u.id, x: u.x, y: u.y, hp: u.hp })),
+    events: [...events],
+  };
+}
 
 const occupied = (units: readonly Unit[], p: { x: number; y: number }): boolean =>
   units.some((u) => u.alive && u.x === p.x && u.y === p.y);
@@ -183,15 +195,7 @@ export function resolveRound(state: BrState): BrState {
   next = eliminateEmptyTeams(next, events);
   next = {
     ...next,
-    history: [
-      ...next.history,
-      {
-        round: next.round,
-        units: next.units
-          .filter((u) => u.alive)
-          .map((u) => ({ id: u.id, x: u.x, y: u.y, hp: u.hp })),
-      },
-    ],
+    history: [...next.history, snapshot(next, next.round, events)],
     lastRound: events,
     orders: {},
     paths: {},
@@ -205,22 +209,27 @@ export function resolveRound(state: BrState): BrState {
 export function forfeitSeats(state: BrState, seats: readonly SeatId[], cause: string): BrState {
   const victims = seats.filter((seat) => state.seats.includes(seat) && !isEliminated(state, seat));
   if (!victims.length || state.phase === "terminal") return state;
-  const events: RoundEvent[] = [...state.lastRound];
+  const forfeits: RoundEvent[] = [];
   const units = state.units.map((u) =>
     victims.includes(u.seat) && u.alive ? { ...u, alive: false, hp: 0 } : u,
   );
   for (const unit of units)
     if (victims.includes(unit.seat) && unitById(state, unit.id)?.alive)
-      events.push({ kind: "death", unit: unit.id, at: { x: unit.x, y: unit.y } });
+      forfeits.push({ kind: "death", unit: unit.id, at: { x: unit.x, y: unit.y } });
   let next: BrState = { ...state, units, cause };
   const placement = 1 + aliveSeats(next).length - victims.length;
   const teams = { ...next.teams };
   for (const seat of victims) {
     const record = teams[seat];
     if (record) teams[seat] = { ...record, placement, eliminatedRound: state.round };
-    events.push({ kind: "eliminated", seat, placement });
+    forfeits.push({ kind: "eliminated", seat, placement });
   }
-  next = { ...next, teams, lastRound: events };
+  next = {
+    ...next,
+    teams,
+    lastRound: [...state.lastRound, ...forfeits],
+    history: [...next.history, snapshot(next, state.round, forfeits)],
+  };
   if (next.phase === "loadout") {
     const loadouts = { ...next.loadouts };
     for (const seat of victims) delete loadouts[seat];

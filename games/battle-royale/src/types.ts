@@ -70,9 +70,17 @@ export interface TeamRecord {
   damageDealt: number;
 }
 
+/**
+ * One ordered history entry. Round resolution appends one per round; a host forfeit inside a
+ * round appends another carrying that round's number and only the forfeit events. Zone and
+ * storm are the values in effect for that round (entry 0, the spawn, carries round 1's).
+ */
 export interface RoundSnapshot {
   round: number;
+  zoneRadius: number;
+  stormDamage: number;
   units: { id: string; x: number; y: number; hp: number }[];
+  events: RoundEvent[];
 }
 
 export interface BrState {

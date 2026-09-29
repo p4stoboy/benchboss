@@ -8,15 +8,16 @@ import {
 import { validateSchema } from "@benchboss/protocol";
 import { CLASSES, CLASS_IDS, type ClassId, TEAM_BUDGET, TEAM_SIZE, isAffordable } from "./classes";
 import {
+  type TileKind,
   generateMap,
-  heightRows,
+  heightGrid,
   key,
   stormDamage,
-  terrainRows,
+  terrainGrid,
   zoneCenter,
   zoneRadius,
 } from "./map";
-import { resolveRound } from "./resolve";
+import { resolveRound, snapshot } from "./resolve";
 import {
   CHAT_MAX_LENGTH,
   LOADOUT_INPUT_SCHEMA,
@@ -66,7 +67,8 @@ export interface BrObservation {
   publicState: {
     round: number;
     maxRounds: number;
-    map: { width: number; height: number; heights: string[]; terrain: string[] };
+    /** Row-major grids: heights[y][x], terrain[y][x]. */
+    map: { width: number; height: number; heights: number[][]; terrain: TileKind[][] };
     zone: {
       center: Point;
       radius: number;
@@ -173,14 +175,8 @@ function spawn(state: BrState): BrState {
       });
     });
   });
-  const spawned: BrState = {
-    ...state,
-    phase: "orders",
-    round: 1,
-    units,
-    history: [{ round: 0, units: units.map((u) => ({ id: u.id, x: u.x, y: u.y, hp: u.hp })) }],
-  };
-  return rememberSightings(spawned);
+  const spawned: BrState = { ...state, phase: "orders", round: 1, units };
+  return rememberSightings({ ...spawned, history: [snapshot(spawned, 0, [])] });
 }
 
 export function isReady(state: BrState): boolean {
@@ -297,8 +293,8 @@ export function makeBattleRoyale(): GameModule<BrState, unknown, BrObservation, 
           map: {
             width: state.map.width,
             height: state.map.height,
-            heights: heightRows(state.map),
-            terrain: terrainRows(state.map),
+            heights: heightGrid(state.map),
+            terrain: terrainGrid(state.map),
           },
           zone: {
             center,

@@ -125,8 +125,8 @@ no envelope and cannot post.
 
 ## Observation
 
-`publicState`: round, `maxRounds`, `map` (width, height, height rows, terrain
-rows), `zone` (centre, current and next radius, current and next storm damage),
+`publicState`: round, `maxRounds`, `map` (width, height, and row-major
+`heights[y][x]` numbers and `terrain[y][x]` of `open`/`cover`/`wall`), `zone` (centre, current and next radius, current and next storm damage),
 `teams` (units alive and placement per seat), `initiative`, the class catalog,
 budget, team size and `chat` (the most recent 50 lines of `{round, seat, text}`).
 
@@ -138,7 +138,19 @@ you can see now.
 
 ## Public view
 
-Live frames show terrain, heights, team unit counts, the round, zone radius, storm
-damage, eliminations and the recent all chat. Unit positions, rosters and memories
-stay hidden until the terminal frame, which adds every loadout, a per-round
-position history and the complete chat log.
+Live frames show heights and terrain as tables (one row per `y`, one column per
+`x`), team unit counts, the round, zone radius, storm damage, eliminations and the
+recent all chat. Unit positions, rosters and memories stay hidden until the
+terminal frame, which is information-complete for a broadcaster:
+
+- `Loadouts`: seat, actors.
+- `Rounds`: one row per history entry with round, zone radius and storm damage.
+  Entry 0 is the spawn; a host forfeit inside a round adds an entry with that
+  round's number.
+- `Units`: entry, unit, seat, class, x, y, hp for every living unit after that
+  entry.
+- `Events`: entry, kind, unit, target, seat, from x/y, at x/y, value, note for
+  every move (note `blocked`), attack/heal (value = damage/amount), fizzle (note =
+  reason), storm (value = damage), death and elimination (value = placement), in
+  resolution order. Blank cells mean not applicable.
+- `Chat`: the complete log.
