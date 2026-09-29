@@ -20,6 +20,8 @@ const WALL_CHANCE = 0.06;
 const COVER_CHANCE = 0.08;
 const NOISE_CELL = 3;
 const GENERATION_ATTEMPTS = 24;
+/** An attempt with fewer non-open tiles than this share of the map is rejected as featureless. */
+const MIN_FEATURE_SHARE = 0.05;
 
 export const key = (p: Point): string => `${p.x},${p.y}`;
 export const chebyshev = (a: Point, b: Point): number =>
@@ -110,20 +112,55 @@ function noiseHeights(rng: Rng, width: number, height: number): number[][] {
   );
 }
 
-function spawnRing(rng: Rng, width: number, height: number, teams: number): Point[] {
-  const cx = (width - 1) / 2;
-  const cy = (height - 1) / 2;
-  const rx = Math.max(1, cx * 0.8);
-  const ry = Math.max(1, cy * 0.8);
-  const offset = rng.nextFloat() * Math.PI * 2;
-  return Array.from({ length: teams }, (_, i) => {
-    const angle = offset + (Math.PI * 2 * i) / teams;
-    return {
-      x: Math.min(width - 1, Math.max(0, Math.round(cx + Math.cos(angle) * rx))),
-      y: Math.min(height - 1, Math.max(0, Math.round(cy + Math.sin(angle) * ry))),
-    };
-  });
+/**
+ * Farthest-point placement: the first origin is a seeded pick from the map's outer ring, each
+ * further origin is the non-wall tile farthest from every origin so far (ties: farther from
+ * centre, then row-major). Teams therefore start as far apart as the map allows at any count.
+ */
+function spawnOrigins(rng: Rng, map: GameMap, teams: number): Point[] {
+  const centre = zoneCenter(map);
+  const half = Math.max(map.width, map.height) / 2;
+  const candidates: Point[] = [];
+  for (let y = 0; y < map.height; y++)
+    for (let x = 0; x < map.width; x++)
+      if (tileAt(map, { x, y }).kind !== "wall") candidates.push({ x, y });
+  const outer = candidates.filter((p) => chebyshev(p, centre) >= Math.floor(half * 0.8));
+  const origins: Point[] = [rng.pick(outer.length ? outer : candidates)];
+  while (origins.length < teams) {
+    let best: Point | null = null;
+    let bestGap = -1;
+    let bestEdge = -1;
+    for (const p of candidates) {
+      const gap = Math.min(...origins.map((o) => chebyshev(o, p)));
+      const edge = chebyshev(p, centre);
+      if (gap > bestGap || (gap === bestGap && edge > bestEdge)) {
+        best = p;
+        bestGap = gap;
+        bestEdge = edge;
+      }
+    }
+    if (!best || bestGap < 1) throw Error("map too small for spawn origins");
+    origins.push(best);
+  }
+  return origins;
 }
+
+/** Smallest Chebyshev distance between any two spawn tiles of different teams. */
+export function spawnGap(map: GameMap): number {
+  let gap = Number.POSITIVE_INFINITY;
+  map.spawns.forEach((team, i) => {
+    for (const other of map.spawns.slice(i + 1))
+      for (const a of team) for (const b of other) gap = Math.min(gap, chebyshev(a, b));
+  });
+  return gap;
+}
+
+/**
+ * Spawn separation a generated attempt must reach. Farthest-point placement usually does far
+ * better; this only rejects attempts where walls or packing squeezed two teams together.
+ */
+export const requiredSpawnGap = (tilesPerSeat: number): number =>
+  Math.max(1, Math.floor(Math.sqrt(tilesPerSeat) / 2));
 
 /** Claims `count` free, non-wall tiles nearest `origin` by breadth-first order. */
 function claimCluster(map: GameMap, origin: Point, count: number, taken: Set<string>): Point[] {
@@ -192,11 +229,15 @@ function attempt(
   );
   const map: GameMap = { width, height, tiles, spawns: [] };
   const taken = new Set<string>();
-  map.spawns = spawnRing(rng.fork("ring"), width, height, teams).map((origin) =>
+  map.spawns = spawnOrigins(rng.fork("origins"), map, teams).map((origin) =>
     claimCluster(map, origin, teamSize, taken),
   );
   return map;
 }
+
+const hasFeatures = (map: GameMap): boolean =>
+  map.tiles.flat().filter((t) => t.kind !== "open").length >=
+  Math.ceil(map.width * map.height * MIN_FEATURE_SHARE);
 
 export function generateMap(
   rng: Rng,
@@ -205,9 +246,10 @@ export function generateMap(
   teamSize: number,
 ): GameMap {
   const { width, height } = mapSize(seats, tilesPerSeat);
+  const gap = requiredSpawnGap(tilesPerSeat);
   for (let i = 0; i < GENERATION_ATTEMPTS; i++) {
     const map = attempt(rng.fork(`attempt:${i}`), width, height, seats, teamSize, false);
-    if (allSpawnsConnected(map)) return map;
+    if (allSpawnsConnected(map) && hasFeatures(map) && spawnGap(map) >= gap) return map;
   }
   const map = attempt(rng.fork("flat"), width, height, seats, teamSize, true);
   if (!allSpawnsConnected(map)) throw Error("flat map is not connected");

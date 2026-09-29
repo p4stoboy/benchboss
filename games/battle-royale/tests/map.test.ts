@@ -6,6 +6,8 @@ import {
   generateMap,
   key,
   mapSize,
+  requiredSpawnGap,
+  spawnGap,
   stepCost,
   stormDamage,
   zoneCenter,
@@ -14,11 +16,29 @@ import {
 
 test("map area covers every seat's tile allowance with a near-square shape", () => {
   for (const seats of [2, 3, 5, 8, 13, 30])
-    for (const tilesPerSeat of [9, 25, 100]) {
+    for (const tilesPerSeat of [9, 25, 50, 200]) {
       const { width, height } = mapSize(seats, tilesPerSeat);
       expect(width * height).toBeGreaterThanOrEqual(seats * tilesPerSeat);
       expect(Math.abs(width - height)).toBeLessThanOrEqual(1);
     }
+  expect(mapSize(2, 50)).toEqual({ width: 10, height: 10 });
+});
+
+test("teams spawn far apart and every accepted map has terrain features", () => {
+  for (const tilesPerSeat of [9, 50])
+    for (const seats of [2, 5, 12, 30])
+      for (const seed of ["a", "b", "c"]) {
+        const map = generateMap(createRng(`${seed}:${seats}`), seats, tilesPerSeat, TEAM_SIZE);
+        expect(spawnGap(map)).toBeGreaterThanOrEqual(requiredSpawnGap(tilesPerSeat));
+        const tiles = map.tiles.flat();
+        expect(tiles.filter((t) => t.kind !== "open").length).toBeGreaterThanOrEqual(
+          Math.ceil(tiles.length * 0.05),
+        );
+      }
+  // Two teams on the default map start on opposite sides, out of every class's range.
+  const duel = generateMap(createRng("c23af099485043edd91ce108dd7003d5"), 2, 50, TEAM_SIZE);
+  expect([duel.width, duel.height]).toEqual([10, 10]);
+  expect(spawnGap(duel)).toBeGreaterThanOrEqual(6);
 });
 
 test("generated maps are seeded, give every team distinct spawns and connect all spawns", () => {
