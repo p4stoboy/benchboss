@@ -19,6 +19,7 @@
       "version": "0.1.0",
       "dependencies": {
         "@benchboss/core": "workspace:*",
+        "@benchboss/game-battle-royale": "workspace:*",
         "@benchboss/game-chess": "workspace:*",
         "@benchboss/game-rps-n": "workspace:*",
         "@benchboss/game-spy": "workspace:*",
@@ -26,6 +27,20 @@
         "@benchboss/referee": "workspace:*",
         "@benchboss/schemas": "workspace:*",
         "zod": "^3.23",
+      },
+    },
+    "games/battle-royale": {
+      "name": "@benchboss/game-battle-royale",
+      "version": "0.1.0",
+      "dependencies": {
+        "@benchboss/core": "workspace:*",
+        "@benchboss/protocol": "workspace:*",
+        "@benchboss/referee": "workspace:*",
+        "@benchboss/schemas": "workspace:*",
+        "zod": "^3.23",
+      },
+      "devDependencies": {
+        "@benchboss/host": "workspace:*",
       },
     },
     "games/chess": {
@@ -131,6 +146,8 @@
   },
   "packages": {
     "@benchboss/core": ["@benchboss/core@workspace:packages/core"],
+
+    "@benchboss/game-battle-royale": ["@benchboss/game-battle-royale@workspace:games/battle-royale"],
 
     "@benchboss/game-chess": ["@benchboss/game-chess@workspace:games/chess"],
 
