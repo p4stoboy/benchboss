@@ -2,7 +2,7 @@ import { randomBytes, randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { parseJsonl } from "@benchboss/core";
-import { SERVER_CAPABILITIES, type SubmissionIdentity } from "@benchboss/protocol";
+import { SERVER_CAPABILITIES, type SubmissionIdentity, foldFrames } from "@benchboss/protocol";
 import { verifyPluginReplay } from "@benchboss/referee";
 import { createLobby } from "./lobby";
 import type { GameRegistry } from "./registry";
@@ -90,9 +90,8 @@ export function buildLocalServer(opts: {
           if (v) return json(v, 200, "no-store");
           const a = await artifacts.get(id);
           const frames = a?.record.fullPresentation?.frames ?? a?.record.presentation.frames;
-          return frames?.length
-            ? json(frames[frames.length - 1]?.view, 200, "no-store")
-            : json({ error: "not_found" }, 404);
+          const folded = frames && foldFrames(frames);
+          return folded ? json(folded, 200, "no-store") : json({ error: "not_found" }, 404);
         }
         const view = path.match(/^\/match\/([^/]+)\/view$/);
         if (view) {
@@ -101,9 +100,8 @@ export function buildLocalServer(opts: {
           if (v) return json(v, 200, "no-store");
           const a = await artifacts.get(id);
           const frames = a?.record.presentation.frames;
-          return frames?.length
-            ? json(frames[frames.length - 1]?.view, 200, "no-store")
-            : json({ error: "not_found" }, 404);
+          const folded = frames && foldFrames(frames);
+          return folded ? json(folded, 200, "no-store") : json({ error: "not_found" }, 404);
         }
         const record = path.match(/^\/match\/([^/]+)$/);
         if (record) {

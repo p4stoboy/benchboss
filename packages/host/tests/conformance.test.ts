@@ -35,8 +35,22 @@ test("acceptance checks reject invalid outcomes and impure public projections", 
     blocks: [{ kind: "text", title: "counter", text: String(calls++) }],
   });
   expect(checkGameConformance(impure.plugin, { seeds: ["fixture"] })[0]?.detail).toContain(
-    "different logs or spectator frames",
+    "public frames do not fold to the public view",
   );
+  const nondeterministic = clockGame();
+  const makeGame = nondeterministic.plugin.makeGame;
+  let runs = 0;
+  nondeterministic.plugin.makeGame = () => {
+    runs++;
+    return makeGame();
+  };
+  nondeterministic.plugin.publicView = (state) => ({
+    ...project(state),
+    blocks: [{ kind: "text", title: "Run", text: String(runs) }],
+  });
+  expect(
+    checkGameConformance(nondeterministic.plugin, { seeds: ["fixture"] })[0]?.detail,
+  ).toContain("different logs or spectator frames");
 });
 
 test("acceptance checks hold the full projection to the public result and to determinism", () => {
@@ -57,11 +71,36 @@ test("acceptance checks hold the full projection to the public result and to det
     blocks: [{ kind: "text", title: "counter", text: String(calls++) }],
   });
   expect(checkGameConformance(impure.plugin, { seeds: ["fixture"] })[0]?.detail).toContain(
-    "different logs or spectator frames",
+    "full frames do not fold to the full view",
   );
   const absent = clockGame();
   absent.plugin.fullView = undefined;
   expect(checkGameConformance(absent.plugin, { seeds: ["fixture"] }).every((r) => r.ok)).toBe(true);
+});
+
+test("acceptance checks reject projections whose frames cannot be folded", () => {
+  const duplicated = clockGame();
+  const project = duplicated.plugin.publicView;
+  duplicated.plugin.publicView = (state) => {
+    const view = project(state);
+    const twin = { kind: "text" as const, title: "Round", text: String(state.round) };
+    return { ...view, blocks: [twin, twin] };
+  };
+  expect(checkGameConformance(duplicated.plugin, { seeds: ["fixture"] })[0]?.detail).toContain(
+    "duplicate spectator block",
+  );
+  const shrinking = clockGame();
+  const full = shrinking.plugin.fullView;
+  if (!full) throw Error("fixture has no full view");
+  shrinking.plugin.fullView = (state) => {
+    const view = full(state);
+    return state.acted.length === 0
+      ? { ...view, blocks: [...view.blocks, { kind: "text", title: "Opening", text: "only now" }] }
+      : view;
+  };
+  expect(checkGameConformance(shrinking.plugin, { seeds: ["fixture"] })[0]?.detail).toContain(
+    'spectator block "Opening" removed',
+  );
 });
 
 test("replay verification rejects tampered log and published outcomes even when scores agree", async () => {

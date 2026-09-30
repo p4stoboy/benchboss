@@ -92,7 +92,8 @@ Ranking policy belongs to the host application.
 Export an optional browser companion such as `@benchboss/game-chess/canvas`, using
 `GameCanvasRenderer` from `@benchboss/viewer/canvas`. Its input is the existing
 `SpectatorView` from `publicView(state)`. Do not add canvas payloads, separate state
-schemas or data projections; live views and saved frames already provide the input.
+schemas or data projections; live views and folded saved frames already provide the
+input.
 
 The renderer supplies its supported `identity: GameRevision`, a positive finite
 `aspectRatio` and synchronous `render(ctx, view, {width, height, theme}): boolean`.
@@ -116,7 +117,11 @@ not the current clock; this verifies the recorded accounting, not whether a host
 reported physical elapsed time honestly. Use `verifyPluginReplay` from the referee.
 
 Full execution metadata is terminal-only. Public frames include only disclosed
-state. Test hidden-state invariants alongside the common `checkGameConformance`
+state. Recorded frames carry only the blocks that changed, so a projection keeps its
+block titles unique and stable: never drop a block (empty it instead), never reorder
+blocks, append new ones at the end. The referee rejects a projection that breaks
+this, and `checkGameConformance` checks that the recorded frames fold back to the
+projection. Test hidden-state invariants alongside the common `checkGameConformance`
 harness for every supported seat count, defaults, generated actions and rule variants.
 
 Rules: [RPS-N](rps-n/README.md), [Safehouse Protocol](spy/RULES.md), [Chess](chess/README.md),

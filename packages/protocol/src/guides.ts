@@ -28,7 +28,7 @@ export const PLUGIN_FIELDS: PluginField[] = [
   {
     field: "publicView(s)",
     meaning:
-      "Projects public state into SpectatorView blocks for live views and replay frames. Both HTML and optional browser canvas renderers consume this same view without extra state.",
+      "Projects public state into SpectatorView blocks for live views and replay frames. Keep block titles unique and stable: never drop a block (empty it instead) and append new blocks last, because recorded frames carry only the blocks that changed. Both HTML and optional browser canvas renderers consume this same view without extra state.",
   },
   {
     field: "id",
@@ -116,7 +116,7 @@ export const PUBLIC_GUIDES: Guide[] = [
         blocks: [
           {
             kind: "paragraph",
-            text: "A canvas render function takes the existing SpectatorView returned by publicView and stored in replay frames. Do not add canvas payloads, separate state schemas or public projections for drawing. Chess reads its existing FEN and UCI blocks internally, so recorded matches require no extra data or backfill.",
+            text: "A canvas render function takes the existing SpectatorView returned by publicView, or folded from replay frames with foldFrames. Do not add canvas payloads, separate state schemas or public projections for drawing. Chess reads its existing FEN and UCI blocks internally, so recorded matches require no extra data or backfill.",
           },
           {
             kind: "paragraph",
@@ -125,7 +125,7 @@ export const PUBLIC_GUIDES: Guide[] = [
           {
             kind: "code",
             language: "ts",
-            text: 'import { mountCanvasView } from "@benchboss/viewer/canvas";\nimport { chessCanvas } from "@benchboss/game-chess/canvas";\n\nconst canvas = mountCanvasView(container, [chessCanvas], publicView, {identity: presentation.identity});\ncanvas.update(nextPublicView); // Live refresh or a recorded replay frame.\ncanvas.destroy(); // Navigation or unmount.',
+            text: 'import { foldFrames } from "@benchboss/protocol";\nimport { mountCanvasView } from "@benchboss/viewer/canvas";\nimport { chessCanvas } from "@benchboss/game-chess/canvas";\n\nconst canvas = mountCanvasView(container, [chessCanvas], publicView, {identity: presentation.identity});\nconst at = foldFrames(presentation.frames, index); // The view at a replay position.\nif (at) canvas.update(at); // Or the live view on refresh.\ncanvas.destroy(); // Navigation or unmount.',
           },
           {
             kind: "paragraph",

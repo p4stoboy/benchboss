@@ -286,25 +286,37 @@ describe("independent public host", () => {
       ...f.plugin,
       fullView: (s: { done: boolean }) => ({
         ...f.plugin.publicView(s),
-        blocks: [{ kind: "text" as const, title: "Secret", text: s.done ? "over" : "live" }],
+        blocks: [
+          { kind: "text" as const, title: "Stable", text: "never changes" },
+          { kind: "text" as const, title: "Secret", text: s.done ? "over" : "live" },
+        ],
       }),
     };
     const gated = buildLocalServer({ registry: createRegistry([secret]) });
     gated.runner.start(f.spec);
     const liveFull = await gated.app.fetch(new Request("http://local/match/m/view/full"));
-    expect(await liveFull.json()).toMatchObject({ blocks: [{ title: "Secret", text: "live" }] });
+    expect(await liveFull.json()).toMatchObject({
+      blocks: [{ title: "Stable" }, { title: "Secret", text: "live" }],
+    });
     const livePublic = await gated.app.fetch(new Request("http://local/match/m/view"));
     expect(JSON.stringify(await livePublic.json())).not.toContain("Secret");
     await gated.runner.submit("p", "m", "choose", {});
     const full = await gated.app.fetch(new Request("http://local/replay/m/presentation/full"));
     expect(full.status).toBe(200);
     const fullBody = (await full.json()) as { frames: { view: { blocks: { title: string }[] } }[] };
-    expect(fullBody.frames.length).toBeGreaterThan(0);
-    expect(fullBody.frames.every((fr) => fr.view.blocks[0]?.title === "Secret")).toBe(true);
+    expect(fullBody.frames.length).toBeGreaterThan(1);
+    expect(fullBody.frames[0]?.view.blocks.map((b) => b.title)).toEqual(["Stable", "Secret"]);
+    for (const frame of fullBody.frames.slice(1))
+      expect(frame.view.blocks.map((b) => b.title)).toEqual(["Secret"]);
     const pub = await gated.app.fetch(new Request("http://local/replay/m/presentation"));
     expect(JSON.stringify(await pub.json())).not.toContain("Secret");
     const doneFull = await gated.app.fetch(new Request("http://local/match/m/view/full"));
-    expect(await doneFull.json()).toMatchObject({ blocks: [{ title: "Secret", text: "over" }] });
+    expect(await doneFull.json()).toMatchObject({
+      blocks: [
+        { title: "Stable", text: "never changes" },
+        { title: "Secret", text: "over" },
+      ],
+    });
 
     const plain = buildLocalServer({ registry: f.registry });
     plain.runner.start(f.spec);

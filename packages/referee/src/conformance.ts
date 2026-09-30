@@ -1,13 +1,21 @@
 import { type MatchConfig, type Rng, type SeatId, createRng, mkSeatId } from "@benchboss/core";
-import { type ActionInvocation, validateSchema } from "@benchboss/protocol";
+import {
+  type ActionInvocation,
+  type PublicFrame,
+  type SpectatorView,
+  foldFrames,
+  validateSchema,
+} from "@benchboss/protocol";
 import type { GamePlugin } from "./game-plugin";
 import {
   canonical,
   clockSnapshot,
   fullFrames,
+  fullView,
   isTerminal,
   newSession,
   publicFrames,
+  publicView,
   sessionLog,
   step,
 } from "./match-server";
@@ -179,6 +187,15 @@ export function checkGameConformance<State>(
                 config.seats.every((s) => Number.isFinite(scores[s])),
               "invalid terminal scores",
             );
+            assertConformance(
+              foldsToProjection(publicFrames(session), publicView(session)),
+              "public frames do not fold to the public view",
+            );
+            if (plugin.fullView)
+              assertConformance(
+                foldsToProjection(fullFrames(session), fullView(session)),
+                "full frames do not fold to the full view",
+              );
             const log = sessionLog(session);
             const verification = verifyPluginReplay({
               plugin,
@@ -210,4 +227,13 @@ export function checkGameConformance<State>(
         reports.push(report);
       }
   return reports;
+}
+
+/** The recorded stream folds to the projection; clocks are runtime-owned and never recorded on their own. */
+function foldsToProjection(frames: readonly PublicFrame[], view: SpectatorView): boolean {
+  const folded = foldFrames(frames);
+  if (!folded) return false;
+  const { clocks: _foldedClocks, ...a } = folded;
+  const { clocks: _viewClocks, ...b } = view;
+  return canonical(a) === canonical(b);
 }

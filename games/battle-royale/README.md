@@ -265,9 +265,10 @@ legend. The map unfogs as teams explore. It is the union of every team's
 discoveries, so a spectator can know more of the map than any one team. Frames
 also carry team unit counts, the round, zone radius, storm damage, eliminations
 and the recent all chat. A command that changes nothing a spectator sees, such as
-a clock advance, records no frame. Unit positions, loot,
-rosters and the unexplored map stay hidden
-until the terminal frame, which is information-complete for a broadcaster:
+a clock advance, records no frame, and a recorded frame carries only the blocks
+that changed (fold frames forward with `foldFrames` to read the view at any
+point). Unit positions, loot, rosters and the unexplored map stay hidden until
+the terminal view, which is information-complete for a broadcaster:
 
 - `Loadouts`: seat, actors.
 - `Rounds`: one row per history entry with round, zone radius and storm damage.
@@ -287,7 +288,7 @@ until the terminal frame, which is information-complete for a broadcaster:
 
 ### Full view
 
-Every frame carries the whole match state, in this order: `Teams` and `Round`
+The folded view carries the whole match state, in this order: `Teams` and `Round`
 (as public); `Scores` (seat, living units, kills, damage dealt, placement or
 blank); `Terrain kinds` and the whole `Map` from the first frame; `Units` (unit,
 seat, class, x, y, hp, armour, weapon, ready round, hidden until) for every
@@ -299,7 +300,9 @@ team sees the tile and `.` elsewhere, recon discs included; `Recon` (seat, x, y,
 radius, until round) for active reveals; `Events` for the round just resolved,
 in the terminal `Events` layout; `Eliminations` (as public); and the whole
 `Chat` log. A frame is recorded after every command that changes any of this,
-so a full replay has a frame per accepted order. The terminal frame appends the
-public history tables as `Loadouts`, `Rounds`, `Units by entry`, `Loot by entry`
-and `Events by entry`, so the two terminal frames disclose the same information.
+so a full replay has a frame per accepted order; an order frame carries `Orders`
+and the seat's `Teams` status, a resolution frame the blocks the round moved.
+The terminal frame appends the public history tables as `Loadouts`, `Rounds`,
+`Units by entry`, `Loot by entry` and `Events by entry`, so the two terminal views
+disclose the same information.
 `progress` and `result` are identical in both views.

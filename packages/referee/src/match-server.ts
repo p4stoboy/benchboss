@@ -22,6 +22,7 @@ import {
   type HostEvent,
   type Participation,
   type PublicFrame,
+  type SpectatorBlock,
   type SpectatorView,
   isResourceAmount,
   validateParticipation,
@@ -71,6 +72,8 @@ export interface MatchSession<State> {
   projectFull?: (state: State) => SpectatorView;
   frames: readonly PublicFrame[];
   fullFrames: readonly PublicFrame[];
+  /** The complete view each stream's frames fold to; the next frame is diffed against it. */
+  frameTips: Readonly<{ public: SpectatorView | null; full: SpectatorView | null }>;
   decisionEpoch: number;
   seatDecisions: Readonly<Record<SeatId, number>>;
   // biome-ignore lint/suspicious/noExplicitAny: the session is action, observation and score agnostic
@@ -123,6 +126,7 @@ export function newSession<State>(options: SessionOptions<State>): MatchSession<
     projectFull: options.fullView,
     frames: [],
     fullFrames: [],
+    frameTips: { public: null, full: null },
     decisionEpoch: 0,
     seatDecisions: {},
     game: options.game,
@@ -301,17 +305,47 @@ function decorate<State>(session: MatchSession<State>, projected: SpectatorView)
 function recordFrame<State>(session: MatchSession<State>): MatchSession<State> {
   const seq = session.log.length - 1;
   let s = session;
-  if (s.projectPublic) s = { ...s, frames: nextFrames(s.frames, publicView(s), seq) };
-  if (s.projectFull) s = { ...s, fullFrames: nextFrames(s.fullFrames, fullView(s), seq) };
+  if (s.projectPublic) {
+    const next = nextFrames(s.frames, s.frameTips.public, publicView(s), seq);
+    s = { ...s, frames: next.frames, frameTips: { ...s.frameTips, public: next.tip } };
+  }
+  if (s.projectFull) {
+    const next = nextFrames(s.fullFrames, s.frameTips.full, fullView(s), seq);
+    s = { ...s, fullFrames: next.frames, frameTips: { ...s.frameTips, full: next.tip } };
+  }
   return s;
 }
+/** Appends a frame carrying only the changed blocks when the view differs from the stream's tip apart from clocks. */
 function nextFrames(
   frames: readonly PublicFrame[],
+  tip: SpectatorView | null,
   view: SpectatorView,
   seq: number,
-): readonly PublicFrame[] {
-  const last = frames.at(-1);
-  return last && sameView(last.view, view) ? frames : [...frames, { seq, view }];
+): { frames: readonly PublicFrame[]; tip: SpectatorView } {
+  if (tip && sameView(tip, view)) return { frames, tip };
+  const frame = { seq, view: { ...view, blocks: changedBlocks(tip, view) } };
+  return { frames: [...frames, frame], tip: view };
+}
+/**
+ * The blocks whose content differs from the tip (every block for a stream's first frame).
+ * Enforces what a fold relies on: unique titles, no block removed, blocks already in the
+ * stream in their previous order with new blocks after them.
+ */
+function changedBlocks(tip: SpectatorView | null, view: SpectatorView): SpectatorBlock[] {
+  const titles = new Set<string>();
+  for (const block of view.blocks) {
+    if (titles.has(block.title)) throw Error(`duplicate spectator block "${block.title}"`);
+    titles.add(block.title);
+  }
+  if (!tip) return view.blocks;
+  const previous = new Map(tip.blocks.map((block) => [block.title, JSON.stringify(block)]));
+  for (const title of previous.keys())
+    if (!titles.has(title)) throw Error(`spectator block "${title}" removed`);
+  const kept = view.blocks.filter((block) => previous.has(block.title)).map((b) => b.title);
+  const keptInOrder = kept.every((title, i) => tip.blocks[i]?.title === title);
+  const newAfterKept = view.blocks.slice(kept.length).every((block) => !previous.has(block.title));
+  if (!keptInOrder || !newAfterKept) throw Error("spectator block order changed");
+  return view.blocks.filter((block) => previous.get(block.title) !== JSON.stringify(block));
 }
 function sameView(a: SpectatorView, b: SpectatorView): boolean {
   const { clocks: _a, ...restA } = a as SpectatorView & { clocks?: unknown };
