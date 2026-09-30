@@ -85,9 +85,14 @@ export function plans(state: BrState, seat: SeatId): UnitPlan[] {
   return computed;
 }
 
-/** Movement is planned over the tiles the team can see now: fog is impassable until seen. */
+/**
+ * Movement is planned over the tiles the team can see now: fog is impassable until seen. Shots
+ * assume unseen tiles on the sight line are clear, so the listing reads no unseen terrain; the
+ * true line is checked at resolution and a blocked shot fizzles.
+ */
 function computePlans(state: BrState, seat: SeatId): UnitPlan[] {
   const seen = visionOf(state, seat);
+  const known = (p: Point): boolean => seen.has(key(p));
   const enemies = visibleEnemies(state, seat, seen);
   const blocked = new Set(enemies.map(key));
   const own = ownUnits(state, seat);
@@ -100,7 +105,7 @@ function computePlans(state: BrState, seat: SeatId): UnitPlan[] {
     ].map((reach) => ({
       ...reach,
       targets: enemies
-        .filter((enemy) => attackBlocker(state.map, reach, unit.weapon, enemy) === null)
+        .filter((enemy) => attackBlocker(state.map, reach, unit.weapon, enemy, known) === null)
         .map((enemy) => enemy.id),
     })),
   }));

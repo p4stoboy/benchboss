@@ -177,6 +177,48 @@ test("the live spectator map reveals tiles as teams see them and stays revealed;
   expect(cells(full, "Terrain")).toEqual(terminal.map.tiles.flat().map((t) => t.kind));
 });
 
+test("shots never read unseen terrain: a fogged cell on the sight line neither offers nor withholds a target", () => {
+  // The wall at (1,1) hides (2,2) and (3,2) from the ranger; the enemy at (4,1) is in plain view.
+  const rows = (cell: string) => ["00000", "0#000", `00${cell}00`, "00000", "00000"];
+  const specs = [
+    { seat: 0, cls: "ranger" as const, x: 0, y: 0 },
+    { seat: 1, cls: "grunt" as const, x: 4, y: 1 },
+  ];
+  const clear = scenario(rows("0"), specs);
+  const walled = scenario(rows("#"), specs);
+  expect(visionOf(clear, s0)).toEqual(visionOf(walled, s0));
+  expect(visionOf(clear, s0).has("2,2")).toBe(false);
+  const shotsIn = (state: BrState) => game.observe(state, s0).privateState.units[0]?.shots ?? {};
+  expect(shotsIn(walled)).toEqual(shotsIn(clear));
+  // The line from (0,3) crosses the fogged cell: offered either way, since unseen tiles count as clear.
+  expect(shotsIn(walled)["0,3"]).toEqual(["seat:1/0"]);
+  // The line from the ranger's own tile also crosses fog, yet the enemy stands in plain view.
+  expect(shotsIn(walled)["0,0"]).toEqual(["seat:1/0"]);
+  expect(game.observe(walled, s0).privateState.view).toEqual(
+    game.observe(clear, s0).privateState.view,
+  );
+  const order = {
+    orders: [
+      { unit: "seat:0/0", moveTo: { x: 0, y: 3 }, action: { kind: "attack", target: "seat:1/0" } },
+    ],
+  };
+  const landed = submitAll(clear, { [s0]: order });
+  expect(landed.lastRound.some((e) => e.kind === "attack")).toBe(true);
+  const fizzled = submitAll(walled, { [s0]: order });
+  expect(fizzled.lastRound).toContainEqual({
+    kind: "fizzle",
+    unit: "seat:0/0",
+    target: "seat:1/0",
+    reason: "no line of sight",
+  });
+  expect(game.observe(fizzled, s0).privateState.lastRound).toContainEqual({
+    kind: "fizzle",
+    unit: "seat:0/0",
+    target: "seat:1/0",
+    reason: "missed",
+  });
+});
+
 test("a wall hides an enemy from observation, attacks and memory until it is seen", () => {
   const state = scenario(
     ["0#0"],
@@ -304,9 +346,14 @@ test("generated matches never leak unseen positions through observations or live
         "match.loadout",
       ).state;
     state = game.step(state);
+    const everSeen = new Set<string>();
     while (state.phase === "orders") {
       for (const seat of state.seats) assertObservationPrivacy(state, seat);
       assertSpectatorFog(state);
+      for (const seat of state.seats)
+        if (state.teams[seat]?.placement === null)
+          for (const tile of visionOf(state, seat)) everSeen.add(tile);
+      for (const tile of Object.keys(state.explored)) expect(everSeen.has(tile)).toBe(true);
       const hidden = {
         ...state,
         units: state.units.map((u) => ({ ...u, x: 0, y: 0 })),

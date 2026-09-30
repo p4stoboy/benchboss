@@ -107,8 +107,8 @@ order for an unready ability is rejected. Fizzled abilities are not spent.
 
 | Ability | Class | Cooldown | Order | Effect |
 | --- | --- | --- | --- | --- |
-| recon | scout | 3 | no target | Every enemy within 6 tiles of the scout's final tile is visible to the team, through walls and camouflage, for this round's events and the next orders. |
-| grenade | grunt | 3 | `at` tile within 4 of the final tile | 3 damage to every unit, yours included, on or beside the tile. No line of sight needed; the tile need not be visible. |
+| recon | scout | 3 | no target | Reveals the whole square within 6 tiles of the scout's first-leg tile to the team through walls: its terrain, loot, walkable ground and every enemy in it, camouflage included, for this round's events and the next orders. |
+| grenade | grunt | 3 | `at` tile within 4 of the first-leg tile | 3 damage to every unit, yours included, on or beside the tile. No line of sight needed; the tile need not be visible. |
 | brace | vanguard | 4 | no target | +4 armour (cap 6), gained before this round's damage lands. |
 | volley | ranger | 2 | `target` from the destination's `targets` | Weapon damage to the target and to every enemy beside it. Your own units are never hit. |
 | heal | medic | 0 | `target` another of your units | +4 hit points (up to the maximum) if the ally is adjacent after movement. |
@@ -125,8 +125,8 @@ maximum), armour plates (+4 armour, up to the cap) and loot weapons. Loot is
 fogged like units: a team learns of an item when one of its units can see the
 tile and remembers it afterwards; every visible tile's knowledge is refreshed
 each round, so an item taken while nobody of yours was watching stays in your
-list until you look again. A unit takes the item on its final tile with the
-`pickup` action; a weapon pickup leaves the unit's old weapon on the tile, so
+list until you look again. A unit takes the item on its first-leg tile, before
+any second leg, with the `pickup` action; a weapon pickup leaves the unit's old weapon on the tile, so
 items are never lost. Spectators see loot only in the terminal frame.
 
 ### Rounds
@@ -148,7 +148,8 @@ Every living team submits `match.orders` with at most one order per unit:
   observation; the digit is the move points it spends. Units may cross allies
   but not stop on them; visible enemies block.
 - One action per unit: `attack` (a target visible now and listed under `shots`
-  for the chosen destination), `ability` (the class ability when ready, with
+  for the chosen destination; `shots` treats unseen tiles on the sight line as
+  clear, so a listed shot can still fizzle at resolution), `ability` (the class ability when ready, with
   `at` for grenade, `target` for volley and heal, nothing otherwise), `pickup`
   (your `items` list must show one on the destination; a fogged tile is rejected
   the same way whether or not anything lies there) or `hold`. Omitted actions
@@ -166,14 +167,17 @@ Resolution order:
 
 1. Movement, one team at a time in initiative order (the initiative rotates one
    seat per round and is listed in the observation), units in the order given.
-   A unit stops in front of any occupied tile, including hidden enemies.
+   A unit walks through allies but stops in front of any other unit, hidden
+   enemies included, and in front of anyone standing on its destination.
 2. Pickups, brace, camo and recon, in the same order. A pickup whose unit was
    stopped short of its item, or whose item is no longer there, fizzles.
 3. Attacks, grenades, volleys and heals against first-leg positions, all at
    once. An attack whose target is dead, out of range or out of sight fizzles;
-   a grenade thrown from a unit stopped out of range fizzles. Damage and
-   healing are summed before anyone dies, so mutual kills are possible. Kills
-   credit the last enemy to hit the victim; killing your own unit credits nobody.
+   a grenade thrown from a unit stopped out of range fizzles. Your observation
+   reports a fizzle against an enemy only as `missed`; fizzles on your own units
+   and pickups keep their reason. Damage and healing are summed before anyone
+   dies, so mutual kills are possible. Kills and damage dealt credit only hits on
+   enemies; hurting or killing your own unit credits nobody.
 4. Second legs (`thenTo`), in the same initiative and order sequence as step 1
    and stopping before occupied tiles the same way. A unit that died, or that
    was stopped short of its first destination, forfeits its second leg.
@@ -199,7 +203,7 @@ points of the placements they share.
 
 ### All chat
 
-Both envelopes take an optional `chat` string of 1 to 280 characters. It posts
+Both envelopes take an optional `chat` string of 1 to 280 UTF-16 code units. It posts
 to one global, public log the moment the envelope is accepted; a rejected
 envelope posts nothing and safe defaults never post. Reading is earned: a team
 whose unit scored a kill in round r receives the log in its round r+1
@@ -246,8 +250,8 @@ after. What your team saw in earlier rounds is not repeated; remember it.
 
 Live frames show heights and terrain as tables (one row per `y`, one column per
 `x`) for the tiles some team has seen at any point in the match, `?` elsewhere,
-so the spectator map unfogs as teams explore and never shows more than the
-best-informed team has learned. They also carry team unit counts, the round, zone
+so the spectator map unfogs as teams explore. It is the union of every team's
+discoveries, so a spectator can know more of the map than any one team. They also carry team unit counts, the round, zone
 radius, storm damage, eliminations and the recent all chat. Unit positions, loot,
 rosters, memories and the unexplored map stay hidden
 until the terminal frame, which is information-complete for a broadcaster:

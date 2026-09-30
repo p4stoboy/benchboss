@@ -194,6 +194,7 @@ const TERRAIN_CHAR: Record<TileKind, string> = { open: ".", cover: "+", wall: "#
 
 /** Bounding box of a unit's reaches with one cost digit per tile and `.` where it cannot end. */
 export function costGrid(reaches: readonly Reach[]): { x: number; y: number; rows: string[] } {
+  if (reaches.length === 0) return { x: 0, y: 0, rows: [] };
   const x0 = Math.min(...reaches.map((r) => r.x));
   const y0 = Math.min(...reaches.map((r) => r.y));
   const x1 = Math.max(...reaches.map((r) => r.x));
@@ -244,12 +245,21 @@ const withChat = (state: BrState, seat: SeatId, text: string | undefined): BrSta
     ? state
     : { ...state, chat: [...state.chat, { round: state.round, seat, text }] };
 
-/** Events a seat may learn about: its own units, or positions its units can see now. */
+/**
+ * Events a seat may learn about: its own units, or positions its units can see now. A fizzle
+ * against an enemy reads only "missed": the true reason would tell where the target went or what
+ * stood between.
+ */
 export function eventsFor(state: BrState, seat: SeatId): RoundEvent[] {
   const seen = visionOf(state, seat);
   const own = (id: string): boolean => unitById(state, id)?.seat === seat;
   const visible = (p: Point): boolean => seen.has(key(p));
-  return state.lastRound.filter((event) => {
+  const disclosed = state.lastRound.map((event) =>
+    event.kind === "fizzle" && event.target !== "" && !own(event.target)
+      ? { ...event, reason: "missed" }
+      : event,
+  );
+  return disclosed.filter((event) => {
     switch (event.kind) {
       case "move":
         return own(event.unit) || visible(event.to);

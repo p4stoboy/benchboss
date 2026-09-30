@@ -276,7 +276,7 @@ States and semantics:
   mutually reachable, hidden from every other team, at least `MIN_SPAWN_GAP` = 4 apart
   and at least 5% of tiles are non-open; after 24 attempts a flat open map with spread
   spawns is used. The default allowance is the smallest at which 30 seats reliably pass.
-  Spawn clusters are assigned to seats by a seeded shuffle. Terrain is public. Steps: +1 level costs 2, otherwise 1, |Δh| ≥ 2 or wall
+  Spawn clusters are assigned to seats by a seeded shuffle. Steps: +1 level costs 2, otherwise 1, |Δh| ≥ 2 or wall
   impassable. Line of sight is symmetric; walls and surfaces above the eye-to-eye line
   block; cover does not. Vision = class vision + observer height.
 - Battle Royale loadout: exactly three classes from scout/grunt/vanguard/ranger/medic/
@@ -296,7 +296,9 @@ States and semantics:
   and visible enemies), optional `thenTo` (a second leg from `moveTo` with the
   points left, same visibility and blocking rules, the unit's own tile free, must
   differ from `moveTo`; `state.paths[seat][unit]` holds one path per leg) and one
-  optional action: attack (visible target listed for the destination), ability (must
+  optional action: attack (visible target listed for the destination; the listing checks
+  the sight line against seen tiles only, unseen tiles assumed clear, so a listed shot
+  can still fizzle), ability (must
   be ready; recon/brace/camo take nothing, grenade takes `at` within 4 of the
   destination, volley a listed target, heal another own unit), pickup (the seat's item
   memory must hold one on the destination, so a fogged tile rejects identically with or
@@ -309,14 +311,16 @@ States and semantics:
   resolution, cleared by a host forfeit); a seat reads chat only while it is > 0,
   and then only lines with `round < state.round`, windowed to 50.
 - Battle Royale resolution: first-leg movement by rotating seat initiative then order
-  sequence, stopping before any occupied tile (hidden enemies included); then pickups (health,
+  sequence, walking through own units but stopping before any enemy tile (hidden enemies
+  included) and before an occupied final tile; then pickups (health,
   armour, or weapon swap leaving the old weapon on the tile; fizzles when the unit
   stopped short), brace (+4 armour), camo (`hiddenUntil = round + 2`) and recon
   (reveal disc radius 6 until `round + 1`); then attacks, grenades (3 damage to every
   unit within 1 of the tile, own included, no sight needed), volleys (weapon damage to
   the target and adjacent enemies) and heals against first-leg positions with damage summed,
   absorbed by armour first, and healing applied before deaths; kills credit the last
-  enemy hitter only; an attack or damaging ability ends the unit's camouflage; then
+  enemy hitter only and `damageDealt` counts hits on enemies only; an attack or damaging
+  ability ends the unit's camouflage; then
   second legs in the same order (a dead unit or one stopped short of its first
   destination forfeits its second leg); storm
   damage `1 + floor(round/10)` ignoring armour outside a Chebyshev zone that shrinks
@@ -326,7 +330,8 @@ States and semantics:
   averaged across tied placements. `player_time_exhausted` forfeits the batch; other host
   events leave state unchanged so the runtime commits the default.
 - Battle Royale privacy: vision is the line-of-sight union of own units plus active
-  recon discs; a camouflaged enemy is visible only when adjacent to an own unit or
+  recon discs (a recon disc is full vision: terrain, loot, reach and enemies through
+  walls); a camouflaged enemy is visible only when adjacent to an own unit or
   inside an own recon disc. The map is never sent whole: `publicState.map` is width
   and height, the zone centre is public, and `privateState.view` is the bounding box
   of the tiles visible now as row strings (`.`/`+`/`#` terrain, digit heights, `?`
@@ -341,7 +346,8 @@ States and semantics:
   `shots` (destination key → attackable ids), visible enemies (with armour and
   weapon), remembered last sightings, the seat's item memory, last-round events only
   for own units or positions currently visible (ability events by origin tile, blasts
-  and pickups by their tile), and `chat` per the kill gate above. `state.explored` is
+  and pickups by their tile; a fizzle whose target is an enemy carries reason `missed`
+  in place of the stored reason), and `chat` per the kill gate above. `state.explored` is
   the union of every seat's vision at spawn and after each resolution (never cleared);
   live public views carry height/terrain tables with `?` on unexplored tiles, counts,
   zone, eliminations and the 50 most recent chat lines and are independent of

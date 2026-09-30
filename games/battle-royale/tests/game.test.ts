@@ -11,6 +11,7 @@ import {
   WEAPONS,
   isAffordable,
 } from "../src/classes";
+import { CHAT_WINDOW } from "../src/game";
 import { plugin } from "../src/plugin";
 import { initiative } from "../src/state";
 import {
@@ -177,6 +178,85 @@ test("initiative rotates by round and movement stops in front of an occupied til
     blocked: true,
   });
   expect(next.round).toBe(2);
+});
+
+test("units walk through allies on either leg but never stop on one", () => {
+  const state = scenario(flatRows(8, 1), [
+    { seat: 0, cls: "grunt", x: 0, y: 0 },
+    { seat: 0, cls: "grunt", x: 3, y: 0 },
+    { seat: 1, cls: "grunt", x: 7, y: 0, hiddenUntil: 99 },
+  ]);
+  const crossed = submitAll(state, {
+    [s0]: {
+      orders: [
+        { unit: "seat:0/0", moveTo: { x: 4, y: 0 } },
+        { unit: "seat:0/1", moveTo: { x: 1, y: 0 } },
+      ],
+    },
+  });
+  expect(unit(crossed, "seat:0/0")).toMatchObject({ x: 4, y: 0 });
+  expect(unit(crossed, "seat:0/1")).toMatchObject({ x: 1, y: 0 });
+  expect(crossed.lastRound.filter((e) => e.kind === "move" && e.blocked)).toEqual([]);
+  // A second leg crosses a holding ally the same way.
+  const onward = submitAll(state, {
+    [s0]: {
+      orders: [{ unit: "seat:0/0", moveTo: { x: 1, y: 0 }, thenTo: { x: 5, y: 0 } }],
+    },
+  });
+  expect(unit(onward, "seat:0/0")).toMatchObject({ x: 5, y: 0 });
+  expect(onward.lastRound.filter((e) => e.kind === "move" && e.blocked)).toEqual([]);
+  // Two units bound for one tile: the later one stops in front of the first.
+  const same = submitAll(state, {
+    [s0]: {
+      orders: [
+        { unit: "seat:0/0", moveTo: { x: 2, y: 0 } },
+        { unit: "seat:0/1", moveTo: { x: 2, y: 0 } },
+      ],
+    },
+  });
+  expect(unit(same, "seat:0/0")).toMatchObject({ x: 2, y: 0 });
+  expect(unit(same, "seat:0/1")).toMatchObject({ x: 3, y: 0 });
+  expect(same.lastRound).toContainEqual({
+    kind: "move",
+    unit: "seat:0/1",
+    from: { x: 3, y: 0 },
+    to: { x: 3, y: 0 },
+    path: [],
+    blocked: true,
+  });
+});
+
+test("a fizzle against an enemy reads only 'missed' in observations; own-target fizzles keep their reason", () => {
+  const state = scenario(flatRows(10, 2), [
+    { seat: 0, cls: "grunt", x: 0, y: 0 },
+    { seat: 0, cls: "medic", x: 0, y: 1 },
+    { seat: 1, cls: "grunt", x: 3, y: 0 },
+  ]);
+  const next = submitAll(state, {
+    [s0]: {
+      orders: [
+        {
+          unit: "seat:0/0",
+          moveTo: { x: 2, y: 0 },
+          action: { kind: "attack", target: "seat:1/0" },
+        },
+        { unit: "seat:0/1", action: { kind: "ability", target: "seat:0/0" } },
+      ],
+    },
+    [s1]: { orders: [{ unit: "seat:1/0", moveTo: { x: 8, y: 0 } }] },
+  });
+  expect(next.lastRound).toContainEqual({
+    kind: "fizzle",
+    unit: "seat:0/0",
+    target: "seat:1/0",
+    reason: "out of range",
+  });
+  const fizzles = game.observe(next, s0).privateState.lastRound.filter((e) => e.kind === "fizzle");
+  expect(fizzles).toEqual([
+    { kind: "fizzle", unit: "seat:0/0", target: "seat:1/0", reason: "missed" },
+    { kind: "fizzle", unit: "seat:0/1", target: "seat:0/0", reason: "not adjacent" },
+  ]);
+  expect(game.observe(next, s0).privateState.visibleEnemies).toEqual([]);
 });
 
 test("attacks land simultaneously so mutual kills eliminate both teams into a shared first place", () => {
@@ -407,14 +487,14 @@ test("a killer reads previous rounds' chat once, windowed, while the terminal vi
     { chat: [...flood, { round: 1, seat: s0, text: "this round" }], recentKills: { [s1]: 1 } },
   );
   const live = game.observe(state, s1).privateState.chat;
-  expect(live).toHaveLength(50);
-  expect(live[0]?.text).toBe("m10");
+  expect(live).toHaveLength(CHAT_WINDOW);
+  expect(live[0]?.text).toBe(`m${60 - CHAT_WINDOW}`);
   expect(live.at(-1)?.text).toBe("m59");
   expect(game.observe(state, s0).privateState.chat).toEqual([]);
   const liveBlock = plugin
     .publicView(state)
     .blocks.find((block) => block.kind === "list" && block.title === "Chat");
-  expect(liveBlock && "items" in liveBlock ? liveBlock.items : []).toHaveLength(50);
+  expect(liveBlock && "items" in liveBlock ? liveBlock.items : []).toHaveLength(CHAT_WINDOW);
   const terminal = plugin.onHostEvent?.(state, {
     kind: "player_time_exhausted",
     seats: [s1],
@@ -485,12 +565,14 @@ test("observations show only the tiles the team can see, as a row-string window"
 });
 
 test("the reach grid carries move costs and stops at the fog edge", () => {
-  // grunt: move 6, vision 5, so (6,0) is affordable but unseen.
-  const state = scenario(flatRows(10, 1), [{ seat: 0, cls: "grunt", x: 0, y: 0 }]);
+  // On flat open ground each tile costs one point, so the row runs to the nearer of move and vision.
+  const { move, vision } = CLASSES.grunt;
+  const edge = Math.min(move, vision);
+  const state = scenario(flatRows(move + vision, 1), [{ seat: 0, cls: "grunt", x: 0, y: 0 }]);
   expect(game.observe(state, s0).privateState.units[0]?.reach).toEqual({
     x: 0,
     y: 0,
-    rows: ["012345"],
+    rows: [Array.from({ length: edge + 1 }, (_, i) => String(i)).join("")],
   });
   // A step up one level costs 2; the bump then hides everything behind it.
   const bump = scenario(["0100"], [{ seat: 0, cls: "grunt", x: 0, y: 0 }]);
@@ -498,13 +580,13 @@ test("the reach grid carries move costs and stops at the fog edge", () => {
   const tooFar = game.submit(
     state,
     s0,
-    { orders: [{ unit: "seat:0/0", moveTo: { x: 6, y: 0 } }] },
+    { orders: [{ unit: "seat:0/0", moveTo: { x: edge + 1, y: 0 } }] },
     "match.orders",
   );
   expect(tooFar.accepted).toBe(false);
 });
 
-test("a unit may move, act and move again within its points; the storm reads the final tile", () => {
+test("a unit may move, act and move again within its points; the attack fires from the first-leg tile", () => {
   const state = scenario(flatRows(12, 3), [
     { seat: 0, cls: "grunt", x: 0, y: 1 },
     { seat: 1, cls: "grunt", x: 3, y: 1, hp: 1 },
@@ -555,6 +637,34 @@ test("a second leg is rejected when it repeats the destination, exceeds the poin
   expect(attempt({ moveTo: { x: 4, y: 0 }, thenTo: { x: 5, y: 0 } }).accepted).toBe(true);
   expect(attempt({ moveTo: { x: 2, y: 0 }, thenTo: { x: 0, y: 0 } }).accepted).toBe(true);
   expect(attempt({ thenTo: { x: 5, y: 0 } }).accepted).toBe(true);
+});
+
+test("a unit killed on its first-leg tile forfeits the second leg; an enemy stepping into the path blocks it", () => {
+  const state = scenario(flatRows(6, 1), [
+    { seat: 0, cls: "grunt", x: 0, y: 0, hp: 1 },
+    { seat: 1, cls: "grunt", x: 3, y: 0 },
+  ]);
+  const killed = submitAll(state, {
+    [s0]: { orders: [{ unit: "seat:0/0", moveTo: { x: 1, y: 0 }, thenTo: { x: 2, y: 0 } }] },
+    [s1]: { orders: [{ unit: "seat:1/0", action: { kind: "attack", target: "seat:0/0" } }] },
+  });
+  expect(unit(killed, "seat:0/0")).toMatchObject({ x: 1, y: 0, alive: false });
+  expect(killed.lastRound.filter((e) => e.kind === "move" && e.unit === "seat:0/0")).toHaveLength(
+    1,
+  );
+  const blocked = submitAll(state, {
+    [s0]: { orders: [{ unit: "seat:0/0", moveTo: { x: 1, y: 0 }, thenTo: { x: 2, y: 0 } }] },
+    [s1]: { orders: [{ unit: "seat:1/0", moveTo: { x: 2, y: 0 } }] },
+  });
+  expect(unit(blocked, "seat:0/0")).toMatchObject({ x: 1, y: 0, alive: true });
+  expect(blocked.lastRound).toContainEqual({
+    kind: "move",
+    unit: "seat:0/0",
+    from: { x: 1, y: 0 },
+    to: { x: 1, y: 0 },
+    path: [],
+    blocked: true,
+  });
 });
 
 test("a unit stopped short on its first leg forfeits the second", () => {

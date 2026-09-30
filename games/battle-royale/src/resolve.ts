@@ -29,13 +29,15 @@ export function snapshot(state: BrState, round: number, events: RoundEvent[]): R
   };
 }
 
-const occupied = (units: readonly Unit[], p: { x: number; y: number }): boolean =>
-  units.some((u) => u.alive && u.x === p.x && u.y === p.y);
+const occupied = (units: readonly Unit[], p: Point, passable?: SeatId): boolean =>
+  units.some((u) => u.alive && u.seat !== passable && u.x === p.x && u.y === p.y);
 const at = (u: Point): Point => ({ x: u.x, y: u.y });
 
 /**
- * One movement leg in initiative order. A unit whose earlier leg stopped short no longer stands
- * where this leg's path begins, so it forfeits the leg; a dead unit walks nowhere.
+ * One movement leg in initiative order. Allies are walked through but never stopped on; any
+ * unit, hidden or not, blocks the step onto its tile otherwise. A unit whose earlier leg stopped
+ * short no longer stands where this leg's path begins, so it forfeits the leg; a dead unit walks
+ * nowhere.
  */
 function moveUnits(state: BrState, units: Unit[], leg: number, events: RoundEvent[]): void {
   for (const seat of initiative(state))
@@ -48,8 +50,9 @@ function moveUnits(state: BrState, units: Unit[], leg: number, events: RoundEven
       if (start.x !== from.x || start.y !== from.y) continue;
       const walked: Point[] = [];
       let blocked = false;
-      for (const step of path) {
-        if (occupied(units, step)) {
+      for (const [index, step] of path.entries()) {
+        const last = index === path.length - 1;
+        if (occupied(units, step, last ? undefined : seat)) {
           blocked = true;
           break;
         }
@@ -136,7 +139,8 @@ function applyCombat(state: BrState, units: Unit[], events: RoundEvent[]): Appli
   const kills: Record<SeatId, number> = {};
   const hit = (seat: SeatId, target: Unit, amount: number): void => {
     damage[target.id] = (damage[target.id] ?? 0) + amount;
-    if (target.seat !== seat) lastHitter[target.id] = seat;
+    if (target.seat === seat) return;
+    lastHitter[target.id] = seat;
     damageDealt[seat] = (damageDealt[seat] ?? 0) + amount;
   };
   const fizzle = (unit: Unit, target: string, reason: string): void => {

@@ -193,7 +193,8 @@ test("a grenade lands on a tile in range without sight, hits every unit around i
   expect(unit(thrown, "seat:1/0").hp).toBe(CLASSES.grunt.hp - blast);
   expect(unit(thrown, "seat:1/1").hp).toBe(CLASSES.scout.hp - blast);
   expect(unit(thrown, "seat:1/2").hp).toBe(CLASSES.grunt.hp);
-  expect(thrown.teams[s0]?.damageDealt).toBe(3 * blast);
+  // Two enemies were hit; the blast on the thrower's own scout is not credited.
+  expect(thrown.teams[s0]?.damageDealt).toBe(2 * blast);
   expect(thrown.lastRound.filter((e) => e.kind === "blast")).toHaveLength(3);
   expect(thrown.lastRound).toContainEqual({
     kind: "ability",
@@ -210,7 +211,7 @@ test("a grenade lands on a tile in range without sight, hits every unit around i
   expect(game.observe(thrown, s0).privateState.units[0]?.ability.ready).toBe(false);
 });
 
-test("killing your own unit with a grenade credits no kill", () => {
+test("killing your own unit with a grenade credits no kill and no damage dealt", () => {
   const state = scenario(flatRows(9, 1), [
     { seat: 0, cls: "grunt", x: 0, y: 0 },
     { seat: 0, cls: "scout", x: 4, y: 0, hp: 1 },
@@ -221,6 +222,7 @@ test("killing your own unit with a grenade credits no kill", () => {
   });
   expect(unit(next, "seat:0/1").alive).toBe(false);
   expect(next.teams[s0]?.kills).toBe(0);
+  expect(next.teams[s0]?.damageDealt).toBe(0);
 });
 
 test("brace adds armour before the same round's damage and the ability then cools down", () => {
