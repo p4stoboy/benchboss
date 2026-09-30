@@ -2,8 +2,17 @@ import type { SeatId } from "@benchboss/core";
 import { ABILITIES, ARMOUR_PICKUP, CLASSES, HEALTH_PICKUP, MAX_ARMOUR } from "./classes";
 import { attackBlocker, damageFor } from "./combat";
 import { chebyshev, inZone, key, stormDamage, zoneRadius } from "./map";
-import { aliveSeats, initiative, isEliminated, markExplored, maxHp, unitById } from "./state";
-import type { BrState, Item, Point, Reveal, RoundEvent, RoundSnapshot, Unit } from "./types";
+import { aliveSeats, isEliminated, markExplored, maxHp, unitById } from "./state";
+import type {
+  BrState,
+  Item,
+  Point,
+  Reveal,
+  RoundEvent,
+  RoundSnapshot,
+  Unit,
+  UnitOrder,
+} from "./types";
 
 /** History entry for `round` from the given living units and the events that produced them. */
 export function snapshot(state: BrState, round: number, events: RoundEvent[]): RoundSnapshot {
@@ -33,226 +42,230 @@ const occupied = (units: readonly Unit[], p: Point, passable?: SeatId): boolean 
   units.some((u) => u.alive && u.seat !== passable && u.x === p.x && u.y === p.y);
 const at = (u: Point): Point => ({ x: u.x, y: u.y });
 
-/**
- * One movement leg in initiative order. Allies are walked through but never stopped on; any
- * unit, hidden or not, blocks the step onto its tile otherwise. A unit whose earlier leg stopped
- * short no longer stands where this leg's path begins, so it forfeits the leg; a dead unit walks
- * nowhere.
- */
-function moveUnits(state: BrState, units: Unit[], leg: number, events: RoundEvent[]): void {
-  for (const seat of initiative(state))
-    for (const order of state.orders[seat]?.orders ?? []) {
-      const path = state.paths[seat]?.[order.unit]?.[leg];
-      const unit = units.find((u) => u.id === order.unit);
-      if (!path?.length || !unit?.alive) continue;
-      const from = at(unit);
-      const start = leg === 0 ? from : (state.paths[seat]?.[order.unit]?.[leg - 1]?.at(-1) ?? from);
-      if (start.x !== from.x || start.y !== from.y) continue;
-      const walked: Point[] = [];
-      let blocked = false;
-      for (const [index, step] of path.entries()) {
-        const last = index === path.length - 1;
-        if (occupied(units, step, last ? undefined : seat)) {
-          blocked = true;
-          break;
-        }
-        unit.x = step.x;
-        unit.y = step.y;
-        walked.push({ x: step.x, y: step.y });
-      }
-      events.push({ kind: "move", unit: unit.id, from, to: at(unit), path: walked, blocked });
-    }
+/** The acting seat's orders with the paths accepted for them. */
+interface Turn {
+  seat: SeatId;
+  orders: UnitOrder[];
+  paths: Record<string, Point[][]>;
 }
 
-/** Pickups and self-targeted abilities land before any damage, in initiative order. */
+/**
+ * One movement leg, orders in the order given. Allies are walked through but never stopped on;
+ * any unit, hidden or not, blocks the step onto its tile otherwise. A unit whose earlier leg
+ * stopped short no longer stands where this leg's path begins, so it forfeits the leg; a dead
+ * unit walks nowhere.
+ */
+function moveUnits(turn: Turn, units: Unit[], leg: number, events: RoundEvent[]): void {
+  for (const order of turn.orders) {
+    const path = turn.paths[order.unit]?.[leg];
+    const unit = units.find((u) => u.id === order.unit);
+    if (!path?.length || !unit?.alive) continue;
+    const from = at(unit);
+    const start = leg === 0 ? from : (turn.paths[order.unit]?.[leg - 1]?.at(-1) ?? from);
+    if (start.x !== from.x || start.y !== from.y) continue;
+    const walked: Point[] = [];
+    let blocked = false;
+    for (const [index, step] of path.entries()) {
+      const last = index === path.length - 1;
+      if (occupied(units, step, last ? undefined : turn.seat)) {
+        blocked = true;
+        break;
+      }
+      unit.x = step.x;
+      unit.y = step.y;
+      walked.push({ x: step.x, y: step.y });
+    }
+    events.push({ kind: "move", unit: unit.id, from, to: at(unit), path: walked, blocked });
+  }
+}
+
+/** Pickups and self-targeted abilities land before any damage, in the order given. */
 function applyPickupsAndBuffs(
   state: BrState,
+  turn: Turn,
   units: Unit[],
   items: Item[],
   reveals: Reveal[],
   events: RoundEvent[],
 ): void {
-  for (const seat of initiative(state))
-    for (const order of state.orders[seat]?.orders ?? []) {
-      const unit = units.find((u) => u.id === order.unit);
-      const action = order.action;
-      if (!unit?.alive || !action) continue;
-      if (action.kind === "pickup") {
-        const index = items.findIndex((item) => key(item) === key(unit));
-        const item = items[index];
-        if (!item) {
-          events.push({ kind: "fizzle", unit: unit.id, target: "", reason: "nothing to pick up" });
-          continue;
-        }
-        if (item.kind === "health") {
-          unit.hp = Math.min(maxHp(unit), unit.hp + HEALTH_PICKUP);
-          items.splice(index, 1);
-          events.push({ kind: "pickup", unit: unit.id, at: at(unit), item: "health" });
-        } else if (item.kind === "armour") {
-          unit.armour = Math.min(MAX_ARMOUR, unit.armour + ARMOUR_PICKUP);
-          items.splice(index, 1);
-          events.push({ kind: "pickup", unit: unit.id, at: at(unit), item: "armour" });
-        } else {
-          const dropped = unit.weapon;
-          unit.weapon = item.weapon;
-          items[index] = { x: item.x, y: item.y, kind: "weapon", weapon: dropped };
-          events.push({
-            kind: "pickup",
-            unit: unit.id,
-            at: at(unit),
-            item: "weapon",
-            weapon: item.weapon,
-            dropped,
-          });
-        }
+  for (const order of turn.orders) {
+    const unit = units.find((u) => u.id === order.unit);
+    const action = order.action;
+    if (!unit?.alive || !action) continue;
+    if (action.kind === "pickup") {
+      const index = items.findIndex((item) => key(item) === key(unit));
+      const item = items[index];
+      if (!item) {
+        events.push({ kind: "fizzle", unit: unit.id, target: "", reason: "nothing to pick up" });
         continue;
       }
-      if (action.kind !== "ability") continue;
-      const ability = CLASSES[unit.cls].ability;
-      const spec = ABILITIES[ability];
-      if (spec.target !== "none") continue;
-      if (ability === "brace") unit.armour = Math.min(MAX_ARMOUR, unit.armour + spec.amount);
-      else if (ability === "camo") unit.hiddenUntil = state.round + spec.duration;
-      else if (ability === "recon")
-        reveals.push({
-          seat,
-          center: at(unit),
-          radius: spec.radius,
-          untilRound: state.round + spec.duration,
+      if (item.kind === "health") {
+        unit.hp = Math.min(maxHp(unit), unit.hp + HEALTH_PICKUP);
+        items.splice(index, 1);
+        events.push({ kind: "pickup", unit: unit.id, at: at(unit), item: "health" });
+      } else if (item.kind === "armour") {
+        unit.armour = Math.min(MAX_ARMOUR, unit.armour + ARMOUR_PICKUP);
+        items.splice(index, 1);
+        events.push({ kind: "pickup", unit: unit.id, at: at(unit), item: "armour" });
+      } else {
+        const dropped = unit.weapon;
+        unit.weapon = item.weapon;
+        items[index] = { x: item.x, y: item.y, kind: "weapon", weapon: dropped };
+        events.push({
+          kind: "pickup",
+          unit: unit.id,
+          at: at(unit),
+          item: "weapon",
+          weapon: item.weapon,
+          dropped,
         });
-      unit.readyRound = state.round + spec.cooldown + 1;
-      events.push({ kind: "ability", unit: unit.id, ability, from: at(unit) });
+      }
+      continue;
     }
+    if (action.kind !== "ability") continue;
+    const ability = CLASSES[unit.cls].ability;
+    const spec = ABILITIES[ability];
+    if (spec.target !== "none") continue;
+    if (ability === "brace") unit.armour = Math.min(MAX_ARMOUR, unit.armour + spec.amount);
+    else if (ability === "camo") unit.hiddenUntil = state.round + spec.duration;
+    else if (ability === "recon")
+      reveals.push({
+        seat: turn.seat,
+        center: at(unit),
+        radius: spec.radius,
+        untilRound: state.round + spec.duration,
+      });
+    unit.readyRound = state.round + spec.cooldown + 1;
+    events.push({ kind: "ability", unit: unit.id, ability, from: at(unit) });
+  }
 }
 
 interface Applied {
-  kills: Record<SeatId, number>;
-  damageDealt: Record<SeatId, number>;
+  kills: number;
+  damageDealt: number;
 }
 
-/** Attacks, targeted abilities and heals against post-movement positions, summed before deaths. */
-function applyCombat(state: BrState, units: Unit[], events: RoundEvent[]): Applied {
+/**
+ * Attacks, targeted abilities and heals from first-leg positions. The turn's damage is summed
+ * per target before deaths so two units on one enemy cannot overkill it into a second credit.
+ */
+function applyCombat(state: BrState, turn: Turn, units: Unit[], events: RoundEvent[]): Applied {
+  const { seat } = turn;
   const damage: Record<string, number> = {};
   const healing: Record<string, number> = {};
-  const lastHitter: Record<string, SeatId> = {};
-  const damageDealt: Record<SeatId, number> = {};
-  const kills: Record<SeatId, number> = {};
-  const hit = (seat: SeatId, target: Unit, amount: number): void => {
+  const applied: Applied = { kills: 0, damageDealt: 0 };
+  const hit = (target: Unit, amount: number): void => {
     damage[target.id] = (damage[target.id] ?? 0) + amount;
-    if (target.seat === seat) return;
-    lastHitter[target.id] = seat;
-    damageDealt[seat] = (damageDealt[seat] ?? 0) + amount;
+    if (target.seat !== seat) applied.damageDealt += amount;
   };
   const fizzle = (unit: Unit, target: string, reason: string): void => {
     events.push({ kind: "fizzle", unit: unit.id, target, reason });
   };
-  for (const seat of initiative(state))
-    for (const order of state.orders[seat]?.orders ?? []) {
-      const unit = units.find((u) => u.id === order.unit);
-      const action = order.action;
-      if (!unit?.alive || !action || action.kind === "hold" || action.kind === "pickup") continue;
-      if (action.kind === "attack") {
-        const target = units.find((u) => u.id === action.target);
-        if (!target?.alive) {
-          fizzle(unit, action.target, "target gone");
-          continue;
-        }
-        const blocker = attackBlocker(state.map, unit, unit.weapon, target);
-        if (blocker) {
-          fizzle(unit, target.id, blocker);
-          continue;
-        }
-        const amount = damageFor(state.map, unit, unit.weapon, target);
-        hit(seat, target, amount);
-        unit.hiddenUntil = 0;
-        events.push({
-          kind: "attack",
-          unit: unit.id,
-          from: at(unit),
-          target: target.id,
-          at: at(target),
-          damage: amount,
-        });
-        continue;
-      }
-      const ability = CLASSES[unit.cls].ability;
-      const spec = ABILITIES[ability];
-      if (spec.target === "none") continue;
-      if (spec.target === "point") {
-        const centre = action.at;
-        if (!centre) continue;
-        if (chebyshev(unit, centre) > spec.range) {
-          fizzle(unit, "", "out of range");
-          continue;
-        }
-        unit.readyRound = state.round + spec.cooldown + 1;
-        unit.hiddenUntil = 0;
-        events.push({ kind: "ability", unit: unit.id, ability, from: at(unit), at: centre });
-        for (const victim of units) {
-          if (!victim.alive || chebyshev(victim, centre) > spec.radius) continue;
-          hit(seat, victim, spec.amount);
-          events.push({
-            kind: "blast",
-            unit: unit.id,
-            target: victim.id,
-            at: at(victim),
-            damage: spec.amount,
-          });
-        }
-        continue;
-      }
+  for (const order of turn.orders) {
+    const unit = units.find((u) => u.id === order.unit);
+    const action = order.action;
+    if (!unit?.alive || !action || action.kind === "hold" || action.kind === "pickup") continue;
+    if (action.kind === "attack") {
       const target = units.find((u) => u.id === action.target);
       if (!target?.alive) {
-        fizzle(unit, action.target ?? "", "target gone");
+        fizzle(unit, action.target, "target gone");
         continue;
       }
-      if (spec.target === "enemy") {
-        const blocker = attackBlocker(state.map, unit, unit.weapon, target);
-        if (blocker) {
-          fizzle(unit, target.id, blocker);
-          continue;
-        }
-        unit.readyRound = state.round + spec.cooldown + 1;
-        unit.hiddenUntil = 0;
-        events.push({
-          kind: "ability",
-          unit: unit.id,
-          ability,
-          from: at(unit),
-          target: target.id,
-        });
-        for (const victim of units) {
-          if (!victim.alive || victim.seat === seat || chebyshev(victim, target) > spec.radius)
-            continue;
-          const amount = damageFor(state.map, unit, unit.weapon, victim);
-          hit(seat, victim, amount);
-          events.push({
-            kind: "blast",
-            unit: unit.id,
-            target: victim.id,
-            at: at(victim),
-            damage: amount,
-          });
-        }
+      const blocker = attackBlocker(state.map, unit, unit.weapon, target);
+      if (blocker) {
+        fizzle(unit, target.id, blocker);
         continue;
       }
-      if (chebyshev(unit, target) > spec.radius) {
-        fizzle(unit, target.id, "not adjacent");
-        continue;
-      }
-      unit.readyRound = state.round + spec.cooldown + 1;
-      healing[target.id] = (healing[target.id] ?? 0) + spec.amount;
-      events.push({ kind: "ability", unit: unit.id, ability, from: at(unit), target: target.id });
+      const amount = damageFor(state.map, unit, unit.weapon, target);
+      hit(target, amount);
+      unit.hiddenUntil = 0;
       events.push({
-        kind: "heal",
+        kind: "attack",
         unit: unit.id,
         from: at(unit),
         target: target.id,
         at: at(target),
-        amount: spec.amount,
+        damage: amount,
       });
+      continue;
     }
-  // Damage and healing land together, so simultaneous attackers cannot pre-empt each other.
+    const ability = CLASSES[unit.cls].ability;
+    const spec = ABILITIES[ability];
+    if (spec.target === "none") continue;
+    if (spec.target === "point") {
+      const centre = action.at;
+      if (!centre) continue;
+      if (chebyshev(unit, centre) > spec.range) {
+        fizzle(unit, "", "out of range");
+        continue;
+      }
+      unit.readyRound = state.round + spec.cooldown + 1;
+      unit.hiddenUntil = 0;
+      events.push({ kind: "ability", unit: unit.id, ability, from: at(unit), at: centre });
+      for (const victim of units) {
+        if (!victim.alive || chebyshev(victim, centre) > spec.radius) continue;
+        hit(victim, spec.amount);
+        events.push({
+          kind: "blast",
+          unit: unit.id,
+          target: victim.id,
+          at: at(victim),
+          damage: spec.amount,
+        });
+      }
+      continue;
+    }
+    const target = units.find((u) => u.id === action.target);
+    if (!target?.alive) {
+      fizzle(unit, action.target ?? "", "target gone");
+      continue;
+    }
+    if (spec.target === "enemy") {
+      const blocker = attackBlocker(state.map, unit, unit.weapon, target);
+      if (blocker) {
+        fizzle(unit, target.id, blocker);
+        continue;
+      }
+      unit.readyRound = state.round + spec.cooldown + 1;
+      unit.hiddenUntil = 0;
+      events.push({
+        kind: "ability",
+        unit: unit.id,
+        ability,
+        from: at(unit),
+        target: target.id,
+      });
+      for (const victim of units) {
+        if (!victim.alive || victim.seat === seat || chebyshev(victim, target) > spec.radius)
+          continue;
+        const amount = damageFor(state.map, unit, unit.weapon, victim);
+        hit(victim, amount);
+        events.push({
+          kind: "blast",
+          unit: unit.id,
+          target: victim.id,
+          at: at(victim),
+          damage: amount,
+        });
+      }
+      continue;
+    }
+    if (chebyshev(unit, target) > spec.radius) {
+      fizzle(unit, target.id, "not adjacent");
+      continue;
+    }
+    unit.readyRound = state.round + spec.cooldown + 1;
+    healing[target.id] = (healing[target.id] ?? 0) + spec.amount;
+    events.push({ kind: "ability", unit: unit.id, ability, from: at(unit), target: target.id });
+    events.push({
+      kind: "heal",
+      unit: unit.id,
+      from: at(unit),
+      target: target.id,
+      at: at(target),
+      amount: spec.amount,
+    });
+  }
   for (const unit of units) {
     if (!unit.alive) continue;
     const total = damage[unit.id] ?? 0;
@@ -263,10 +276,10 @@ function applyCombat(state: BrState, units: Unit[], events: RoundEvent[]): Appli
     unit.hp = 0;
     unit.alive = false;
     events.push({ kind: "death", unit: unit.id, at: at(unit) });
-    const killer = lastHitter[unit.id];
-    if (killer !== undefined) kills[killer] = (kills[killer] ?? 0) + 1;
+    // Only enemy hits reach here with damage; a unit killed by its own side's blast credits nobody.
+    if (unit.seat !== seat && total > 0) applied.kills += 1;
   }
-  return { kills, damageDealt };
+  return applied;
 }
 
 /** The storm ignores armour. */
@@ -325,45 +338,71 @@ export function finishIfDecided(state: BrState): BrState {
   const alive = aliveSeats(state);
   if (alive.length > 1 && state.round <= state.rules.maxRounds) return state;
   const ranked = alive.length ? rankSurvivors(state) : state;
-  return { ...ranked, phase: "terminal", orders: {}, paths: {} };
+  return { ...ranked, phase: "terminal", pending: null };
 }
 
-export function resolveRound(state: BrState): BrState {
-  const events: RoundEvent[] = [];
+/**
+ * Resolves the pending seat's orders in full: first legs, pickups and self-abilities, attacks,
+ * blasts and heals with immediate damage, then second legs. The next seat acts on the result.
+ */
+export function resolveTurn(state: BrState): BrState {
+  const turn = state.pending;
+  if (!turn) return state;
+  const events: RoundEvent[] = [...state.events, { kind: "turn", seat: turn.seat }];
   const units = state.units.map((u) => ({ ...u }));
-  moveUnits(state, units, 0, events);
+  moveUnits(turn, units, 0, events);
   const items = state.items.map((item) => ({ ...item }));
-  // Reveals that outlive this round stay; anything older is dropped here.
-  const reveals = state.reveals.filter((r) => r.untilRound > state.round);
-  applyPickupsAndBuffs(state, units, items, reveals, events);
-  const { kills, damageDealt } = applyCombat(state, units, events);
-  moveUnits(state, units, 1, events);
-  applyStorm(state, units, events);
-  const teams = { ...state.teams };
-  for (const seat of state.seats) {
-    const record = teams[seat];
-    if (!record) continue;
-    teams[seat] = {
+  const reveals = [...state.reveals];
+  applyPickupsAndBuffs(state, turn, units, items, reveals, events);
+  const { kills, damageDealt } = applyCombat(state, turn, units, events);
+  moveUnits(turn, units, 1, events);
+  const record = state.teams[turn.seat];
+  if (!record) throw Error("pending orders name an unknown seat");
+  const teams = {
+    ...state.teams,
+    [turn.seat]: {
       ...record,
-      kills: record.kills + (kills[seat] ?? 0),
-      damageDealt: record.damageDealt + (damageDealt[seat] ?? 0),
-    };
-  }
-  let next: BrState = { ...state, units, items, reveals, teams, recentKills: kills };
-  next = eliminateEmptyTeams(next, events);
+      kills: record.kills + kills,
+      damageDealt: record.damageDealt + damageDealt,
+    },
+  };
+  return markExplored({
+    ...state,
+    units,
+    items,
+    reveals,
+    teams,
+    events,
+    recentKills: { ...state.recentKills, [turn.seat]: kills },
+    turns: [...state.turns, { seat: turn.seat, orders: turn.orders }],
+    pending: null,
+  });
+}
+
+/** Storm, eliminations and the round's history entry once every due seat has acted. */
+export function endRound(state: BrState): BrState {
+  const events = [...state.events];
+  const units = state.units.map((u) => ({ ...u }));
+  applyStorm(state, units, events);
+  let next: BrState = eliminateEmptyTeams({ ...state, units }, events);
   next = {
     ...next,
+    // Reveals that outlive this round stay; anything older is dropped here.
+    reveals: next.reveals.filter((r) => r.untilRound > next.round),
     history: [...next.history, snapshot(next, next.round, events)],
     lastRound: events,
-    orders: {},
-    paths: {},
+    events: [],
+    turns: [],
+    pending: null,
     round: next.round + 1,
   };
-  next = markExplored(next);
-  return finishIfDecided(next);
+  return finishIfDecided(markExplored(next));
 }
 
-/** Host-enforced removal of a batch of seats (player time exhaustion). */
+/**
+ * Host-enforced removal of a batch of seats (player time exhaustion). The forfeit lands in the
+ * round in progress; when it leaves at most one team the round's history entry closes there.
+ */
 export function forfeitSeats(state: BrState, seats: readonly SeatId[], cause: string): BrState {
   const victims = seats.filter((seat) => state.seats.includes(seat) && !isEliminated(state, seat));
   if (!victims.length || state.phase === "terminal") return state;
@@ -382,24 +421,20 @@ export function forfeitSeats(state: BrState, seats: readonly SeatId[], cause: st
     if (record) teams[seat] = { ...record, placement, eliminatedRound: state.round };
     forfeits.push({ kind: "eliminated", seat, placement });
   }
-  next = {
-    ...next,
-    teams,
-    lastRound: [...state.lastRound, ...forfeits],
-    history: [...next.history, snapshot(next, state.round, forfeits)],
-  };
+  next = { ...next, teams, events: [...state.events, ...forfeits] };
   if (next.phase === "loadout") {
     const loadouts = { ...next.loadouts };
     for (const seat of victims) delete loadouts[seat];
     next = { ...next, loadouts };
-  } else {
-    const orders = { ...next.orders };
-    const paths = { ...next.paths };
-    for (const seat of victims) {
-      delete orders[seat];
-      delete paths[seat];
-    }
-    next = { ...next, orders, paths };
+  } else if (next.pending && victims.includes(next.pending.seat)) {
+    next = { ...next, pending: null };
   }
-  return aliveSeats(next).length <= 1 ? finishIfDecided(next) : next;
+  if (aliveSeats(next).length > 1) return next;
+  return finishIfDecided({
+    ...next,
+    history: [...next.history, snapshot(next, next.round, next.events)],
+    lastRound: next.events,
+    events: [],
+    turns: [],
+  });
 }

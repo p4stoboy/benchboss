@@ -13,11 +13,14 @@ import {
 } from "../src/classes";
 import { CHAT_WINDOW } from "../src/game";
 import { plugin } from "../src/plugin";
-import { initiative } from "../src/state";
+import { actingSeat, initiative, turnOrder } from "../src/state";
 import {
+  advanceTo,
   flatRows,
   game,
   newMatch,
+  observeAt,
+  playTurn,
   reachCosts,
   scenario,
   seatsOf,
@@ -174,31 +177,62 @@ test("rejection reasons never echo an id the state does not vouch for", () => {
   expect(reasons[0]).toContain("order 0");
 });
 
-test("initiative rotates by round and movement stops in front of an occupied tile", () => {
+test("seats act one at a time in rotating initiative and each plans against the last seat's result", () => {
   const state = scenario(flatRows(8, 1), [
     { seat: 0, cls: "grunt", x: 0, y: 0 },
     { seat: 1, cls: "grunt", x: 7, y: 0 },
   ]);
   expect(initiative(state)).toEqual([s0, s1]);
   expect(initiative({ ...state, round: 2 })).toEqual([s1, s0]);
-  const next = submitAll(state, {
-    [s0]: { orders: [{ unit: "seat:0/0", moveTo: { x: 4, y: 0 } }] },
-    [s1]: { orders: [{ unit: "seat:1/0", moveTo: { x: 3, y: 0 } }] },
-  });
-  expect(unit(next, "seat:0/0")).toMatchObject({ x: 4, y: 0 });
+  expect(actingSeat(state)).toBe(s0);
+  expect(game.observe(state, s0).publicState.turnOrder).toEqual([
+    { seat: s0, status: "acting" },
+    { seat: s1, status: "waiting" },
+  ]);
+  expect(game.observe(state, s1).privateState.committed).toBe(true);
+  expect(game.submit(state, s1, { orders: [] }, "match.orders").accepted).toBe(false);
+  const submitted = game.submit(
+    state,
+    s0,
+    { orders: [{ unit: "seat:0/0", moveTo: { x: 4, y: 0 } }] },
+    "match.orders",
+  );
+  expect(submitted.accepted).toBe(true);
+  expect(submitted.state.pending?.seat).toBe(s0);
+  expect(game.observe(submitted.state, s0).privateState.committed).toBe(true);
+  expect(plugin.isReady(submitted.state)).toBe(true);
+  const mid = game.step(submitted.state);
+  // Seat 0 has moved before seat 1 looks: the enemy stands at (4,0) and (3,0) is unreachable.
+  expect(unit(mid, "seat:0/0")).toMatchObject({ x: 4, y: 0 });
+  expect(mid.round).toBe(1);
+  expect(mid.turns.map((t) => t.seat)).toEqual([s0]);
+  expect(turnOrder(mid)).toEqual([
+    { seat: s0, status: "acted" },
+    { seat: s1, status: "acting" },
+  ]);
+  const seen = game.observe(mid, s1);
+  expect(seen.privateState.visibleEnemies.map((u) => [u.id, u.x])).toEqual([["seat:0/0", 4]]);
+  expect(seen.privateState.events).toEqual([
+    { kind: "turn", seat: s0 },
+    {
+      kind: "move",
+      unit: "seat:0/0",
+      from: { x: 0, y: 0 },
+      to: { x: 4, y: 0 },
+      path: [1, 2, 3, 4].map((x) => ({ x, y: 0 })),
+      blocked: false,
+    },
+  ]);
+  expect(
+    game.submit(mid, s1, { orders: [{ unit: "seat:1/0", moveTo: { x: 3, y: 0 } }] }, "match.orders")
+      .accepted,
+  ).toBe(false);
+  const next = playTurn(mid, s1, { orders: [{ unit: "seat:1/0", moveTo: { x: 5, y: 0 } }] });
   expect(unit(next, "seat:1/0")).toMatchObject({ x: 5, y: 0 });
-  expect(next.lastRound).toContainEqual({
-    kind: "move",
-    unit: "seat:1/0",
-    from: { x: 7, y: 0 },
-    to: { x: 5, y: 0 },
-    path: [
-      { x: 6, y: 0 },
-      { x: 5, y: 0 },
-    ],
-    blocked: true,
-  });
   expect(next.round).toBe(2);
+  expect(next.turns).toEqual([]);
+  expect(next.lastRound.map((e) => e.kind)).toEqual(["turn", "move", "turn", "move"]);
+  expect(actingSeat(next)).toBe(s1);
 });
 
 test("units walk through allies on either leg but never stop on one", () => {
@@ -248,80 +282,124 @@ test("units walk through allies on either leg but never stop on one", () => {
 });
 
 test("a fizzle against an enemy reads only 'missed' in observations; own-target fizzles keep their reason", () => {
+  // A hidden sniper at (2,0) stops the grunt at (1,0): its shot at (5,0) is then out of range
+  // and the medic waiting at (4,1) for it is no longer adjacent.
   const state = scenario(flatRows(10, 2), [
     { seat: 0, cls: "grunt", x: 0, y: 0 },
-    { seat: 0, cls: "medic", x: 0, y: 1 },
-    { seat: 1, cls: "grunt", x: 3, y: 0 },
+    { seat: 0, cls: "medic", x: 4, y: 1 },
+    { seat: 1, cls: "sniper", x: 2, y: 0, hiddenUntil: 99 },
+    { seat: 1, cls: "grunt", x: 5, y: 0 },
   ]);
   const next = submitAll(state, {
     [s0]: {
       orders: [
         {
           unit: "seat:0/0",
-          moveTo: { x: 2, y: 0 },
-          action: { kind: "attack", target: "seat:1/0" },
+          moveTo: { x: 3, y: 0 },
+          action: { kind: "attack", target: "seat:1/1" },
         },
         { unit: "seat:0/1", action: { kind: "ability", target: "seat:0/0" } },
       ],
     },
-    [s1]: { orders: [{ unit: "seat:1/0", moveTo: { x: 8, y: 0 } }] },
   });
+  expect(unit(next, "seat:0/0")).toMatchObject({ x: 1, y: 0 });
   expect(next.lastRound).toContainEqual({
     kind: "fizzle",
     unit: "seat:0/0",
-    target: "seat:1/0",
+    target: "seat:1/1",
     reason: "out of range",
   });
-  const fizzles = game.observe(next, s0).privateState.lastRound.filter((e) => e.kind === "fizzle");
+  const fizzles = observeAt(next, s0).privateState.events.filter((e) => e.kind === "fizzle");
   expect(fizzles).toEqual([
-    { kind: "fizzle", unit: "seat:0/0", target: "seat:1/0", reason: "missed" },
+    { kind: "fizzle", unit: "seat:0/0", target: "seat:1/1", reason: "missed" },
     { kind: "fizzle", unit: "seat:0/1", target: "seat:0/0", reason: "not adjacent" },
   ]);
-  expect(game.observe(next, s0).privateState.visibleEnemies).toEqual([]);
 });
 
-test("attacks land simultaneously so mutual kills eliminate both teams into a shared first place", () => {
+test("the first team to act kills before the second can answer; the round ends when one team is left standing", () => {
   const state = scenario(flatRows(5, 1), [
     { seat: 0, cls: "grunt", x: 0, y: 0, hp: 2 },
     { seat: 1, cls: "grunt", x: 3, y: 0, hp: 2 },
   ]);
-  const next = submitAll(state, {
-    [s0]: { orders: [{ unit: "seat:0/0", action: { kind: "attack", target: "seat:1/0" } }] },
-    [s1]: { orders: [{ unit: "seat:1/0", action: { kind: "attack", target: "seat:0/0" } }] },
+  const next = playTurn(state, s0, {
+    orders: [{ unit: "seat:0/0", action: { kind: "attack", target: "seat:1/0" } }],
   });
   expect(next.phase).toBe("terminal");
-  expect(next.units.every((u) => !u.alive)).toBe(true);
+  expect(unit(next, "seat:0/0").alive).toBe(true);
+  expect(unit(next, "seat:1/0").alive).toBe(false);
+  expect(next.round).toBe(2);
+  expect(next.lastRound.map((e) => e.kind)).toEqual(["turn", "attack", "death", "eliminated"]);
   expect(next.teams[s0]?.placement).toBe(1);
-  expect(next.teams[s1]?.placement).toBe(1);
+  expect(next.teams[s1]?.placement).toBe(2);
   expect(next.teams[s0]?.kills).toBe(1);
-  expect(game.score(next)).toEqual({ [s0]: 0.5, [s1]: 0.5 });
-  expect(plugin.publicView(next).result?.seats.map((s) => s.outcome)).toEqual(["draw", "draw"]);
+  expect(game.score(next)).toEqual({ [s0]: 1, [s1]: 0 });
+  expect(plugin.publicView(next).result?.seats.map((s) => s.outcome)).toEqual(["win", "loss"]);
 });
 
-test("an attack fizzles when its target has moved out of reach, and a kill credits the shooter", () => {
+test("a team whose last unit falls before its turn is skipped and eliminated at round end", () => {
   const state = scenario(flatRows(12, 1), [
     { seat: 0, cls: "grunt", x: 0, y: 0 },
-    { seat: 1, cls: "grunt", x: 3, y: 0, hp: 1 },
-    { seat: 1, cls: "grunt", x: 11, y: 0 },
+    { seat: 1, cls: "grunt", x: 2, y: 0, hp: 1 },
+    { seat: 2, cls: "grunt", x: 11, y: 0 },
   ]);
-  const escaped = submitAll(state, {
-    [s0]: { orders: [{ unit: "seat:0/0", action: { kind: "attack", target: "seat:1/0" } }] },
-    [s1]: { orders: [{ unit: "seat:1/0", moveTo: { x: 7, y: 0 } }] },
+  const shot = playTurn(state, s0, {
+    orders: [{ unit: "seat:0/0", action: { kind: "attack", target: "seat:1/0" } }],
   });
-  expect(unit(escaped, "seat:1/0").alive).toBe(true);
-  expect(escaped.lastRound).toContainEqual({
-    kind: "fizzle",
-    unit: "seat:0/0",
-    target: "seat:1/0",
-    reason: "out of range",
-  });
-  const shot = submitAll(state, {
-    [s0]: { orders: [{ unit: "seat:0/0", action: { kind: "attack", target: "seat:1/0" } }] },
+  expect(shot.round).toBe(1);
+  expect(shot.teams[s1]?.placement).toBeNull();
+  expect(game.observe(shot, s2).publicState.turnOrder).toEqual([
+    { seat: s0, status: "acted" },
+    { seat: s1, status: "skipped" },
+    { seat: s2, status: "acting" },
+  ]);
+  expect(game.observe(shot, s2).publicState.teams.find((t) => t.seat === s1)?.unitsAlive).toBe(0);
+  expect(plugin.participation?.(shot, s1)).toEqual({ status: "waiting" });
+  const ended = playTurn(shot, s2, { orders: [] });
+  expect(ended.round).toBe(2);
+  expect(ended.phase).toBe("orders");
+  expect(ended.teams[s1]).toMatchObject({ placement: 3, eliminatedRound: 1 });
+  expect(ended.lastRound.map((e) => e.kind)).toEqual([
+    "turn",
+    "attack",
+    "death",
+    "turn",
+    "eliminated",
+  ]);
+  expect(plugin.participation?.(ended, s1)).toEqual({ status: "finished", reason: "eliminated" });
+  expect(initiative(ended)).toEqual([s2, s0]);
+});
+
+test("an enemy that moved on its turn is targeted where it stands now or not at all, and a kill credits the shooter", () => {
+  const state = scenario(
+    flatRows(12, 1),
+    [
+      { seat: 0, cls: "grunt", x: 0, y: 0 },
+      { seat: 1, cls: "grunt", x: 3, y: 0, hp: 1 },
+      { seat: 1, cls: "grunt", x: 11, y: 0 },
+    ],
+    { round: 2 },
+  );
+  expect(actingSeat(state)).toBe(s1);
+  const attack = { orders: [{ unit: "seat:0/0", action: { kind: "attack", target: "seat:1/0" } }] };
+  // Out of sight after its move: the old target is no longer a visible enemy.
+  const escaped = playTurn(state, s1, { orders: [{ unit: "seat:1/0", moveTo: { x: 7, y: 0 } }] });
+  expect(game.observe(escaped, s0).privateState.visibleEnemies).toEqual([]);
+  expect(game.submit(escaped, s0, attack, "match.orders").reason).toContain("not a visible enemy");
+  // Still in sight but out of range from the grunt's own tile: a step closer is needed.
+  const nearer = playTurn(state, s1, { orders: [{ unit: "seat:1/0", moveTo: { x: 4, y: 0 } }] });
+  expect(game.observe(nearer, s0).privateState.visibleEnemies.map((u) => u.x)).toEqual([4]);
+  expect(game.submit(nearer, s0, attack, "match.orders").reason).toContain("cannot attack");
+  const shot = playTurn(nearer, s0, {
+    orders: [
+      { unit: "seat:0/0", moveTo: { x: 1, y: 0 }, action: { kind: "attack", target: "seat:1/0" } },
+    ],
   });
   expect(unit(shot, "seat:1/0").alive).toBe(false);
   expect(shot.teams[s0]?.kills).toBe(1);
   expect(shot.teams[s0]?.damageDealt).toBe(WEAPONS[CLASSES.grunt.weapon].damage);
+  expect(shot.recentKills).toEqual({ [s1]: 0, [s0]: 1 });
   expect(shot.phase).toBe("orders");
+  expect(shot.round).toBe(3);
 });
 
 test("height advantage and cover change damage but never below one point", () => {
@@ -367,7 +445,7 @@ test("medics heal an adjacent ally up to full and fizzle when the ally is not ad
   // Healing has no cooldown, so the medic may heal again next round.
   expect(
     game.submit(
-      healed,
+      advanceTo(healed, s0),
       s0,
       { orders: [{ unit: "seat:0/0", action: { kind: "ability", target: "seat:0/1" } }] },
       "match.orders",
@@ -473,15 +551,19 @@ test("chat rides on accepted envelopes only and reaches every seat and spectator
   state = game.step(state);
   const bad = game.submit(
     state,
-    s1,
+    s0,
     { orders: [{ unit: "nope" }], chat: "should not post" },
     "match.orders",
   );
   expect(bad.accepted).toBe(false);
-  state = game.submit(state, s1, { orders: [], chat: "truce?" }, "match.orders").state;
+  // Only the acting seat has an envelope to post with.
+  expect(game.submit(state, s1, { orders: [], chat: "not my turn" }, "match.orders").accepted).toBe(
+    false,
+  );
+  state = game.submit(state, s0, { orders: [], chat: "truce?" }, "match.orders").state;
   expect(state.chat).toHaveLength(3);
-  expect(state.chat[2]).toEqual({ round: 1, seat: s1, text: "truce?" });
-  expect(state.orders[s1]).toEqual({ orders: [] });
+  expect(state.chat[2]).toEqual({ round: 1, seat: s0, text: "truce?" });
+  expect(state.pending).toEqual({ seat: s0, orders: [], paths: {} });
   for (const seat of state.seats) {
     expect(game.observe(state, seat).privateState.chat).toEqual([]);
     expect(JSON.stringify(game.observe(state, seat))).not.toContain("hello all");
@@ -492,7 +574,7 @@ test("chat rides on accepted envelopes only and reaches every seat and spectator
   expect(chatBlock).toEqual({
     kind: "list",
     title: "Chat",
-    items: ["[r0] seat:0: hello all", "[r0] seat:2: gl hf", "[r1] seat:1: truce?"],
+    items: ["[r0] seat:0: hello all", "[r0] seat:2: gl hf", "[r1] seat:0: truce?"],
   });
   expect(plugin.safeDefault(state, s0).input).not.toHaveProperty("chat");
 });
@@ -507,7 +589,7 @@ test("a killer reads previous rounds' chat once, windowed, while the terminal vi
     ],
     { chat: [...flood, { round: 1, seat: s0, text: "this round" }], recentKills: { [s1]: 1 } },
   );
-  const live = game.observe(state, s1).privateState.chat;
+  const live = observeAt(state, s1).privateState.chat;
   expect(live).toHaveLength(CHAT_WINDOW);
   expect(live[0]?.text).toBe(`m${60 - CHAT_WINDOW}`);
   expect(live.at(-1)?.text).toBe("m59");
@@ -545,17 +627,17 @@ test("chat opens for exactly the turn after a seat scores a kill", () => {
     },
     [s1]: { orders: [], chat: "careful" },
   });
-  expect(shot.recentKills).toEqual({ [s0]: 1 });
-  expect(game.observe(shot, s0).privateState.chat).toEqual([
+  expect(shot.recentKills).toEqual({ [s0]: 1, [s1]: 0 });
+  expect(observeAt(shot, s0).privateState.chat).toEqual([
     { round: 0, seat: s1, text: "loadout banter" },
     { round: 1, seat: s0, text: "got one" },
     { round: 1, seat: s1, text: "careful" },
   ]);
-  expect(game.observe(shot, s1).privateState.chat).toEqual([]);
+  expect(observeAt(shot, s1).privateState.chat).toEqual([]);
   const quiet = submitAll(shot, { [s1]: { orders: [], chat: "still here" } });
-  expect(quiet.recentKills).toEqual({});
-  expect(game.observe(quiet, s0).privateState.chat).toEqual([]);
-  expect(JSON.stringify(game.observe(quiet, s0))).not.toContain("still here");
+  expect(quiet.recentKills).toEqual({ [s0]: 0, [s1]: 0 });
+  expect(observeAt(quiet, s0).privateState.chat).toEqual([]);
+  expect(JSON.stringify(observeAt(quiet, s0))).not.toContain("still here");
 });
 
 test("observations show only the tiles the team can see, as a row-string window", () => {
@@ -660,22 +742,32 @@ test("a second leg is rejected when it repeats the destination, exceeds the poin
   expect(attempt({ thenTo: { x: 5, y: 0 } }).accepted).toBe(true);
 });
 
-test("a unit killed on its first-leg tile forfeits the second leg; an enemy stepping into the path blocks it", () => {
-  const state = scenario(flatRows(6, 1), [
-    { seat: 0, cls: "grunt", x: 0, y: 0, hp: 1 },
-    { seat: 1, cls: "grunt", x: 3, y: 0 },
+test("a unit killed on its first-leg tile forfeits the second leg; a hidden enemy on the second leg's path blocks it", () => {
+  // The scout walks into its own grunt's grenade and never takes its second leg.
+  const state = scenario(flatRows(9, 1), [
+    { seat: 0, cls: "grunt", x: 0, y: 0 },
+    { seat: 0, cls: "scout", x: 2, y: 0, hp: 1 },
+    { seat: 1, cls: "grunt", x: 8, y: 0 },
   ]);
   const killed = submitAll(state, {
-    [s0]: { orders: [{ unit: "seat:0/0", moveTo: { x: 1, y: 0 }, thenTo: { x: 2, y: 0 } }] },
-    [s1]: { orders: [{ unit: "seat:1/0", action: { kind: "attack", target: "seat:0/0" } }] },
+    [s0]: {
+      orders: [
+        { unit: "seat:0/0", action: { kind: "ability", at: { x: 3, y: 0 } } },
+        { unit: "seat:0/1", moveTo: { x: 3, y: 0 }, thenTo: { x: 5, y: 0 } },
+      ],
+    },
   });
-  expect(unit(killed, "seat:0/0")).toMatchObject({ x: 1, y: 0, alive: false });
-  expect(killed.lastRound.filter((e) => e.kind === "move" && e.unit === "seat:0/0")).toHaveLength(
+  expect(unit(killed, "seat:0/1")).toMatchObject({ x: 3, y: 0, alive: false });
+  expect(killed.lastRound.filter((e) => e.kind === "move" && e.unit === "seat:0/1")).toHaveLength(
     1,
   );
-  const blocked = submitAll(state, {
-    [s0]: { orders: [{ unit: "seat:0/0", moveTo: { x: 1, y: 0 }, thenTo: { x: 2, y: 0 } }] },
-    [s1]: { orders: [{ unit: "seat:1/0", moveTo: { x: 2, y: 0 } }] },
+  const hidden = scenario(flatRows(8, 1), [
+    { seat: 0, cls: "grunt", x: 0, y: 0 },
+    { seat: 1, cls: "sniper", x: 2, y: 0, hiddenUntil: 9 },
+    { seat: 1, cls: "grunt", x: 7, y: 0 },
+  ]);
+  const blocked = submitAll(hidden, {
+    [s0]: { orders: [{ unit: "seat:0/0", moveTo: { x: 1, y: 0 }, thenTo: { x: 3, y: 0 } }] },
   });
   expect(unit(blocked, "seat:0/0")).toMatchObject({ x: 1, y: 0, alive: true });
   expect(blocked.lastRound).toContainEqual({
@@ -711,7 +803,7 @@ test("a unit stopped short on its first leg forfeits the second", () => {
   ]);
 });
 
-test("a committed seat gets a trimmed observation until the round resolves", () => {
+test("only the acting seat gets a full observation; the rest are trimmed until their turn", () => {
   let state = newMatch(2);
   const fresh = game.observe(state, s0);
   expect(fresh.privateState.committed).toBe(false);
@@ -737,21 +829,35 @@ test("a committed seat gets a trimmed observation until the round resolves", () 
   expect(open.publicState.catalog).toBeUndefined();
   expect(open.privateState.view).not.toBeNull();
   expect(open.privateState.units).toHaveLength(3);
-  state = game.submit(state, s0, { orders: [] }, "match.orders").state;
-  const waiting = game.observe(state, s0);
-  expect(waiting.privateState).toEqual({
+  expect(open.legalTools).toEqual(["match.orders"]);
+  const trimmed = {
     committed: true,
-    loadout: ["grunt", "grunt", "grunt"],
+    loadout: ["scout", "scout", "sniper"] as ClassId[],
     view: null,
     units: [],
     visibleEnemies: [],
     items: [],
-    lastRound: [],
+    events: [],
     chat: [],
-  });
+  };
+  const waitingTurn = game.observe(state, s1);
+  expect(waitingTurn.privateState).toEqual(trimmed);
+  expect(waitingTurn.legalTools).toEqual([]);
+  expect(waitingTurn.publicState.turnOrder).toEqual([
+    { seat: s0, status: "acting" },
+    { seat: s1, status: "waiting" },
+  ]);
+  state = game.submit(state, s0, { orders: [] }, "match.orders").state;
+  const waiting = game.observe(state, s0);
+  expect(waiting.privateState).toEqual({ ...trimmed, loadout: ["grunt", "grunt", "grunt"] });
   expect(waiting.legalTools).toEqual([]);
   expect(waiting.publicState.map).toEqual({ width: state.map.width, height: state.map.height });
-  expect(game.observe(state, s1).privateState.units).toHaveLength(3);
+  state = game.step(state);
+  expect(game.observe(state, s0).privateState.committed).toBe(true);
+  const turn = game.observe(state, s1);
+  expect(turn.privateState.committed).toBe(false);
+  expect(turn.privateState.units).toHaveLength(3);
+  expect(turn.legalTools).toEqual(["match.orders"]);
 });
 
 test("the terminal view carries every history entry as scalar tables a broadcaster can replay", () => {
@@ -778,7 +884,15 @@ test("the terminal view carries every history entry as scalar tables a broadcast
     },
   });
   expect(round2.teams[s1]?.placement).toBe(3);
-  // Round 2 forfeits seat 2 by host event while orders are open.
+  expect(round2.lastRound.map((e) => e.kind)).toEqual([
+    "turn",
+    "move",
+    "attack",
+    "death",
+    "turn",
+    "eliminated",
+  ]);
+  // Round 2 forfeits seat 2 by host event while its turn is open; the round's entry closes there.
   const terminal = plugin.onHostEvent?.(round2, {
     kind: "player_time_exhausted",
     seats: [s2],
@@ -827,9 +941,11 @@ test("the terminal view carries every history entry as scalar tables a broadcast
     "Path",
   ]);
   expect(events.rows).toEqual([
+    [1, "turn", "", "", s0, "", "", "", "", "", "", ""],
     [1, "move", "seat:0/0", "", "", 0, 0, 1, 0, "", "", "1,0"],
     [1, "attack", "seat:0/0", "seat:1/0", "", 1, 0, 3, 0, 2, "", ""],
     [1, "death", "seat:1/0", "", "", "", "", 3, 0, "", "", ""],
+    [1, "turn", "", "", s2, "", "", "", "", "", "", ""],
     [1, "eliminated", "", "", s1, "", "", "", "", 3, "", ""],
     [2, "death", "seat:2/0", "", "", "", "", 5, 0, "", "", ""],
     [2, "eliminated", "", "", s2, "", "", "", "", 2, "", ""],
@@ -837,4 +953,141 @@ test("the terminal view carries every history entry as scalar tables a broadcast
   for (const block of view.blocks)
     if (block.kind === "table")
       for (const row of block.rows) expect(row).toHaveLength(block.columns.length);
+});
+
+test("a seat's observation carries every event since its previous turn, that turn included, and nothing older", () => {
+  const state = scenario(flatRows(20, 3), [
+    { seat: 0, cls: "grunt", x: 0, y: 0 },
+    { seat: 1, cls: "grunt", x: 0, y: 1 },
+    { seat: 2, cls: "grunt", x: 0, y: 2 },
+  ]);
+  const step = (x: number) => (seat: number) => ({
+    orders: [{ unit: `seat:${seat}/0`, moveTo: { x, y: seat } }],
+  });
+  const round2 = submitAll(state, { [s0]: step(1)(0), [s1]: step(1)(1), [s2]: step(1)(2) });
+  expect(initiative(round2)).toEqual([s1, s2, s0]);
+  const kinds = (events: { kind: string; seat?: string }[]) =>
+    events.map((e) => (e.kind === "turn" ? `turn:${e.seat}` : e.kind));
+  // Seat 1 acted second in round 1: it sees its own turn, seat 2's, and nothing of seat 0's.
+  expect(kinds(game.observe(round2, s1).privateState.events)).toEqual([
+    `turn:${s1}`,
+    "move",
+    `turn:${s2}`,
+    "move",
+  ]);
+  const afterSeat1 = playTurn(round2, s1, step(2)(1));
+  expect(kinds(game.observe(afterSeat1, s2).privateState.events)).toEqual([
+    `turn:${s2}`,
+    "move",
+    `turn:${s1}`,
+    "move",
+  ]);
+  const afterSeat2 = playTurn(afterSeat1, s2, step(2)(2));
+  // Seat 0 acted first in round 1, so it sees the whole of round 1 and round 2 so far.
+  expect(kinds(game.observe(afterSeat2, s0).privateState.events)).toEqual([
+    `turn:${s0}`,
+    "move",
+    `turn:${s1}`,
+    "move",
+    `turn:${s2}`,
+    "move",
+    `turn:${s1}`,
+    "move",
+    `turn:${s2}`,
+    "move",
+  ]);
+});
+
+test("forfeiting the acting seat drops its pending orders and hands the turn on inside the same round", () => {
+  const state = scenario(flatRows(12, 1), [
+    { seat: 0, cls: "grunt", x: 0, y: 0 },
+    { seat: 1, cls: "grunt", x: 5, y: 0 },
+    { seat: 2, cls: "grunt", x: 11, y: 0 },
+  ]);
+  const submitted = game.submit(
+    state,
+    s0,
+    { orders: [{ unit: "seat:0/0", moveTo: { x: 2, y: 0 } }] },
+    "match.orders",
+  ).state;
+  expect(submitted.pending?.seat).toBe(s0);
+  const forfeited = plugin.onHostEvent?.(submitted, {
+    kind: "player_time_exhausted",
+    seats: [s0],
+    phaseId: "p",
+    at: 1,
+  }) as typeof state;
+  expect(forfeited.phase).toBe("orders");
+  expect(forfeited.round).toBe(1);
+  expect(forfeited.pending).toBeNull();
+  expect(forfeited.history).toHaveLength(1);
+  expect(forfeited.events).toEqual([
+    { kind: "death", unit: "seat:0/0", at: { x: 0, y: 0 } },
+    { kind: "eliminated", seat: s0, placement: 3 },
+  ]);
+  expect(actingSeat(forfeited)).toBe(s1);
+  expect(game.observe(forfeited, s1).publicState.turnOrder).toEqual([
+    { seat: s1, status: "acting" },
+    { seat: s2, status: "waiting" },
+  ]);
+  expect(game.observe(forfeited, s1).privateState.events).toEqual(forfeited.events);
+  const ended = submitAll(forfeited, {});
+  expect(ended.round).toBe(2);
+  expect(ended.history.map((entry) => entry.round)).toEqual([0, 1]);
+  expect(ended.history[1]?.events.map((e) => e.kind)).toEqual([
+    "death",
+    "eliminated",
+    "turn",
+    "turn",
+  ]);
+});
+
+test("a loadout-phase forfeit lands in the spawn entry and is disclosed in the first turn's events", () => {
+  let state = newMatch(3, "early-forfeit");
+  state = plugin.onHostEvent?.(state, {
+    kind: "player_time_exhausted",
+    seats: [s2],
+    phaseId: "p",
+    at: 1,
+  }) as typeof state;
+  expect(state.events).toEqual([{ kind: "eliminated", seat: s2, placement: 3 }]);
+  for (const seat of [s0, s1])
+    state = game.submit(
+      state,
+      seat,
+      { actors: ["grunt", "grunt", "grunt"] },
+      "match.loadout",
+    ).state;
+  state = game.step(state);
+  expect(state.history[0]?.events).toEqual([{ kind: "eliminated", seat: s2, placement: 3 }]);
+  expect(state.events).toEqual([]);
+  expect(game.observe(state, s0).privateState.events).toEqual([
+    { kind: "eliminated", seat: s2, placement: 3 },
+  ]);
+  expect(advanceTo(state, s1).round).toBe(1);
+});
+
+test("live spectator frames list the round's turn order with each seat's standing", () => {
+  const state = scenario(flatRows(12, 1), [
+    { seat: 0, cls: "grunt", x: 0, y: 0 },
+    { seat: 1, cls: "grunt", x: 2, y: 0, hp: 1 },
+    { seat: 2, cls: "grunt", x: 11, y: 0 },
+  ]);
+  const order = (view: { blocks: { kind: string; title: string }[] }) => {
+    const block = view.blocks.find((b) => b.title === "Turn order");
+    return block?.kind === "list" && "items" in block ? block.items : undefined;
+  };
+  expect(order(plugin.publicView(newMatch(3)))).toEqual([]);
+  expect(order(plugin.publicView(state))).toEqual([
+    `${s0} acting`,
+    `${s1} waiting`,
+    `${s2} waiting`,
+  ]);
+  const shot = playTurn(state, s0, {
+    orders: [{ unit: "seat:0/0", action: { kind: "attack", target: "seat:1/0" } }],
+  });
+  expect(order(plugin.publicView(shot))).toEqual([`${s0} acted`, `${s1} skipped`, `${s2} acting`]);
+  const ended = playTurn(shot, s2, { orders: [] });
+  expect(order(plugin.publicView(ended))).toEqual([`${s2} acting`, `${s0} waiting`]);
+  expect(order(plugin.fullView(ended))).toEqual(order(plugin.publicView(ended)));
 });

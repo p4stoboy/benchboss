@@ -266,13 +266,14 @@ States and semantics:
 - `games/battle-royale/src/{classes,combat,loot,state,resolve}.ts`: class, weapon
   and ability catalogs and budget, weapon range/damage modifiers, seeded loot
   scatter, planning (reach and attackable targets per destination) from a seat's own
-  knowledge including recon reveals and camouflage, and WeGo round
-  resolution: initiative-ordered movement, pickups and self-abilities, simultaneous
-  attacks/blasts/heals with armour, storm, elimination, ranking and host-forced
-  forfeits.
-- `games/battle-royale/src/{game,defaults,plugin}.ts`: loadout/orders phases,
-  fog-filtered observations and round events, semantic order validation, safe
-  defaults, manifest, participation, host events and the fog-safe public view.
+  knowledge including recon reveals and camouflage, and sequential turn
+  resolution: per-seat movement, pickups and self-abilities, attacks/blasts/heals with
+  immediate damage and armour, then round-end storm, elimination, ranking and
+  host-forced forfeits.
+- `games/battle-royale/src/{game,defaults,plugin}.ts`: loadout phase and per-seat
+  orders turns, fog-filtered observations and since-last-turn events, semantic order
+  validation against the current board, safe defaults, manifest, participation (the
+  acting seat only), host events and the fog-safe public view.
   `games/battle-royale/tests/`: map/LoS/path properties, rule scenarios, gear
   (weapons, abilities, armour, loot) scenarios, privacy invariants, referee
   integration and generated conformance at sampled seat counts (2, 5, 12, 30) with
@@ -280,7 +281,7 @@ States and semantics:
 
 States and semantics:
 
-- Catalog revisions are `1.0.0` for RPS, Spy and Chess and `2.2.0` for Battle
+- Catalog revisions are `1.0.0` for RPS, Spy and Chess and `3.0.0` for Battle
   Royale. RPS supports 2–10 seats; Spy supports 5/7/9; Chess supports 2; Battle
   Royale supports 2–30 (default 4). Each game has one implementation; unavailable
   revisions fail, so records made under an earlier revision render from their
@@ -295,11 +296,20 @@ States and semantics:
   actions per phase (one accepted submission plus two rejected calls, since every
   call spends an action) and two retries per decision. Names are game-owned and generic
   metering references them; runtime code contains no game-specific allowance names.
-- Battle Royale defaults to 60 seconds per decision and no player total. Rules
+- Battle Royale defaults to 30 seconds per decision and no player total. Rules
   `maxRounds` (4..200, default 40) and `tilesPerSeat` (9..600, default 300); unknown
-  keys fail. Phases: `loadout` (every seat acts once), repeated `orders` (every
-  non-eliminated seat acts once per round), `terminal`. Both phases resolve when the
-  last acting seat has committed; decision expiry commits the safe default.
+  keys fail. Phases: `loadout` (every seat acts once, simultaneously), repeated
+  `orders` (one seat acts per phase; a round is one turn per living seat in
+  `initiative` order, seats rotated by `(round − 1) mod N` with eliminated seats
+  removed), `terminal`. `actingSeat` is the first seat in initiative with no turn this
+  round (`state.turns`) and a living unit; `canOrder` requires it and no `pending`
+  orders. `isReady` in orders is `pending !== null` or no turns remain (`actingSeat`
+  null or fewer than two seats with living units); `step` resolves `pending`
+  (`resolveTurn`) and then, when no turns remain, `endRound`. Each resolution begins a
+  new referee phase, so every turn is its own decision epoch with the 30-second limit
+  for the acting seat only; decision expiry commits its safe default. Turn status per
+  seat (`turnOrder`): `acted`, `acting`, `waiting`, `skipped` (no living unit and no
+  turn yet; eliminated at round end).
 - Battle Royale map: near-square grid of at least `tilesPerSeat × seats` tiles, tile
   height 0..3 and kind open/cover/wall, generated from `rng.fork("map")` in
   `games/battle-royale/src/generate.ts`. Spawn origins are farthest-point placed
@@ -342,25 +352,34 @@ States and semantics:
   is the number of kills the seat scored in the round just resolved (rebuilt every
   resolution, cleared by a host forfeit); a seat reads chat only while it is > 0,
   and then only lines with `round < state.round`, windowed to 50.
-- Battle Royale resolution: first-leg movement by rotating seat initiative then order
-  sequence, walking through own units but stopping before any enemy tile (hidden enemies
-  included) and before an occupied final tile; then pickups (health,
-  armour, or weapon swap leaving the old weapon on the tile; fizzles when the unit
-  stopped short), brace (+4 armour), camo (`hiddenUntil = round + 2`) and recon
-  (reveal disc radius 6 until `round + 1`); then attacks, grenades (3 damage to every
-  unit within 1 of the tile, own included, no sight needed), volleys (weapon damage to
-  the target and adjacent enemies) and heals against first-leg positions with damage summed,
-  absorbed by armour first, and healing applied before deaths; kills credit the last
-  enemy hitter only and `damageDealt` counts hits on enemies only; an attack or damaging
-  ability ends the unit's camouflage; then
-  second legs in the same order (a dead unit or one stopped short of its first
-  destination forfeits its second leg); storm
-  damage `1 + floor(round/10)` ignoring armour outside a Chebyshev zone that shrinks
-  linearly to the centre tile at `floor(3·maxRounds/4)`; teams with no living unit
-  finish together with placement `1 + teams alive`. Terminal at ≤ 1 team or past `maxRounds`; survivors rank by units,
-  hit points, then damage dealt (competition ranking). Score is `(N − placement)/(N − 1)`
-  averaged across tied placements. `player_time_exhausted` forfeits the batch; other host
-  events leave state unchanged so the runtime commits the default.
+- Battle Royale turn resolution (`resolveTurn`, the pending seat only): a `turn`
+  event naming the seat opens it in `state.events`; first-leg movement in order
+  sequence, walking through own units but stopping before any other unit's tile (hidden
+  enemies included) and before an occupied final tile; then pickups (health, armour, or
+  weapon swap leaving the old weapon on the tile; fizzles when the unit stopped short),
+  brace (+4 armour), camo (`hiddenUntil = round + 2`) and recon (reveal disc radius 6
+  until `round + 1`); then attacks, grenades (3 damage to every unit within 1 of the
+  tile, own included, no sight needed), volleys (weapon damage to the target and
+  adjacent enemies) and heals from first-leg positions with the turn's damage summed per
+  target, absorbed by armour first, healing applied, then deaths; an enemy death with
+  damage this turn credits the acting seat one kill and `damageDealt` counts hits on
+  enemies only; an attack or damaging ability ends the unit's camouflage; then second
+  legs in the same order (a dead unit or one stopped short of its first destination
+  forfeits its second leg). The turn is appended to `state.turns` with its orders,
+  `pending` cleared, `recentKills[seat]` set to this turn's kills and `explored`
+  extended. Round end (`endRound`, once no turns remain): storm damage
+  `1 + floor(round/10)` ignoring armour outside a Chebyshev zone that shrinks linearly
+  to the centre tile at `floor(3·maxRounds/4)`; teams with no living unit finish together
+  with placement `1 + teams alive`; the round's events become one history entry and
+  `lastRound`; `events`, `turns` reset; reveals expiring this round dropped; `round + 1`.
+  Terminal at ≤ 1 team or past `maxRounds`; survivors rank by units, hit points, then
+  damage dealt (competition ranking). Score is `(N − placement)/(N − 1)` averaged across
+  tied placements. `player_time_exhausted` forfeits the batch inside the round in
+  progress (deaths and eliminations appended to `events`, a forfeited acting seat's
+  `pending` dropped so the next seat acts); when it leaves ≤ 1 seat the round's entry
+  closes there. History is therefore the spawn entry (carrying loadout-phase forfeits)
+  plus one entry per round. Other host events leave state unchanged so the runtime
+  commits the default.
 - Battle Royale privacy: vision is the line-of-sight union of own units plus active
   recon discs (a recon disc is full vision: terrain, loot, reach and enemies through
   walls); a camouflaged enemy is visible only when adjacent to an own unit or
@@ -369,34 +388,41 @@ States and semantics:
   of the tiles visible now as row strings (`.`/`+`/`#` terrain, digit heights, `?`
   unseen; null with no vision). The catalog (classes, weapons, abilities, armour cap,
   budget, team size) rides in `publicState.catalog` during `loadout` only.
-  `privateState.committed` is true when the seat is eliminated, the match is terminal,
-  or the seat's loadout/orders for the current phase are recorded; a committed
-  observation keeps `loadout` and the public state and empties everything else, so
-  submit echoes and waiting polls cost nothing. Uncommitted observations carry own
+  `publicState.turnOrder` lists every living seat in initiative order with its turn
+  status. `privateState.committed` is true when the seat is eliminated, the match is
+  terminal, the seat's loadout is recorded, or in orders whenever `canOrder` is false
+  (another seat is acting, or its own orders are pending); a committed observation
+  keeps `loadout` and the public state and empties everything else, so submit echoes
+  and waiting polls cost nothing. Uncommitted observations carry own
   units with weapon, armour, ability readiness, `reach` (`{x, y, rows}` cost grid: a
   digit per first-leg destination, `.` elsewhere, bounded by the visible reach) and
   `shots` (destination key → attackable ids), visible enemies (with armour and
-  weapon), items on tiles seen now, last-round events only
-  for own units or positions currently visible (ability events by origin tile, blasts
-  and pickups by their tile; a fizzle whose target is an enemy carries reason `missed`
-  in place of the stored reason), and `chat` per the kill gate above. `state.explored` is
-  the union of every seat's vision at spawn and after each resolution (never cleared);
+  weapon), items on tiles seen now, `events` (`sinceLastTurn`: `lastRound` from the
+  seat's own most recent `turn` marker onward, or all of it when it has none, then this
+  round's `events`) filtered to own units or positions currently visible (`turn` and
+  `eliminated` always; ability events by origin tile, blasts and pickups by their tile;
+  a fizzle whose target is an enemy carries reason `missed` in place of the stored
+  reason), and `chat` per the kill gate above. `state.explored` is the union of every
+  seat's vision at spawn and after each turn (never cleared);
   live public views carry a `Terrain kinds` legend list (`TILE_KINDS` order, append-only)
   and a `Map` table with one integer per tile (`-1` unexplored, else
   `h * kinds + kindIndex` from `tileCode` in `games/battle-royale/src/map.ts`), counts,
-  zone, eliminations and the 50 most recent chat lines and are independent of
-  positions, loot and rosters. The terminal view shows the whole map. `brFullView`
+  zone, a `Turn order` list (`<seat> <status>` per living seat in initiative order from
+  `turnOrder`; empty outside orders), eliminations and the 50 most recent chat lines and
+  are independent of positions, loot and rosters. The terminal view shows the whole map. `brFullView`
   (`plugin.fullView`) is the complete-info projection recorded as `fullFrames`: the
   folded view carries `Scores`, the whole `Map`, `Units` (every living unit, camouflaged
-  included, with `hiddenUntil`), `Loot`, `Orders` (accepted so far this round; empty
-  after resolution), `Vision` (one `#`/`.` row per living seat per map row from
-  `visionOf`), `Recon` (active reveals), `Events` for `state.lastRound` and the whole
-  chat, with `Teams`, `Round`, `Eliminations`, `progress` and `result` identical to
-  the public view; at terminal it appends the public history tables as `Units by
+  included, with `hiddenUntil`), `Loot`, `Orders` (every turn resolved so far this
+  round from `state.turns`; empty after round end), `Vision` (one `#`/`.` row per
+  living seat per map row from `visionOf`), `Recon` (active reveals), `Events` for
+  `state.lastRound` under entry `history.length − 1` then `state.events` under
+  `history.length`, and the whole chat, with `Teams` (status `N units, <turn status>`),
+  `Round`, `Turn order`, `Eliminations`, `progress` and `result` identical to the public
+  view; at terminal it appends the public history tables as `Units by
   entry`, `Loot by entry`, `Events by entry`. History is an ordered list of entries
-  (spawn, each resolved round, each in-round host forfeit) with zone radius, storm
-  damage, living units (position, hp, armour, weapon, ready round, hidden until),
-  remaining items and events (moves carry the walked tile path); the terminal view
+  (spawn, then each round) with zone radius, storm damage, living units (position, hp,
+  armour, weapon, ready round, hidden until), remaining items and events (`turn`
+  markers per seat; moves carry the walked tile path); the terminal view
   emits it as scalar `Loadouts`, `Rounds`, `Units`, `Loot` and `Events` tables plus
   the full chat log, enough to replay the match without game code.
 - Chess starts at the standard board with seed-assigned colors and White to move.

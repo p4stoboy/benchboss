@@ -67,6 +67,8 @@ export interface ChatMessage {
 }
 
 export type RoundEvent =
+  /** Opens a seat's turn; every event up to the next marker resolved from that seat's orders. */
+  | { kind: "turn"; seat: SeatId }
   /** `path` lists every tile stepped onto in order, ending at `to`; `from` is excluded. */
   | { kind: "move"; unit: string; from: Point; to: Point; path: Point[]; blocked: boolean }
   | { kind: "attack"; unit: string; from: Point; target: string; at: Point; damage: number }
@@ -98,10 +100,23 @@ export interface TeamRecord {
   damageDealt: number;
 }
 
+/** A seat's accepted orders awaiting resolution, with the movement path per unit per leg. */
+export interface PendingOrders {
+  seat: SeatId;
+  orders: UnitOrder[];
+  paths: Record<string, Point[][]>;
+}
+
+/** One resolved turn of the round in progress. */
+export interface ResolvedTurn {
+  seat: SeatId;
+  orders: UnitOrder[];
+}
+
 /**
- * One ordered history entry. Round resolution appends one per round; a host forfeit inside a
- * round appends another carrying that round's number and only the forfeit events. Zone and
- * storm are the values in effect for that round (entry 0, the spawn, carries round 1's).
+ * One ordered history entry: the spawn (entry 0), then one per round, closed at round end or by
+ * the host forfeit that ends the match. Zone and storm are the values in effect for that round
+ * (entry 0 carries round 1's).
  */
 export interface RoundSnapshot {
   round: number;
@@ -135,14 +150,18 @@ export interface BrState {
   /** Loot on the ground; at most one item per tile. Teams only learn of items they can see. */
   items: Item[];
   reveals: Reveal[];
-  orders: Record<SeatId, Orders>;
-  /** Resolved movement per ordered unit, one path per leg, computed when the order was accepted. */
-  paths: Record<SeatId, Record<string, Point[][]>>;
+  /** Turns resolved so far this round, in initiative order. */
+  turns: ResolvedTurn[];
+  /** The acting seat's accepted orders until `step` resolves them. */
+  pending: PendingOrders | null;
+  /** This round's events so far; each turn opens with a `turn` marker. */
+  events: RoundEvent[];
   teams: Record<SeatId, TeamRecord>;
-  /** Kill credits from the most recent round resolution; gates chat delivery next turn. */
+  /** Kills each seat scored in its most recent turn; gates chat delivery on its next turn. */
   recentKills: Record<SeatId, number>;
   /** Tile keys any team has ever seen; the live spectator map reveals only these. */
   explored: Record<string, true>;
+  /** The previous round's complete event list. */
   lastRound: RoundEvent[];
   history: RoundSnapshot[];
   /** Global, public, append-only. */

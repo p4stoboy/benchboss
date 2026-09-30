@@ -18,12 +18,50 @@ export const maxHp = (unit: Unit): number => CLASSES[unit.cls].hp;
 export const abilityReady = (state: BrState, unit: Unit): boolean => state.round >= unit.readyRound;
 export const isHidden = (state: BrState, unit: Unit): boolean => unit.hiddenUntil >= state.round;
 
+export const hasUnits = (state: BrState, seat: SeatId): boolean =>
+  state.units.some((u) => u.seat === seat && u.alive);
+/** Living seats that still field a unit. */
+export const armedSeats = (state: BrState): SeatId[] =>
+  aliveSeats(state).filter((seat) => hasUnits(state, seat));
+
 /** Seats rotate through first initiative each round; eliminated seats are skipped. */
 export function initiative(state: BrState): SeatId[] {
   const n = state.seats.length;
   const start = (state.round - 1) % n;
   const rotated = [...state.seats.slice(start), ...state.seats.slice(0, start)];
   return rotated.filter((seat) => !isEliminated(state, seat));
+}
+
+const actedSeats = (state: BrState): Set<SeatId> => new Set(state.turns.map((t) => t.seat));
+
+/** The seat whose turn it is: first in initiative with no turn yet and a living unit. */
+export function actingSeat(state: BrState): SeatId | null {
+  if (state.phase !== "orders") return null;
+  const acted = actedSeats(state);
+  return initiative(state).find((seat) => !acted.has(seat) && hasUnits(state, seat)) ?? null;
+}
+
+/** Turns keep coming while a seat is due and at least two seats still field units. */
+export const turnsRemain = (state: BrState): boolean =>
+  actingSeat(state) !== null && armedSeats(state).length >= 2;
+
+export type TurnStatus = "acted" | "acting" | "waiting" | "skipped";
+
+/** Every living seat in initiative order with where it stands in the round. */
+export function turnOrder(state: BrState): { seat: SeatId; status: TurnStatus }[] {
+  if (state.phase !== "orders") return [];
+  const acted = actedSeats(state);
+  const acting = actingSeat(state);
+  return initiative(state).map((seat) => ({
+    seat,
+    status: acted.has(seat)
+      ? "acted"
+      : seat === acting
+        ? "acting"
+        : hasUnits(state, seat)
+          ? "waiting"
+          : "skipped",
+  }));
 }
 
 export const activeReveals = (state: BrState, seat: SeatId): Reveal[] =>

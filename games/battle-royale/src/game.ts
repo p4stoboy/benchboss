@@ -31,7 +31,7 @@ import {
   zoneRadius,
 } from "./map";
 import type { Reach } from "./path";
-import { resolveRound, snapshot } from "./resolve";
+import { endRound, resolveTurn, snapshot } from "./resolve";
 import {
   CHAT_MAX_LENGTH,
   LOADOUT_INPUT_SCHEMA,
@@ -40,16 +40,19 @@ import {
   ordersSchema,
 } from "./schemas";
 import {
+  type TurnStatus,
   abilityReady,
+  actingSeat,
   aliveSeats,
   continuations,
-  initiative,
   isEliminated,
   markExplored,
   maxHp,
   ownUnits,
   plans,
   samePoint,
+  turnOrder,
+  turnsRemain,
   unitById,
   visibleEnemies,
   visibleItems,
@@ -110,12 +113,13 @@ export interface BrObservation {
       nextStormDamage: number;
     };
     teams: { seat: SeatId; unitsAlive: number; placement: number | null }[];
-    initiative: SeatId[];
+    /** Every living team in this round's initiative order with where it stands in the round. */
+    turnOrder: { seat: SeatId; status: TurnStatus }[];
     /** Sent during the loadout phase only; agents keep it. */
     catalog?: BrCatalog;
   };
   privateState: {
-    /** True once this seat has submitted for the current phase; everything below is then empty. */
+    /** True unless this seat is the one to act now; everything below is then empty. */
     committed: boolean;
     loadout: ClassId[] | null;
     view: BrView | null;
@@ -155,7 +159,8 @@ export interface BrObservation {
     }[];
     /** Items on tiles this team sees now. Nothing is remembered for the team. */
     items: Item[];
-    lastRound: RoundEvent[];
+    /** Events since this seat's previous turn, that turn included. */
+    events: RoundEvent[];
     /** Previous rounds' lines, only in the turn after this seat scored a kill. */
     chat: ChatMessage[];
   };
@@ -164,8 +169,9 @@ export interface BrObservation {
 
 const canLoadout = (state: BrState, seat: SeatId): boolean =>
   state.phase === "loadout" && !isEliminated(state, seat) && state.loadouts[seat] === undefined;
-const canOrder = (state: BrState, seat: SeatId): boolean =>
-  state.phase === "orders" && !isEliminated(state, seat) && state.orders[seat] === undefined;
+/** Only the acting seat orders, and only until its orders are accepted. */
+export const canOrder = (state: BrState, seat: SeatId): boolean =>
+  state.phase === "orders" && state.pending === null && actingSeat(state) === seat;
 
 export const recentChat = (state: BrState): ChatMessage[] =>
   state.chat.slice(-CHAT_WINDOW).map((line) => ({ ...line }));
@@ -234,6 +240,12 @@ const withChat = (state: BrState, seat: SeatId, text: string | undefined): BrSta
     ? state
     : { ...state, chat: [...state.chat, { round: state.round, seat, text }] };
 
+/** Everything that happened since the seat's previous turn, that turn included. */
+export function sinceLastTurn(state: BrState, seat: SeatId): RoundEvent[] {
+  const own = state.lastRound.findLastIndex((e) => e.kind === "turn" && e.seat === seat);
+  return [...state.lastRound.slice(Math.max(0, own)), ...state.events];
+}
+
 /**
  * Events a seat may learn about: its own units, or positions its units can see now. A fizzle
  * against an enemy reads only "missed": the true reason would tell where the target went or what
@@ -243,7 +255,7 @@ export function eventsFor(state: BrState, seat: SeatId): RoundEvent[] {
   const seen = visionOf(state, seat);
   const own = (id: string): boolean => unitById(state, id)?.seat === seat;
   const visible = (p: Point): boolean => seen.has(key(p));
-  const disclosed = state.lastRound.map((event) =>
+  const disclosed = sinceLastTurn(state, seat).map((event) =>
     event.kind === "fizzle" && event.target !== "" && !own(event.target)
       ? { ...event, reason: "missed" }
       : event,
@@ -265,6 +277,7 @@ export function eventsFor(state: BrState, seat: SeatId): RoundEvent[] {
       case "storm":
       case "death":
         return own(event.unit) || visible(event.at);
+      case "turn":
       case "eliminated":
         return true;
     }
@@ -301,14 +314,20 @@ function spawn(state: BrState): BrState {
     });
   });
   const spawned: BrState = { ...state, phase: "orders", round: 1, units };
-  return markExplored({ ...spawned, history: [snapshot(spawned, 0, [])] });
+  // Loadout-phase forfeits are the spawn entry's only events.
+  return markExplored({
+    ...spawned,
+    history: [snapshot(spawned, 0, state.events)],
+    lastRound: state.events,
+    events: [],
+  });
 }
 
+/** Loadout resolves when every living seat has chosen; a turn resolves once its orders are in. */
 export function isReady(state: BrState): boolean {
   if (state.phase === "loadout")
     return aliveSeats(state).every((seat) => state.loadouts[seat] !== undefined);
-  if (state.phase === "orders")
-    return aliveSeats(state).every((seat) => state.orders[seat] !== undefined);
+  if (state.phase === "orders") return state.pending !== null || !turnsRemain(state);
   return false;
 }
 
@@ -429,8 +448,9 @@ export function makeBattleRoyale(): GameModule<BrState, unknown, BrObservation, 
         units: [],
         items: scatterLoot(createRng(seed).fork("loot"), map),
         reveals: [],
-        orders: {},
-        paths: {},
+        turns: [],
+        pending: null,
+        events: [],
         teams,
         recentKills: {},
         explored: {},
@@ -444,7 +464,7 @@ export function makeBattleRoyale(): GameModule<BrState, unknown, BrObservation, 
       const committed =
         isEliminated(state, seat) ||
         (state.phase === "loadout" && state.loadouts[seat] !== undefined) ||
-        (state.phase === "orders" && state.orders[seat] !== undefined) ||
+        (state.phase === "orders" && !canOrder(state, seat)) ||
         state.phase === "terminal";
       const center = zoneCenter(state.map);
       const round = Math.max(1, state.round);
@@ -464,7 +484,7 @@ export function makeBattleRoyale(): GameModule<BrState, unknown, BrObservation, 
           unitsAlive: ownUnits(state, s).length,
           placement: state.teams[s]?.placement ?? null,
         })),
-        initiative: state.phase === "orders" ? initiative(state) : [],
+        turnOrder: turnOrder(state),
       };
       if (state.phase === "loadout")
         publicState.catalog = {
@@ -494,7 +514,7 @@ export function makeBattleRoyale(): GameModule<BrState, unknown, BrObservation, 
             units: [],
             visibleEnemies: [],
             items: [],
-            lastRound: [],
+            events: [],
             chat: [],
           },
           legalTools,
@@ -550,7 +570,7 @@ export function makeBattleRoyale(): GameModule<BrState, unknown, BrObservation, 
             weapon: u.weapon,
           })),
           items: visibleItems(state, seat, seen).map((item) => ({ ...item })),
-          lastRound: eventsFor(state, seat),
+          events: eventsFor(state, seat),
           chat: chatFor(state, seat),
         },
         legalTools,
@@ -562,7 +582,7 @@ export function makeBattleRoyale(): GameModule<BrState, unknown, BrObservation, 
           {
             tool: "match.loadout",
             phase: "loadout",
-            description: `Choose ${TEAM_SIZE} actor classes (${CLASS_IDS.join(", ")}) whose costs total at most ${TEAM_BUDGET}. Duplicates are allowed. Keep the catalog and map size from this observation; later turns show only what your units can see. Optional chat (up to ${CHAT_MAX_LENGTH} characters) posts to the public all-chat; you read it only in the turn after you score a kill.`,
+            description: `Choose ${TEAM_SIZE} actor classes (${CLASS_IDS.join(", ")}) whose costs total at most ${TEAM_BUDGET}. Duplicates are allowed. Keep the catalog and map size from this observation; later turns show only what your units can see. After loadout, teams act one at a time in the rotating order given by turnOrder, and each team's orders resolve before the next team acts. Optional chat (up to ${CHAT_MAX_LENGTH} characters) posts to the public all-chat; you read it only in the turn after you score a kill.`,
             jsonSchema: LOADOUT_INPUT_SCHEMA,
           },
         ];
@@ -571,7 +591,7 @@ export function makeBattleRoyale(): GameModule<BrState, unknown, BrObservation, 
           {
             tool: "match.orders",
             phase: "orders",
-            description: `Order your living units: an optional moveTo (a digit tile in the unit's reach grid; the digit is its move cost), one optional action there: attack (a target in shots for that destination), ability (when ready; grenade takes at, volley and heal take target, others nothing), pickup (an item you have seen on the destination) or hold, and an optional thenTo walked afterwards with the points left (move minus the digit; a step up one level costs 2, any other step 1; only tiles you can see now). Orders resolve together: first legs in initiative order, pickups and self-abilities, attacks, blasts and heals at once, second legs, then the storm. Optional chat (up to ${CHAT_MAX_LENGTH} characters).`,
+            description: `Order your living units: an optional moveTo (a digit tile in the unit's reach grid; the digit is its move cost), one optional action there: attack (a target in shots for that destination), ability (when ready; grenade takes at, volley and heal take target, others nothing), pickup (an item you have seen on the destination) or hold, and an optional thenTo walked afterwards with the points left (move minus the digit; a step up one level costs 2, any other step 1; only tiles you can see now). It is your turn: teams act one at a time in turnOrder, and your orders resolve in full before the next team acts (first legs in the order given, pickups and self-abilities, attacks, blasts and heals with immediate damage, then second legs); teams marked acted have already moved this round, teams marked waiting act after you and see the result. The storm and eliminations come once every team has acted. Optional chat (up to ${CHAT_MAX_LENGTH} characters).`,
             jsonSchema: ORDERS_INPUT_SCHEMA,
           },
         ];
@@ -609,8 +629,7 @@ export function makeBattleRoyale(): GameModule<BrState, unknown, BrObservation, 
           state: withChat(
             {
               ...state,
-              orders: { ...state.orders, [seat]: { orders: structuredClone(parsed.data.orders) } },
-              paths: { ...state.paths, [seat]: checked.paths },
+              pending: { seat, orders: structuredClone(parsed.data.orders), paths: checked.paths },
             },
             seat,
             parsed.data.chat,
@@ -621,7 +640,9 @@ export function makeBattleRoyale(): GameModule<BrState, unknown, BrObservation, 
     },
     step(state) {
       if (!isReady(state)) return state;
-      return state.phase === "loadout" ? spawn(state) : resolveRound(state);
+      if (state.phase === "loadout") return spawn(state);
+      const resolved = resolveTurn(state);
+      return turnsRemain(resolved) ? resolved : endRound(resolved);
     },
     isTerminal: (state) => state.phase === "terminal",
     // Tied teams split the points of the placements they jointly occupy.
