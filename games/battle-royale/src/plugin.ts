@@ -22,9 +22,9 @@ import {
   recentChat,
 } from "./game";
 import { itemLabel } from "./loot";
-import { stormDamage, zoneRadius } from "./map";
+import { TILE_KINDS, stormDamage, tileCode, zoneRadius } from "./map";
 import { forfeitSeats } from "./resolve";
-import { aliveSeats, isEliminated, ownUnits, unitById } from "./state";
+import { aliveSeats, isEliminated, ownUnits, unitById, visionOf } from "./state";
 import type { BrState, Point, RoundEvent } from "./types";
 
 // The runtime spends an action on every call, rejected or not, so the phase allowance must
@@ -197,17 +197,92 @@ function eventRow(entry: number, event: RoundEvent): (string | number)[] {
   }
 }
 
+interface HistoryTitles {
+  units: string;
+  loot: string;
+  events: string;
+}
+
+/** The terminal history tables: loadouts, rounds and per-entry units, loot and events. */
+function historyBlocks(state: BrState, titles: HistoryTitles): SpectatorView["blocks"] {
+  return [
+    {
+      kind: "table",
+      title: "Loadouts",
+      columns: ["Seat", "Actors"],
+      rows: state.seats.map((seat) => [seat, (state.loadouts[seat] ?? []).join(", ")]),
+    },
+    {
+      kind: "table",
+      title: "Rounds",
+      columns: ["Entry", "Round", "Zone radius", "Storm damage"],
+      rows: state.history.map((entry, i) => [i, entry.round, entry.zoneRadius, entry.stormDamage]),
+    },
+    {
+      kind: "table",
+      title: titles.units,
+      columns: [
+        "Entry",
+        "Unit",
+        "Seat",
+        "Class",
+        "X",
+        "Y",
+        "HP",
+        "Armour",
+        "Weapon",
+        "Ready round",
+        "Hidden until",
+      ],
+      rows: state.history.flatMap((entry, i) =>
+        entry.units.map((u) => {
+          const unit = unitById(state, u.id);
+          return [
+            i,
+            u.id,
+            unit?.seat ?? "",
+            unit?.cls ?? "",
+            u.x,
+            u.y,
+            u.hp,
+            u.armour,
+            u.weapon,
+            u.readyRound,
+            u.hiddenUntil,
+          ];
+        }),
+      ),
+    },
+    {
+      kind: "table",
+      title: titles.loot,
+      columns: ["Entry", "X", "Y", "Item"],
+      rows: state.history.flatMap((entry, i) =>
+        entry.items.map((item) => [i, item.x, item.y, itemLabel(item)]),
+      ),
+    },
+    {
+      kind: "table",
+      title: titles.events,
+      columns: EVENT_COLUMNS,
+      rows: state.history.flatMap((entry, i) => entry.events.map((event) => eventRow(i, event))),
+    },
+  ];
+}
+
 /**
- * Live frames carry the explored terrain, counts, eliminations and chat only; positions, loot,
- * rosters and the unexplored map appear at terminal.
+ * Live frames carry the explored map as one integer per tile (`-1` unexplored, else
+ * `tileCode` under the `Terrain kinds` legend), counts, eliminations and chat only; positions,
+ * loot, rosters and the unexplored map appear at terminal.
  */
 export function brPublicView(state: BrState): SpectatorView {
   const result = brResult(state);
   const round = Math.max(1, state.round);
   const revealed = (x: number, y: number): boolean =>
     state.phase === "terminal" || state.explored[`${x},${y}`] === true;
-  const grid = (cell: (tile: BrState["map"]["tiles"][number][number]) => string | number) =>
-    state.map.tiles.map((row, y) => row.map((tile, x) => (revealed(x, y) ? cell(tile) : "?")));
+  const mapRows = state.map.tiles.map((row, y) =>
+    row.map((tile, x) => (revealed(x, y) ? tileCode(tile) : -1)),
+  );
   const eliminations = state.seats
     .filter((seat) => isEliminated(state, seat))
     .sort((a, b) => (state.teams[b]?.placement ?? 0) - (state.teams[a]?.placement ?? 0))
@@ -245,8 +320,8 @@ export function brPublicView(state: BrState): SpectatorView {
         { label: "Storm damage", value: stormDamage(round) },
       ],
     },
-    { kind: "table", title: "Heights", columns, rows: grid((tile) => tile.h) },
-    { kind: "table", title: "Terrain", columns, rows: grid((tile) => tile.kind) },
+    { kind: "list", title: "Terrain kinds", items: [...TILE_KINDS] },
+    { kind: "table", title: "Map", columns, rows: mapRows },
     { kind: "list", title: "Eliminations", items: eliminations },
     {
       kind: "list",
@@ -257,74 +332,7 @@ export function brPublicView(state: BrState): SpectatorView {
     },
   ];
   if (state.phase === "terminal")
-    blocks.push(
-      {
-        kind: "table",
-        title: "Loadouts",
-        columns: ["Seat", "Actors"],
-        rows: state.seats.map((seat) => [seat, (state.loadouts[seat] ?? []).join(", ")]),
-      },
-      {
-        kind: "table",
-        title: "Rounds",
-        columns: ["Entry", "Round", "Zone radius", "Storm damage"],
-        rows: state.history.map((entry, i) => [
-          i,
-          entry.round,
-          entry.zoneRadius,
-          entry.stormDamage,
-        ]),
-      },
-      {
-        kind: "table",
-        title: "Units",
-        columns: [
-          "Entry",
-          "Unit",
-          "Seat",
-          "Class",
-          "X",
-          "Y",
-          "HP",
-          "Armour",
-          "Weapon",
-          "Ready round",
-          "Hidden until",
-        ],
-        rows: state.history.flatMap((entry, i) =>
-          entry.units.map((u) => {
-            const unit = unitById(state, u.id);
-            return [
-              i,
-              u.id,
-              unit?.seat ?? "",
-              unit?.cls ?? "",
-              u.x,
-              u.y,
-              u.hp,
-              u.armour,
-              u.weapon,
-              u.readyRound,
-              u.hiddenUntil,
-            ];
-          }),
-        ),
-      },
-      {
-        kind: "table",
-        title: "Loot",
-        columns: ["Entry", "X", "Y", "Item"],
-        rows: state.history.flatMap((entry, i) =>
-          entry.items.map((item) => [i, item.x, item.y, itemLabel(item)]),
-        ),
-      },
-      {
-        kind: "table",
-        title: "Events",
-        columns: EVENT_COLUMNS,
-        rows: state.history.flatMap((entry, i) => entry.events.map((event) => eventRow(i, event))),
-      },
-    );
+    blocks.push(...historyBlocks(state, { units: "Units", loot: "Loot", events: "Events" }));
   return {
     version: 1,
     progress: {
@@ -340,12 +348,148 @@ export function brPublicView(state: BrState): SpectatorView {
   };
 }
 
+const orderRows = (state: BrState): (string | number)[][] =>
+  state.seats.flatMap((seat) =>
+    (state.orders[seat]?.orders ?? []).map((o) => [
+      seat,
+      o.unit,
+      o.moveTo ? `${o.moveTo.x},${o.moveTo.y}` : "",
+      o.thenTo ? `${o.thenTo.x},${o.thenTo.y}` : "",
+      o.action?.kind ?? "hold",
+      o.action && "target" in o.action ? (o.action.target ?? "") : "",
+      o.action && "at" in o.action && o.action.at ? `${o.action.at.x},${o.action.at.y}` : "",
+    ]),
+  );
+
+const visionRows = (state: BrState): (string | number)[][] =>
+  aliveSeats(state).flatMap((seat) => {
+    const seen = visionOf(state, seat);
+    return state.map.tiles.map((row, y) => [
+      seat,
+      y,
+      row.map((_, x) => (seen.has(`${x},${y}`) ? "#" : ".")).join(""),
+    ]);
+  });
+
+/**
+ * Complete-info projection, every frame: the whole map, every living unit (camouflaged ones
+ * too), every item, the orders accepted so far this round, each living team's vision, active
+ * recon discs and the last round's events. Nothing is hidden; the platform gates who reads it.
+ * At terminal the public history tables follow, so the two terminal frames are at parity.
+ */
+export function brFullView(state: BrState): SpectatorView {
+  const base = brPublicView(state);
+  const keep = (title: string): SpectatorView["blocks"][number] => {
+    const block = base.blocks.find((b) => b.title === title);
+    if (!block) throw Error(`public view lacks ${title}`);
+    return block;
+  };
+  const columns = Array.from({ length: state.map.width }, (_, x) => String(x));
+  const entry = state.history.length - 1;
+  return {
+    ...base,
+    blocks: [
+      keep("Teams"),
+      keep("Round"),
+      {
+        kind: "table",
+        title: "Scores",
+        columns: ["Seat", "Units", "Kills", "Damage dealt", "Placement"],
+        rows: state.seats.map((seat) => [
+          seat,
+          ownUnits(state, seat).length,
+          state.teams[seat]?.kills ?? 0,
+          state.teams[seat]?.damageDealt ?? 0,
+          state.teams[seat]?.placement ?? "",
+        ]),
+      },
+      { kind: "list", title: "Terrain kinds", items: [...TILE_KINDS] },
+      {
+        kind: "table",
+        title: "Map",
+        columns,
+        rows: state.map.tiles.map((row) => row.map(tileCode)),
+      },
+      {
+        kind: "table",
+        title: "Units",
+        columns: [
+          "Unit",
+          "Seat",
+          "Class",
+          "X",
+          "Y",
+          "HP",
+          "Armour",
+          "Weapon",
+          "Ready round",
+          "Hidden until",
+        ],
+        rows: state.units
+          .filter((u) => u.alive)
+          .map((u) => [
+            u.id,
+            u.seat,
+            u.cls,
+            u.x,
+            u.y,
+            u.hp,
+            u.armour,
+            u.weapon,
+            u.readyRound,
+            u.hiddenUntil,
+          ]),
+      },
+      {
+        kind: "table",
+        title: "Loot",
+        columns: ["X", "Y", "Item"],
+        rows: state.items.map((item) => [item.x, item.y, itemLabel(item)]),
+      },
+      {
+        kind: "table",
+        title: "Orders",
+        columns: ["Seat", "Unit", "Move to", "Then to", "Action", "Target", "At"],
+        rows: orderRows(state),
+      },
+      { kind: "table", title: "Vision", columns: ["Seat", "Y", "Row"], rows: visionRows(state) },
+      {
+        kind: "table",
+        title: "Recon",
+        columns: ["Seat", "X", "Y", "Radius", "Until round"],
+        rows: state.reveals
+          .filter((r) => r.untilRound >= state.round)
+          .map((r) => [r.seat, r.center.x, r.center.y, r.radius, r.untilRound]),
+      },
+      {
+        kind: "table",
+        title: "Events",
+        columns: EVENT_COLUMNS,
+        rows: state.lastRound.map((event) => eventRow(entry, event)),
+      },
+      keep("Eliminations"),
+      {
+        kind: "list",
+        title: "Chat",
+        items: state.chat.map((line) => `[r${line.round}] ${line.seat}: ${line.text}`),
+      },
+      ...(state.phase === "terminal"
+        ? historyBlocks(state, {
+            units: "Units by entry",
+            loot: "Loot by entry",
+            events: "Events by entry",
+          })
+        : []),
+    ],
+  };
+}
+
 export const plugin = {
   id: BR_GAME_ID,
   manifest: {
     protocolVersion: 1,
     id: BR_GAME_ID,
-    revision: "2.1.0",
+    revision: "2.2.0",
     title: "Battle Royale",
     description:
       "Teams of three armed actors with class abilities fight over loot on a fogged heightmap; simultaneous orders, a closing storm and last team standing.",
@@ -378,6 +522,7 @@ export const plugin = {
   },
   makeGame: makeBattleRoyale,
   publicView: brPublicView,
+  fullView: brFullView,
   phaseToTools: BR_PHASE_TOOLS,
   currentPhase: (state: BrState) => state.phase,
   isReady,

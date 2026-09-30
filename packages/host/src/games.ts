@@ -46,6 +46,7 @@ export function createMatchServer(
   let session = newSession({
     game,
     publicView: plugin.publicView,
+    fullView: plugin.fullView,
     config,
     seed,
     phaseToTools: plugin.phaseToTools,

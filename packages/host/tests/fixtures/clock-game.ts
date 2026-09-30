@@ -23,6 +23,27 @@ export function clockGame(rounds = 1) {
     retries: { amount: 2, reset: "match" as const, visibility: "private" as const },
   };
   const over = (s: State) => s.round >= s.rounds;
+  const publicView = (s: State) => ({
+    version: 1 as const,
+    progress: {
+      phase: over(s) ? "over" : "choose",
+      label: "Choose",
+      current: s.round,
+      total: s.rounds,
+    },
+    blocks: [],
+    result: over(s)
+      ? {
+          summary: "Draw",
+          seats: s.seats.map((seat) => ({
+            seat,
+            placement: 1,
+            outcome: "draw" as const,
+            metrics: [],
+          })),
+        }
+      : null,
+  });
   const plugin: GamePlugin<State> = {
     id: "clock-game",
     manifest: {
@@ -73,21 +94,10 @@ export function clockGame(rounds = 1) {
       isTerminal: over,
       score: (s) => Object.fromEntries(s.seats.map((seat) => [seat, 0])),
     }),
-    publicView: (s) => ({
-      version: 1,
-      progress: {
-        phase: over(s) ? "over" : "choose",
-        label: "Choose",
-        current: s.round,
-        total: s.rounds,
-      },
-      blocks: [],
-      result: over(s)
-        ? {
-            summary: "Draw",
-            seats: s.seats.map((seat) => ({ seat, placement: 1, outcome: "draw", metrics: [] })),
-          }
-        : null,
+    publicView,
+    fullView: (s) => ({
+      ...publicView(s),
+      blocks: [{ kind: "text", title: "Secret", text: `acted ${s.acted.join(",")}` }],
     }),
     phaseToTools: { choose: ["choose", "inspect"] },
     currentPhase: () => "choose",

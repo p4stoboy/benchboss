@@ -1,10 +1,19 @@
 import type { Point } from "./types";
 
-export type TileKind = "open" | "wall" | "cover";
+/** Public-frame legend order: a new kind is appended, never inserted. */
+export const TILE_KINDS = ["open", "cover", "wall"] as const;
+export type TileKind = (typeof TILE_KINDS)[number];
 export interface Tile {
   h: number;
   kind: TileKind;
 }
+
+/**
+ * One integer per tile for public frames: `h * kinds + kindIndex`, where `kinds` is the length
+ * of the legend list the same frame carries. Decoding needs nothing but that list.
+ */
+export const tileCode = (tile: Tile): number =>
+  tile.h * TILE_KINDS.length + TILE_KINDS.indexOf(tile.kind);
 export interface GameMap {
   width: number;
   height: number;

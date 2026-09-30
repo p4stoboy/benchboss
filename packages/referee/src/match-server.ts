@@ -42,6 +42,7 @@ export interface StepOutput {
 }
 export interface SessionOptions<State> {
   publicView?: (state: State) => SpectatorView;
+  fullView?: (state: State) => SpectatorView;
   // biome-ignore lint/suspicious/noExplicitAny: game action, observation and score are opaque to the referee
   game: GameModule<State, any, any, any>;
   config: MatchConfig;
@@ -67,7 +68,9 @@ interface Runtime {
 }
 export interface MatchSession<State> {
   projectPublic?: (state: State) => SpectatorView;
+  projectFull?: (state: State) => SpectatorView;
   frames: readonly PublicFrame[];
+  fullFrames: readonly PublicFrame[];
   decisionEpoch: number;
   seatDecisions: Readonly<Record<SeatId, number>>;
   // biome-ignore lint/suspicious/noExplicitAny: the session is action, observation and score agnostic
@@ -117,7 +120,9 @@ export function newSession<State>(options: SessionOptions<State>): MatchSession<
   });
   const s: MatchSession<State> = {
     projectPublic: options.publicView,
+    projectFull: options.fullView,
     frames: [],
+    fullFrames: [],
     decisionEpoch: 0,
     seatDecisions: {},
     game: options.game,
@@ -258,12 +263,20 @@ export function observe<State>(session: MatchSession<State>, seat: SeatId): unkn
 }
 export function publicView<State>(session: MatchSession<State>): SpectatorView {
   if (!session.projectPublic) throw Error("public projection unavailable");
-  // Timing/resources are runtime-owned: game projectors cannot override their privacy.
+  return decorate(session, session.projectPublic(session.state));
+}
+export function fullView<State>(session: MatchSession<State>): SpectatorView {
+  if (!session.projectFull) throw Error("full projection unavailable");
+  return decorate(session, session.projectFull(session.state));
+}
+// Timing/resources are runtime-owned: game projectors cannot override their privacy, and
+// both projections get the same runtime metadata.
+function decorate<State>(session: MatchSession<State>, projected: SpectatorView): SpectatorView {
   const {
     clocks: _projectedClocks,
     resources: _projectedResources,
     ...view
-  } = structuredClone(session.projectPublic(session.state));
+  } = structuredClone(projected);
   const resources = Object.fromEntries(
     session.config.seats.map((seat) => [
       seat,
@@ -284,13 +297,26 @@ export function publicView<State>(session: MatchSession<State>): SpectatorView {
       : {}),
   };
 }
+/** Frames are spectator-visible changes only, per stream: a clock-only command records none. */
 function recordFrame<State>(session: MatchSession<State>): MatchSession<State> {
-  return session.projectPublic
-    ? {
-        ...session,
-        frames: [...session.frames, { seq: session.log.length - 1, view: publicView(session) }],
-      }
-    : session;
+  const seq = session.log.length - 1;
+  let s = session;
+  if (s.projectPublic) s = { ...s, frames: nextFrames(s.frames, publicView(s), seq) };
+  if (s.projectFull) s = { ...s, fullFrames: nextFrames(s.fullFrames, fullView(s), seq) };
+  return s;
+}
+function nextFrames(
+  frames: readonly PublicFrame[],
+  view: SpectatorView,
+  seq: number,
+): readonly PublicFrame[] {
+  const last = frames.at(-1);
+  return last && sameView(last.view, view) ? frames : [...frames, { seq, view }];
+}
+function sameView(a: SpectatorView, b: SpectatorView): boolean {
+  const { clocks: _a, ...restA } = a as SpectatorView & { clocks?: unknown };
+  const { clocks: _b, ...restB } = b as SpectatorView & { clocks?: unknown };
+  return JSON.stringify(restA) === JSON.stringify(restB);
 }
 function resetDecision<State>(session: MatchSession<State>, seat: SeatId): MatchSession<State> {
   return {
@@ -715,3 +741,5 @@ export const decisionId = <State>(session: MatchSession<State>, seat: SeatId): s
 export const phaseId = <State>(session: MatchSession<State>): string => phaseIdentity(session);
 export const publicFrames = <State>(session: MatchSession<State>): PublicFrame[] =>
   structuredClone([...session.frames]);
+export const fullFrames = <State>(session: MatchSession<State>): PublicFrame[] =>
+  structuredClone([...session.fullFrames]);

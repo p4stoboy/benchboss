@@ -7,7 +7,7 @@ then a closing storm damages anyone outside the zone. The last team with a
 living unit wins. Combat is deterministic; the match seed only shapes the map,
 loot, spawn assignment and nothing else.
 
-Game ID: `battle-royale`. Revision: `2.1.0`. Seats: 2–30 (default 4). Records
+Game ID: `battle-royale`. Revision: `2.2.0`. Seats: 2–30 (default 4). Records
 made under revision `1.0.0` keep their identity: their frames still render, and
 re-executing them names an unavailable revision rather than these rules.
 
@@ -122,10 +122,10 @@ ignores it. Units spawn with none; the cap is 6.
 Loot is scattered at match start over non-wall tiles at least 3 tiles from every
 spawn tile, about one item per 30 tiles: health packs (+5 hit points, up to the
 maximum), armour plates (+4 armour, up to the cap) and loot weapons. Loot is
-fogged like units: a team learns of an item when one of its units can see the
-tile and remembers it afterwards; every visible tile's knowledge is refreshed
-each round, so an item taken while nobody of yours was watching stays in your
-list until you look again. A unit takes the item on its first-leg tile, before
+fogged like units: your observation lists the items on tiles your units can see
+right now and nothing else. Remembering an item you walked away from is your
+job, and a pickup order is legal only when an item lies on the destination
+tile at the time you order it. A unit takes the item on its first-leg tile, before
 any second leg, with the `pickup` action; a weapon pickup leaves the unit's old weapon on the tile, so
 items are never lost. Spectators see loot only in the terminal frame.
 
@@ -238,23 +238,35 @@ tile from that origin, a digit for the move points that tile costs, `0` on its
 own tile and `.` where it cannot end this round) and `shots` (destinations
 with at least one attackable visible enemy, keyed `x,y`, each listing the
 attackable ids for the unit's current weapon); `visibleEnemies` with their
-armour and weapon; `lastSeen` memories of enemies no longer in view; `items` you
-know of as `{x, y, kind, weapon?, round}` (every item on a tile you can see now,
-plus the last sighting on tiles you cannot); `lastRound` events involving your
+armour and weapon; `items` as `{x, y, kind, weapon?}` for every item on a tile
+you can see now; `lastRound` events involving your
 units or tiles you can see now; and `chat`, filled only in the turn after a
 kill. A `move` event carries the tiles walked in order; a move whose destination
 you can see discloses its whole path. An `ability` event is disclosed when its
 origin tile is visible, so an enemy watches a sniper vanish but learns nothing
 after. What your team saw in earlier rounds is not repeated; remember it.
 
-## Public view
+## Spectator views
 
-Live frames show heights and terrain as tables (one row per `y`, one column per
-`x`) for the tiles some team has seen at any point in the match, `?` elsewhere,
-so the spectator map unfogs as teams explore. It is the union of every team's
-discoveries, so a spectator can know more of the map than any one team. They also carry team unit counts, the round, zone
-radius, storm damage, eliminations and the recent all chat. Unit positions, loot,
-rosters, memories and the unexplored map stay hidden
+The game publishes two spectator projections. The public view is fogged and is
+what the unauthenticated endpoints serve; the full view hides nothing and the
+platform gates it behind an API key (the protocol and the reference host do not
+check who asks).
+
+### Public view
+
+Live frames show the map as one `Map` table (one row per `y`, one column per
+`x`) with one integer per tile: `-1` for a tile no team has seen yet, otherwise
+`height * kinds + kindIndex`, where `kinds` is the length of the `Terrain kinds`
+list in the same frame and `kindIndex` the tile kind's position in it. Decode
+with `kinds[code % kinds.length]` and `floor(code / kinds.length)`; a new
+terrain kind is appended to the list, so old frames decode with their own
+legend. The map unfogs as teams explore. It is the union of every team's
+discoveries, so a spectator can know more of the map than any one team. Frames
+also carry team unit counts, the round, zone radius, storm damage, eliminations
+and the recent all chat. A command that changes nothing a spectator sees, such as
+a clock advance, records no frame. Unit positions, loot,
+rosters and the unexplored map stay hidden
 until the terminal frame, which is information-complete for a broadcaster:
 
 - `Loadouts`: seat, actors.
@@ -272,3 +284,22 @@ until the terminal frame, which is information-complete for a broadcaster:
   reason), storm (value = damage), death and elimination (value = placement), in
   resolution order. Blank cells mean not applicable.
 - `Chat`: the complete log.
+
+### Full view
+
+Every frame carries the whole match state, in this order: `Teams` and `Round`
+(as public); `Scores` (seat, living units, kills, damage dealt, placement or
+blank); `Terrain kinds` and the whole `Map` from the first frame; `Units` (unit,
+seat, class, x, y, hp, armour, weapon, ready round, hidden until) for every
+living unit, camouflaged ones included; `Loot` (x, y, item) for every item on
+the ground; `Orders` (seat, unit, move to, then to, action, target, at) for
+every order accepted so far this round, empty again once the round resolves;
+`Vision` (seat, y, row) with one row per living team per map row, `#` where the
+team sees the tile and `.` elsewhere, recon discs included; `Recon` (seat, x, y,
+radius, until round) for active reveals; `Events` for the round just resolved,
+in the terminal `Events` layout; `Eliminations` (as public); and the whole
+`Chat` log. A frame is recorded after every command that changes any of this,
+so a full replay has a frame per accepted order. The terminal frame appends the
+public history tables as `Loadouts`, `Rounds`, `Units by entry`, `Loot by entry`
+and `Events by entry`, so the two terminal frames disclose the same information.
+`progress` and `result` are identical in both views.

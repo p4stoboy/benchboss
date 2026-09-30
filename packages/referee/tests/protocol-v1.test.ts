@@ -1,13 +1,16 @@
 import { describe, expect, test } from "bun:test";
 import { type MatchConfig, type SeatId, mkSeatId } from "@benchboss/core";
-import type { HostEvent, Participation, TimingPolicy } from "@benchboss/protocol";
+import type { HostEvent, Participation, SpectatorView, TimingPolicy } from "@benchboss/protocol";
 import type { GamePlugin } from "../src/game-plugin";
 import {
   clockSnapshot,
+  fullFrames,
+  fullView,
   newSession,
   observe,
   participation,
   phaseId,
+  publicFrames,
   publicView,
   step,
 } from "../src/match-server";
@@ -40,6 +43,7 @@ function fixture(
     exhaustionKeepsMatch?: boolean;
     allowNoise?: boolean;
     directPhases?: boolean;
+    fullView?: (state: State) => SpectatorView;
   } = {},
 ) {
   const timing: TimingPolicy = {
@@ -204,6 +208,7 @@ function fixture(
     config,
     seed: "clock",
     publicView: plugin.publicView,
+    fullView: options.fullView,
     phaseToTools: plugin.phaseToTools,
     currentPhase: plugin.currentPhase,
     isReady: plugin.isReady,
@@ -592,6 +597,50 @@ describe("replay artifact denial-of-service boundaries", () => {
         log: session.log,
       }),
     ).toEqual({ ok: true });
+  });
+
+  test("a clock advance that changes nothing spectators see records a command but no frame", () => {
+    const { session } = fixture({ timing: { playerTotalMs: null, decisionLimitMs: null } });
+    const started = time(session, 0);
+    const later = time(started, 1000);
+    expect(later.state.phase).toBe(started.state.phase);
+    expect(later.log.length).toBeGreaterThan(started.log.length);
+    expect(later.frames).toHaveLength(started.frames.length);
+    const acted = act(later);
+    expect(acted.frames.length).toBe(started.frames.length + 1);
+    expect(acted.frames.at(-1)?.seq).toBe(acted.log.length - 1);
+  });
+
+  test("a full projector records its own deduped frame stream and a game without one records none", () => {
+    const quiet = { playerTotalMs: null, decisionLimitMs: null };
+    const plain = time(fixture({ timing: quiet }).session, 0);
+    expect(fullFrames(plain)).toEqual([]);
+    expect(() => fullView(plain)).toThrow();
+    const { session } = fixture({
+      timing: quiet,
+      fullView: (state) => ({
+        version: 1,
+        progress: { phase: state.phase, label: "Fixture", current: state.turns, total: null },
+        blocks: [{ kind: "text", title: "Secret", text: `turns ${state.turns}` }],
+        result: null,
+      }),
+    });
+    const started = time(session, 0);
+    expect(fullFrames(started)).toHaveLength(1);
+    expect(publicFrames(started)).toHaveLength(1);
+    const acted = act(started);
+    expect(fullFrames(acted)).toHaveLength(2);
+    expect(fullFrames(acted).at(-1)?.view.blocks[0]).toMatchObject({
+      title: "Secret",
+      text: "turns 1",
+    });
+    expect(fullFrames(acted).at(-1)?.seq).toBe(acted.log.length - 1);
+    const idle = time(acted, 1000);
+    expect(idle.log.length).toBeGreaterThan(acted.log.length);
+    expect(fullFrames(idle)).toHaveLength(fullFrames(acted).length);
+    expect(publicFrames(idle)).toHaveLength(publicFrames(acted).length);
+    expect(JSON.stringify(publicFrames(idle))).not.toContain("Secret");
+    expect(fullView(idle).blocks[0]).toMatchObject({ title: "Secret" });
   });
 
   test("equal host timestamps do not accumulate clock commands or frames", () => {

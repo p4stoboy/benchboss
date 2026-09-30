@@ -36,6 +36,7 @@ export type WorkerCommand =
 export interface WorkerSnapshot {
   inspection: OpsMatch;
   view: SpectatorView | null;
+  fullView: SpectatorView | null;
   turns: Record<string, NextEnvelope>;
   artifact?: MatchArtifact;
   abortion?: MatchAbortion;
@@ -105,7 +106,14 @@ export async function runMatchWorker(registry: GameRegistry): Promise<void> {
             turns[seat.principalId] = runner.poll(seat.principalId, { acknowledge: false });
         value = {
           result,
-          snapshot: { inspection, view: runner.view(spec.matchId), turns, artifact, abortion },
+          snapshot: {
+            inspection,
+            view: runner.view(spec.matchId),
+            fullView: runner.fullView(spec.matchId),
+            turns,
+            artifact,
+            abortion,
+          },
         } satisfies WorkerReply;
       }
       process.stdout.write(`${JSON.stringify({ id, ok: true, value })}\n`);

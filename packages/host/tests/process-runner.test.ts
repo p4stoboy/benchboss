@@ -122,6 +122,27 @@ test("game processes do not inherit server secrets", async () => {
   }
 });
 
+test("the full view crosses the process boundary beside the public view", async () => {
+  const f = setup();
+  try {
+    await f.runner.start(f.spec("m"));
+    expect((await f.runner.submit("m:0", "m", "choose", {})).ok).toBe(true);
+    expect(f.runner.fullView("m")).toMatchObject({
+      blocks: [{ kind: "text", title: "Secret", text: "acted seat:0" }],
+    });
+    expect(f.runner.view("m")).toMatchObject({ blocks: [] });
+    expect((await f.runner.submit("m:1", "m", "choose", {})).ok).toBe(true);
+    expect(f.artifacts[0]?.record.fullPresentation?.frames.map((fr) => fr.view.blocks)).toEqual([
+      [{ kind: "text", title: "Secret", text: "acted " }],
+      [{ kind: "text", title: "Secret", text: "acted seat:0" }],
+      [{ kind: "text", title: "Secret", text: "acted " }],
+    ]);
+    expect(JSON.stringify(f.artifacts[0]?.record.presentation)).not.toContain("Secret");
+  } finally {
+    await f.finish();
+  }
+});
+
 test("isolated terminal results wait for persistence and retry it without game execution", async () => {
   const f = clockGame();
   let offline = true;

@@ -280,6 +280,46 @@ describe("independent public host", () => {
     await expect(runner.reap()).rejects.toThrow("offline");
     expect(runner.inspect().find((m) => m.matchId === "b")?.finalization).toBe("complete");
   });
+  test("a full projector is recorded and served beside the public view; without one the public view stands in", async () => {
+    const f = fixture();
+    const secret = {
+      ...f.plugin,
+      fullView: (s: { done: boolean }) => ({
+        ...f.plugin.publicView(s),
+        blocks: [{ kind: "text" as const, title: "Secret", text: s.done ? "over" : "live" }],
+      }),
+    };
+    const gated = buildLocalServer({ registry: createRegistry([secret]) });
+    gated.runner.start(f.spec);
+    const liveFull = await gated.app.fetch(new Request("http://local/match/m/view/full"));
+    expect(await liveFull.json()).toMatchObject({ blocks: [{ title: "Secret", text: "live" }] });
+    const livePublic = await gated.app.fetch(new Request("http://local/match/m/view"));
+    expect(JSON.stringify(await livePublic.json())).not.toContain("Secret");
+    await gated.runner.submit("p", "m", "choose", {});
+    const full = await gated.app.fetch(new Request("http://local/replay/m/presentation/full"));
+    expect(full.status).toBe(200);
+    const fullBody = (await full.json()) as { frames: { view: { blocks: { title: string }[] } }[] };
+    expect(fullBody.frames.length).toBeGreaterThan(0);
+    expect(fullBody.frames.every((fr) => fr.view.blocks[0]?.title === "Secret")).toBe(true);
+    const pub = await gated.app.fetch(new Request("http://local/replay/m/presentation"));
+    expect(JSON.stringify(await pub.json())).not.toContain("Secret");
+    const doneFull = await gated.app.fetch(new Request("http://local/match/m/view/full"));
+    expect(await doneFull.json()).toMatchObject({ blocks: [{ title: "Secret", text: "over" }] });
+
+    const plain = buildLocalServer({ registry: f.registry });
+    plain.runner.start(f.spec);
+    const fallback = await plain.app.fetch(new Request("http://local/match/m/view/full"));
+    expect(await fallback.json()).toEqual(
+      await (await plain.app.fetch(new Request("http://local/match/m/view"))).json(),
+    );
+    await plain.runner.submit("p", "m", "choose", {});
+    const missing = await plain.app.fetch(new Request("http://local/replay/m/presentation/full"));
+    expect(missing.status).toBe(404);
+    const rec = (await (await plain.app.fetch(new Request("http://local/match/m"))).json()) as {
+      fullPresentation?: unknown;
+    };
+    expect(rec.fullPresentation).toBeUndefined();
+  });
   test("local HTTP rejects nonobjects and serves completed artifacts and verification", async () => {
     const f = fixture();
     const { app, runner } = buildLocalServer({ registry: f.registry });

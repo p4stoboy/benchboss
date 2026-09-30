@@ -11,6 +11,8 @@ import type {
 import {
   clockSnapshot,
   decisionId,
+  fullFrames,
+  fullView,
   isTerminal,
   observe,
   participation,
@@ -47,6 +49,8 @@ export interface MatchArtifact {
     startedAt: string;
     endedAt: string;
     presentation: ReplayPresentation;
+    /** Complete-info frames, present only for games with a full projector. The platform gates it. */
+    fullPresentation?: ReplayPresentation;
   };
   replayJsonl: string;
   seats: { seat: SeatId; agentId: string; score: number | null }[];
@@ -122,6 +126,8 @@ export interface MatchRunner {
     identity?: SubmissionIdentity,
   ): Promise<SubmitEnvelope>;
   view(matchId: string): SpectatorView | null;
+  // The complete-info view, or the public view when the game has no full projector.
+  fullView(matchId: string): SpectatorView | null;
   poll(principalId: string, options?: { acknowledge?: boolean }): NextEnvelope;
   next(principalId: string): Promise<NextEnvelope>;
   reap(): Promise<void>;
@@ -409,6 +415,14 @@ export function createMatchRunner(deps: RunnerDeps): MatchRunner {
               identity: match.spec.config.identity,
               frames: publicFrames(match.binding.handle.get()),
             },
+            ...(match.binding.handle.get().projectFull
+              ? {
+                  fullPresentation: {
+                    identity: match.spec.config.identity,
+                    frames: fullFrames(match.binding.handle.get()),
+                  },
+                }
+              : {}),
           },
           replayJsonl: eventsToJsonl(sessionLog(match.binding.handle.get())),
           seats: (Object.keys(match.seatToAgent) as SeatId[]).map((seat) => ({
@@ -546,6 +560,12 @@ export function createMatchRunner(deps: RunnerDeps): MatchRunner {
     view: (id) => {
       const m = matches.get(id);
       return m && !m.aborted ? sampleView(publicView(m.binding.handle.get()), now()) : null;
+    },
+    fullView: (id) => {
+      const m = matches.get(id);
+      if (!m || m.aborted) return null;
+      const session = m.binding.handle.get();
+      return sampleView(session.projectFull ? fullView(session) : publicView(session), now());
     },
   };
 }

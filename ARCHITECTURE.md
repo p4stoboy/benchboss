@@ -84,8 +84,9 @@ States and semantics:
 
 ## Referee and decisions
 
-- `packages/referee/src/game-plugin.ts`: required manifest, public
-  projector, explicit safe default and game/phase wiring; optional sensing factory.
+- `packages/referee/src/game-plugin.ts`: required manifest, hidden-info public
+  projector, optional complete-info `fullView` projector, explicit safe default and
+  game/phase wiring; optional sensing factory.
 - `packages/referee/src/match-server.ts`: deterministic session reducer, timing,
   participation, generic metering, trusted expiry and public projections.
 - `packages/referee/src/replay-verifier.ts`: exact command/log regeneration;
@@ -95,8 +96,10 @@ States and semantics:
   results stay in the acting agent's observation/result path.
 - `packages/referee/src/conformance.ts`: reusable seeded acceptance checks
   for every advertised seat count, defaults/generated actions, bounded progress,
-  explicit outcomes, replay and deterministic public frames. Game privacy scenarios
-  remain game-owned; the helper imports no official package or test framework.
+  explicit outcomes, replay, deterministic public and full frames, and (for games
+  with `fullView`) a full-view `result` canonically equal to the public one at every
+  step. Game privacy scenarios remain game-owned; the helper imports no official
+  package or test framework.
 
 States and semantics:
 
@@ -127,9 +130,13 @@ States and semantics:
 - Accepted actions/defaults retain tool identity in logs. Terminal submission and
   terminal resolution both append seed reveal, resolved config, score and result
   exactly once; terminal matches reject further commands.
-- Projectors snapshot initial state and actual transitions into public frames.
-  Readers clone frame/view data. A low-level session without a projector has no
-  public view; host bindings always provide one.
+- Projectors snapshot initial state and actual transitions into frames, the public
+  projector into `frames` and the full projector into `fullFrames`, each stream
+  appending only when its view differs from that stream's last frame apart from
+  clocks. Both projections receive the same runtime clock/resource metadata. Readers
+  clone frame/view data. A session without a public projector has no public view;
+  host bindings always provide one. A session without a full projector has an empty
+  `fullFrames` and `fullView` throws.
 
 ```mermaid
 flowchart LR
@@ -209,7 +216,12 @@ States and semantics:
   is removed.
 - Public endpoints include `/games`, `/capabilities`, `/match/:id/view`, terminal
   `/match/:id` and `/replay/:id` with `/presentation` and `/verify` variants.
-  Full execution artifacts and seed are terminal-only; live views use projectors.
+  Complete-info variants `/match/:id/view/full` (live: the full projection, or the
+  public view when the game has none; after completion: the last full frame) and
+  `/replay/:id/presentation/full` (`record.fullPresentation`; 404 when the game has no
+  full projector). The reference host gates nothing; the platform mints keys for the
+  full variants. Full execution artifacts and seed are terminal-only; live views use
+  projectors.
 
 ## Game catalog and replay verification
 
@@ -233,7 +245,7 @@ States and semantics:
 - `games/battle-royale/src/{classes,combat,loot,state,resolve}.ts`: class, weapon
   and ability catalogs and budget, weapon range/damage modifiers, seeded loot
   scatter, planning (reach and attackable targets per destination) from a seat's own
-  knowledge including recon reveals and camouflage, sighting memory, and WeGo round
+  knowledge including recon reveals and camouflage, and WeGo round
   resolution: initiative-ordered movement, pickups and self-abilities, simultaneous
   attacks/blasts/heals with armour, storm, elimination, ranking and host-forced
   forfeits.
@@ -247,7 +259,7 @@ States and semantics:
 
 States and semantics:
 
-- Catalog revisions are `1.0.0` for RPS, Spy and Chess and `2.1.0` for Battle
+- Catalog revisions are `1.0.0` for RPS, Spy and Chess and `2.2.0` for Battle
   Royale. RPS supports 2–10 seats; Spy supports 5/7/9; Chess supports 2; Battle
   Royale supports 2–30 (default 4). Each game has one implementation; unavailable
   revisions fail, so records made under an earlier revision render from their
@@ -288,9 +300,8 @@ States and semantics:
   (camouflaged while `round <= hiddenUntil`). Loot: `state.items`, at most one per
   tile, scattered from `rng.fork("loot")` over non-wall tiles ≥ 3 from every spawn
   tile at one item per 30 tiles (health +5 hp, armour +4, or a loot weapon). Loot is
-  fogged: `state.itemMemory[seat]` maps tile keys to the item last seen there with its
-  round; every visible tile is refreshed each round (deleted when empty) and unseen
-  tiles keep their last sighting.
+  fogged: `visibleItems(state, seat)` is the items on tiles the seat sees now; the
+  game keeps no per-team memory of units or items (an agent remembers for itself).
   Orders: at most one order per living own unit with optional `moveTo` (must be in
   that unit's reach: Dijkstra over currently visible tiles only, against own units
   and visible enemies), optional `thenTo` (a second leg from `moveTo` with the
@@ -300,9 +311,9 @@ States and semantics:
   the sight line against seen tiles only, unseen tiles assumed clear, so a listed shot
   can still fizzle), ability (must
   be ready; recon/brace/camo take nothing, grenade takes `at` within 4 of the
-  destination, volley a listed target, heal another own unit), pickup (the seat's item
-  memory must hold one on the destination, so a fogged tile rejects identically with or
-  without an item; a vanished item fizzles at resolution) or hold. Semantic rejection spends a retry; exhaustion commits the
+  destination, volley a listed target, heal another own unit), pickup (an item must lie
+  on the destination now; a fogged destination is already unreachable, so it rejects
+  identically with or without an item; an item taken before resolution fizzles) or hold. Semantic rejection spends a retry; exhaustion commits the
   default (move each unit to the reachable tile least exposed to next round's zone,
   no action). Both envelopes take optional `chat` (1..280 chars) appended as
   `{round, seat, text}` to a global public log only when the envelope is accepted;
@@ -344,14 +355,24 @@ States and semantics:
   units with weapon, armour, ability readiness, `reach` (`{x, y, rows}` cost grid: a
   digit per first-leg destination, `.` elsewhere, bounded by the visible reach) and
   `shots` (destination key → attackable ids), visible enemies (with armour and
-  weapon), remembered last sightings, the seat's item memory, last-round events only
+  weapon), items on tiles seen now, last-round events only
   for own units or positions currently visible (ability events by origin tile, blasts
   and pickups by their tile; a fizzle whose target is an enemy carries reason `missed`
   in place of the stored reason), and `chat` per the kill gate above. `state.explored` is
   the union of every seat's vision at spawn and after each resolution (never cleared);
-  live public views carry height/terrain tables with `?` on unexplored tiles, counts,
+  live public views carry a `Terrain kinds` legend list (`TILE_KINDS` order, append-only)
+  and a `Map` table with one integer per tile (`-1` unexplored, else
+  `h * kinds + kindIndex` from `tileCode` in `games/battle-royale/src/map.ts`), counts,
   zone, eliminations and the 50 most recent chat lines and are independent of
-  positions, loot, rosters and memory. The terminal view shows the whole map. History is an ordered list of entries
+  positions, loot and rosters. The terminal view shows the whole map. `brFullView`
+  (`plugin.fullView`) is the complete-info projection recorded as `fullFrames`: every
+  frame carries `Scores`, the whole `Map`, `Units` (every living unit, camouflaged
+  included, with `hiddenUntil`), `Loot`, `Orders` (accepted so far this round; empty
+  after resolution), `Vision` (one `#`/`.` row per living seat per map row from
+  `visionOf`), `Recon` (active reveals), `Events` for `state.lastRound` and the whole
+  chat, with `Teams`, `Round`, `Eliminations`, `progress` and `result` identical to
+  the public view; at terminal it appends the public history tables as `Units by
+  entry`, `Loot by entry`, `Events by entry`. History is an ordered list of entries
   (spawn, each resolved round, each in-round host forfeit) with zone radius, storm
   damage, living units (position, hp, armour, weapon, ready round, hidden until),
   remaining items and events (moves carry the walked tile path); the terminal view

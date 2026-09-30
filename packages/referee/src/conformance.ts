@@ -2,7 +2,9 @@ import { type MatchConfig, type Rng, type SeatId, createRng, mkSeatId } from "@b
 import { type ActionInvocation, validateSchema } from "@benchboss/protocol";
 import type { GamePlugin } from "./game-plugin";
 import {
+  canonical,
   clockSnapshot,
+  fullFrames,
   isTerminal,
   newSession,
   publicFrames,
@@ -77,6 +79,7 @@ export function checkGameConformance<State>(
               config: structuredClone(config),
               seed,
               publicView: plugin.publicView,
+              fullView: plugin.fullView,
               phaseToTools: plugin.phaseToTools,
               currentPhase: plugin.currentPhase,
               isReady: plugin.isReady,
@@ -88,6 +91,15 @@ export function checkGameConformance<State>(
             session = step(session, { kind: "advanceTime", at: 0 }).session;
             const rng = createRng(`actions:${seed}`);
             let commands = 0;
+            const assertResultParity = () => {
+              if (!plugin.fullView) return;
+              assertConformance(
+                canonical(plugin.fullView(session.state).result) ===
+                  canonical(plugin.publicView(session.state).result),
+                "full view result differs from public view result",
+              );
+            };
+            assertResultParity();
             while (!isTerminal(session)) {
               let progressed = false;
               for (const seat of rng.shuffle([...config.seats])) {
@@ -145,6 +157,7 @@ export function checkGameConformance<State>(
                 }
               }
               assertConformance(progressed, "nonterminal game has no actionable seats or deadline");
+              assertResultParity();
             }
             const outcome = plugin.publicView(session.state).result;
             assertConformance(
@@ -178,13 +191,17 @@ export function checkGameConformance<State>(
               !verifyPluginReplay({ plugin, config, seed, log: log.slice(0, -1) }).ok,
               "truncated replay accepted",
             );
-            return JSON.stringify({ log, frames: publicFrames(session) });
+            return JSON.stringify({
+              log,
+              frames: publicFrames(session),
+              fullFrames: fullFrames(session),
+            });
           };
           const original = run();
           const repeated = run();
           assertConformance(
             original === repeated,
-            "same seed/actions produced different logs or public frames",
+            "same seed/actions produced different logs or spectator frames",
           );
           report.ok = true;
         } catch (error) {
