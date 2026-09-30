@@ -84,8 +84,9 @@ States and semantics:
 
 ## Referee and decisions
 
-- `packages/referee/src/game-plugin.ts`: required manifest, public
-  projector, explicit safe default and game/phase wiring; optional sensing factory.
+- `packages/referee/src/game-plugin.ts`: required manifest, hidden-info public
+  projector, optional complete-info `fullView` projector, explicit safe default and
+  game/phase wiring; optional sensing factory.
 - `packages/referee/src/match-server.ts`: deterministic session reducer, timing,
   participation, generic metering, trusted expiry and public projections.
 - `packages/referee/src/replay-verifier.ts`: exact command/log regeneration;
@@ -127,10 +128,13 @@ States and semantics:
 - Accepted actions/defaults retain tool identity in logs. Terminal submission and
   terminal resolution both append seed reveal, resolved config, score and result
   exactly once; terminal matches reject further commands.
-- Projectors snapshot initial state and actual transitions into public frames; a
-  command whose view equals the last frame's apart from clocks records no frame.
-  Readers clone frame/view data. A low-level session without a projector has no
-  public view; host bindings always provide one.
+- Projectors snapshot initial state and actual transitions into frames, the public
+  projector into `frames` and the full projector into `fullFrames`, each stream
+  appending only when its view differs from that stream's last frame apart from
+  clocks. Both projections receive the same runtime clock/resource metadata. Readers
+  clone frame/view data. A session without a public projector has no public view;
+  host bindings always provide one. A session without a full projector has an empty
+  `fullFrames` and `fullView` throws.
 
 ```mermaid
 flowchart LR
