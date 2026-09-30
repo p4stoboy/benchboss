@@ -157,8 +157,9 @@ Every living team submits `match.orders` with at most one order per unit:
 - `thenTo` is a second destination walked after the action with the points the
   first leg left over (`move` minus the digit). It must differ from the
   destination, be affordable from it under the same step costs, and be visible
-  now; the unit's own starting tile counts as free. The observation does not
-  list second-leg costs; work them out from the view. An unaffordable or unseen
+  now; the unit's own starting tile counts as free, but a tile an ally stands
+  on now is not, even if that ally is ordered away this round. The observation
+  does not list second-leg costs; work them out from the view. An unaffordable or unseen
   `thenTo` is rejected like any other illegal order.
 - Orders that break these rules are rejected with a reason and cost one of two
   retries per decision; exhausting them commits the safe default.
