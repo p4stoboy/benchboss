@@ -37,7 +37,7 @@ const RESOURCES = {
 } satisfies ResourceAllowances;
 const TIMING = {
   playerTotalMs: null,
-  decisionLimitMs: 60_000,
+  decisionLimitMs: 30_000,
   phaseLimits: {},
   clockVisibility: "public",
 } satisfies TimingPolicy;

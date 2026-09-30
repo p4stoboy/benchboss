@@ -177,7 +177,7 @@ test("a decision deadline defaults the silent acting seat and the turn passes on
     const round = current.state.round;
     current = step(current, {
       kind: "advanceTime",
-      at: (current.runtime.at ?? 0) + 60_000,
+      at: (current.runtime.at ?? 0) + plugin.manifest.defaultTiming.decisionLimitMs,
     }).session;
     defaulted += 1;
     // The silent seat's default resolved: its turn is recorded or the round has moved on.

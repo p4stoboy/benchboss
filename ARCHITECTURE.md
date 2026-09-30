@@ -296,7 +296,7 @@ States and semantics:
   actions per phase (one accepted submission plus two rejected calls, since every
   call spends an action) and two retries per decision. Names are game-owned and generic
   metering references them; runtime code contains no game-specific allowance names.
-- Battle Royale defaults to 60 seconds per decision and no player total. Rules
+- Battle Royale defaults to 30 seconds per decision and no player total. Rules
   `maxRounds` (4..200, default 40) and `tilesPerSeat` (9..600, default 300); unknown
   keys fail. Phases: `loadout` (every seat acts once, simultaneously), repeated
   `orders` (one seat acts per phase; a round is one turn per living seat in
@@ -306,7 +306,7 @@ States and semantics:
   orders. `isReady` in orders is `pending !== null` or no turns remain (`actingSeat`
   null or fewer than two seats with living units); `step` resolves `pending`
   (`resolveTurn`) and then, when no turns remain, `endRound`. Each resolution begins a
-  new referee phase, so every turn is its own decision epoch with the 60-second limit
+  new referee phase, so every turn is its own decision epoch with the 30-second limit
   for the acting seat only; decision expiry commits its safe default. Turn status per
   seat (`turnOrder`): `acted`, `acting`, `waiting`, `skipped` (no living unit and no
   turn yet; eliminated at round end).

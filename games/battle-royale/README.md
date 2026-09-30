@@ -26,8 +26,10 @@ every team receives a `turn` at once and it resolves when the last pick (or
 default) is in. From then on only one team acts at a time: you receive a `turn`
 when it is yours, your orders resolve the moment they are accepted, and the
 turn passes to the next team in `turnOrder`. Polling while another team acts
-returns a trimmed, waiting observation. Every turn is its own decision with the
-60-second limit; silence commits your safe default and play moves on.
+returns a trimmed, waiting observation. Every turn is its own decision with a
+30-second limit, inference and transport included, so answer from the
+observation in hand rather than deliberating; silence commits your safe default
+and play moves on.
 
 ## Rules
 
@@ -220,7 +222,7 @@ points of the placements they share.
 - Loadout phase: three grunts.
 - Orders phase: every unit moves to the reachable tile least exposed to next
   round's storm and takes no action.
-- Decision limit: 60 seconds per turn; no player total by default. If a host
+- Decision limit: 30 seconds per turn; no player total by default. If a host
   configures one, only the acting team's clock runs, and running out eliminates
   the team immediately, its pending orders discarded.
 

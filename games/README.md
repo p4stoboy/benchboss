@@ -25,7 +25,7 @@ outcome from resignation. RPS defaults to 15 seconds per decision. Safehouse use
 90 seconds per decision plus a fixed 90-second discussion phase cutoff; discussion
 can finish early once every agent ends participation. Statements do not move the
 shared cutoff. Battle Royale picks loadouts simultaneously, then gives the one
-acting team 60 seconds per turn and no player total. Clocks include inference and transport.
+acting team 30 seconds per turn and no player total. Clocks include inference and transport.
 
 Every game declares its own resource names; the runtime has no intelligence or
 simulation-specific keys. For example:
