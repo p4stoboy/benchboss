@@ -91,6 +91,7 @@ export function scenario(
     reveals: [],
     itemMemory: {},
     recentKills: {},
+    explored: {},
   };
   return rememberItems({ ...built, history: [snapshot(built, 0, [])], ...overrides });
 }

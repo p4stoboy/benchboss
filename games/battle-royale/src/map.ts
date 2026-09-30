@@ -84,6 +84,3 @@ export const inZone = (map: GameMap, maxRounds: number, round: number, p: Point)
   chebyshev(zoneCenter(map), p) <= zoneRadius(map, maxRounds, round);
 
 /** Row-major copies: grid[y][x]. */
-export const heightGrid = (map: GameMap): number[][] => map.tiles.map((row) => row.map((t) => t.h));
-export const terrainGrid = (map: GameMap): TileKind[][] =>
-  map.tiles.map((row) => row.map((t) => t.kind));

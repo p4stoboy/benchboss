@@ -229,8 +229,11 @@ after. What your team saw in earlier rounds is not repeated; remember it.
 ## Public view
 
 Live frames show heights and terrain as tables (one row per `y`, one column per
-`x`), team unit counts, the round, zone radius, storm damage, eliminations and
-the recent all chat. Unit positions, loot, rosters and memories stay hidden
+`x`) for the tiles some team has seen at any point in the match, `?` elsewhere,
+so the spectator map unfogs as teams explore and never shows more than the
+best-informed team has learned. They also carry team unit counts, the round, zone
+radius, storm damage, eliminations and the recent all chat. Unit positions, loot,
+rosters, memories and the unexplored map stay hidden
 until the terminal frame, which is information-complete for a broadcaster:
 
 - `Loadouts`: seat, actors.

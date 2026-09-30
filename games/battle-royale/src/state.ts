@@ -113,12 +113,15 @@ export const knownItemAt = (state: BrState, seat: SeatId, p: Point): SeenItem | 
   state.itemMemory[seat]?.[key(p)];
 
 /** Every visible tile's item knowledge is refreshed; unseen tiles keep their last sighting. */
-export function rememberItems(state: BrState): BrState {
+export function rememberItems(
+  state: BrState,
+  visions: Partial<Record<SeatId, Set<string>>> = {},
+): BrState {
   const itemMemory: BrState["itemMemory"] = {};
   for (const seat of state.seats) {
     const known: Record<string, SeenItem> = { ...(state.itemMemory[seat] ?? {}) };
     if (!isEliminated(state, seat)) {
-      const seen = visionOf(state, seat);
+      const seen = visions[seat] ?? visionOf(state, seat);
       for (const tile of Object.keys(known)) if (seen.has(tile)) delete known[tile];
       for (const item of state.items)
         if (seen.has(key(item))) known[key(item)] = { ...item, round: state.round };
@@ -128,12 +131,18 @@ export function rememberItems(state: BrState): BrState {
   return { ...state, itemMemory };
 }
 
+/** Sighting memory, item memory and the spectator's explored set, from one vision pass per seat. */
 export function rememberSightings(state: BrState): BrState {
   const memory: BrState["memory"] = {};
+  const explored: BrState["explored"] = { ...state.explored };
+  const visions: Partial<Record<SeatId, Set<string>>> = {};
   for (const seat of state.seats) {
     const entries: Record<string, SeenUnit> = { ...(state.memory[seat] ?? {}) };
-    if (!isEliminated(state, seat))
-      for (const enemy of visibleEnemies(state, seat))
+    if (!isEliminated(state, seat)) {
+      const seen = visionOf(state, seat);
+      visions[seat] = seen;
+      for (const tile of seen) explored[tile] = true;
+      for (const enemy of visibleEnemies(state, seat, seen))
         entries[enemy.id] = {
           id: enemy.id,
           seat: enemy.seat,
@@ -145,9 +154,10 @@ export function rememberSightings(state: BrState): BrState {
           weapon: enemy.weapon,
           round: state.round,
         };
+    }
     memory[seat] = entries;
   }
-  return rememberItems({ ...state, memory });
+  return rememberItems({ ...state, memory, explored }, visions);
 }
 
 export const samePoint = (a: Point, b: Point): boolean => a.x === b.x && a.y === b.y;

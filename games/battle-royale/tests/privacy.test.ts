@@ -95,6 +95,76 @@ function assertObservationPrivacy(state: BrState, seat: ReturnType<typeof mkSeat
   }
 }
 
+/** Live spectator grids show exactly the explored tiles; every tile some living team sees now is explored. */
+function assertSpectatorFog(state: BrState): void {
+  const view = plugin.publicView(state);
+  const table = (title: string) => {
+    const block = view.blocks.find((b) => b.kind === "table" && b.title === title);
+    return block && "rows" in block ? block.rows : [];
+  };
+  const heights = table("Heights");
+  const terrain = table("Terrain");
+  expect(heights).toHaveLength(state.map.height);
+  const seenNow = new Set<string>();
+  for (const seat of state.seats)
+    if (state.teams[seat]?.placement === null)
+      for (const t of visionOf(state, seat)) seenNow.add(t);
+  state.map.tiles.forEach((row, y) =>
+    row.forEach((tile, x) => {
+      const explored = state.explored[`${x},${y}`] === true;
+      if (seenNow.has(`${x},${y}`)) expect(explored).toBe(true);
+      expect(heights[y]?.[x]).toBe(explored ? tile.h : "?");
+      expect(terrain[y]?.[x]).toBe(explored ? tile.kind : "?");
+    }),
+  );
+}
+
+test("the live spectator map reveals tiles as teams see them and stays revealed; terminal shows all", () => {
+  let state = newMatch(2, "fog");
+  const before = plugin.publicView(state);
+  const cells = (view: typeof before, title: string) => {
+    const block = view.blocks.find((b) => b.kind === "table" && b.title === title);
+    return block && "rows" in block ? block.rows.flat() : [];
+  };
+  expect(cells(before, "Heights").every((c) => c === "?")).toBe(true);
+  expect(cells(before, "Terrain").every((c) => c === "?")).toBe(true);
+  for (const seat of state.seats)
+    state = game.submit(
+      state,
+      seat,
+      { actors: ["scout", "grunt", "grunt"] },
+      "match.loadout",
+    ).state;
+  state = game.step(state);
+  assertSpectatorFog(state);
+  const spawnExplored = Object.keys(state.explored);
+  expect(spawnExplored.length).toBeGreaterThan(0);
+  expect(spawnExplored.length).toBeLessThan(state.map.width * state.map.height);
+  const moved = submitAll(state, {
+    [s0]: {
+      orders: state.units
+        .filter((u) => u.seat === s0)
+        .map((u) => {
+          const plan = game.observe(state, s0).privateState.units.find((p) => p.id === u.id);
+          const far = plan?.reach.split(" ").at(-1)?.split(",").map(Number) ?? [u.x, u.y];
+          return { unit: u.id, moveTo: { x: far[0], y: far[1] } };
+        }),
+    },
+  });
+  assertSpectatorFog(moved);
+  for (const tile of spawnExplored) expect(moved.explored[tile]).toBe(true);
+  expect(Object.keys(moved.explored).length).toBeGreaterThanOrEqual(spawnExplored.length);
+  const terminal = plugin.onHostEvent?.(moved, {
+    kind: "player_time_exhausted",
+    seats: [s1],
+    phaseId: "p",
+    at: 1,
+  }) as BrState;
+  const full = plugin.publicView(terminal);
+  expect(cells(full, "Heights")).toEqual(terminal.map.tiles.flat().map((t) => t.h));
+  expect(cells(full, "Terrain")).toEqual(terminal.map.tiles.flat().map((t) => t.kind));
+});
+
 test("a wall hides an enemy from observation, attacks and memory until it is seen", () => {
   const state = scenario(
     ["0#0"],
@@ -224,6 +294,7 @@ test("generated matches never leak unseen positions through observations or live
     state = game.step(state);
     while (state.phase === "orders") {
       for (const seat of state.seats) assertObservationPrivacy(state, seat);
+      assertSpectatorFog(state);
       const hidden = {
         ...state,
         units: state.units.map((u) => ({ ...u, x: 0, y: 0 })),

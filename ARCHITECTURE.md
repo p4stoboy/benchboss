@@ -335,9 +335,11 @@ States and semantics:
   `shots` (destination key → attackable ids), visible enemies (with armour and
   weapon), remembered last sightings, the seat's item memory, last-round events only
   for own units or positions currently visible (ability events by origin tile, blasts
-  and pickups by their tile), and `chat` per the kill gate above. Live public views
-  carry height/terrain tables, counts, zone, eliminations and the 50 most recent chat
-  lines and are independent of positions, loot, rosters and memory. History is an ordered list of entries
+  and pickups by their tile), and `chat` per the kill gate above. `state.explored` is
+  the union of every seat's vision at spawn and after each resolution (never cleared);
+  live public views carry height/terrain tables with `?` on unexplored tiles, counts,
+  zone, eliminations and the 50 most recent chat lines and are independent of
+  positions, loot, rosters and memory. The terminal view shows the whole map. History is an ordered list of entries
   (spawn, each resolved round, each in-round host forfeit) with zone radius, storm
   damage, living units (position, hp, armour, weapon, ready round, hidden until),
   remaining items and events (moves carry the walked tile path); the terminal view

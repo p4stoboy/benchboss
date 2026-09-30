@@ -156,6 +156,8 @@ export interface BrState {
   teams: Record<SeatId, TeamRecord>;
   /** Kill credits from the most recent round resolution; gates chat delivery next turn. */
   recentKills: Record<SeatId, number>;
+  /** Tile keys any team has ever seen; the live spectator map reveals only these. */
+  explored: Record<string, true>;
   memory: Record<SeatId, Record<string, SeenUnit>>;
   lastRound: RoundEvent[];
   history: RoundSnapshot[];
