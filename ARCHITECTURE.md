@@ -214,7 +214,12 @@ States and semantics:
   is removed.
 - Public endpoints include `/games`, `/capabilities`, `/match/:id/view`, terminal
   `/match/:id` and `/replay/:id` with `/presentation` and `/verify` variants.
-  Full execution artifacts and seed are terminal-only; live views use projectors.
+  Complete-info variants `/match/:id/view/full` (live: the full projection, or the
+  public view when the game has none; after completion: the last full frame) and
+  `/replay/:id/presentation/full` (`record.fullPresentation`; 404 when the game has no
+  full projector). The reference host gates nothing; the platform mints keys for the
+  full variants. Full execution artifacts and seed are terminal-only; live views use
+  projectors.
 
 ## Game catalog and replay verification
 

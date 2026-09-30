@@ -314,6 +314,12 @@ export function createProcessMatchRunner(
         ? sampleView(structuredClone(m.snapshot?.view ?? null), now())
         : null;
     },
+    fullView: (id) => {
+      const m = held.get(id);
+      return m && !m.abortion && (!over(m) || m.persisted)
+        ? sampleView(structuredClone(m.snapshot?.fullView ?? null), now())
+        : null;
+    },
   };
 }
 

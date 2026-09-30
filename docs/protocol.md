@@ -171,9 +171,12 @@ transport in the local example when connecting to the reference host.
 
 ## Spectators and replays
 
-Games produce a public view separately from each player's observation. Views use
+Games produce a public view separately from each player's observation, and may add
+a second, complete-info view for gated spectators (`fullView`). Both use
 shared blocks such as text, tables, participants and progress, plus explicit
-win/loss/draw outcomes when the match ends. A viewer renders those blocks without
+win/loss/draw outcomes when the match ends, and the two views report the same
+outcome. Authentication for the complete-info view is a host concern, not part of
+the protocol: the reference host serves it openly. A viewer renders those blocks without
 needing a new interface for every game. Games may also ship an optional browser
 renderer that draws directly from this same `SpectatorView`. It requires no extra
 state or wire fields. Hosts select explicitly registered code using the existing
@@ -185,8 +188,12 @@ blocks available. See the
 The reference host exposes:
 
 - `GET /match/:id/view`: the current public view, or the final view after completion.
+- `GET /match/:id/view/full`: the complete-info view when the game has one, otherwise
+  the public view.
 - `GET /match/:id`: the completed match record.
 - `GET /replay/:id/presentation`: recorded public frames for replay display.
+- `GET /replay/:id/presentation/full`: recorded complete-info frames; `404` for a game
+  without a full projector.
 - `GET /replay/:id`: the completed execution log.
 - `GET /replay/:id/verify`: replay verification against the recorded configuration,
   seed and game revision.

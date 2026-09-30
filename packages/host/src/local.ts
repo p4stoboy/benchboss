@@ -83,6 +83,17 @@ export function buildLocalServer(opts: {
         if (path === "/health") return json({ ok: true, mode: "local" });
         if (path === "/games") return json(registry.list());
         if (path === "/capabilities") return json(SERVER_CAPABILITIES);
+        const viewFull = path.match(/^\/match\/([^/]+)\/view\/full$/);
+        if (viewFull) {
+          const id = decodeURIComponent(viewFull[1] as string);
+          const v = runner.fullView(id);
+          if (v) return json(v, 200, "no-store");
+          const a = await artifacts.get(id);
+          const frames = a?.record.fullPresentation?.frames ?? a?.record.presentation.frames;
+          return frames?.length
+            ? json(frames[frames.length - 1]?.view, 200, "no-store")
+            : json({ error: "not_found" }, 404);
+        }
         const view = path.match(/^\/match\/([^/]+)\/view$/);
         if (view) {
           const id = decodeURIComponent(view[1] as string);
@@ -128,12 +139,17 @@ export function buildLocalServer(opts: {
             return json({ ok: false, detail: String(error) });
           }
         }
-        const replay = path.match(/^\/replay\/([^/]+)(?:\/(presentation))?$/);
+        const replay = path.match(/^\/replay\/([^/]+)(?:\/(presentation)(?:\/(full))?)?$/);
         if (replay) {
           const a = await artifacts.get(decodeURIComponent(replay[1] as string));
           if (!a) return json({ error: "not_found" }, 404);
+          const immutable = "public, max-age=31536000, immutable";
+          if (replay[3])
+            return a.record.fullPresentation
+              ? json(a.record.fullPresentation, 200, immutable)
+              : json({ error: "not_found" }, 404);
           return replay[2]
-            ? json(a.record.presentation, 200, "public, max-age=31536000, immutable")
+            ? json(a.record.presentation, 200, immutable)
             : new Response(a.replayJsonl);
         }
       }
