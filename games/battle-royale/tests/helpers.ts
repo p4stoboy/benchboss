@@ -1,11 +1,13 @@
-import { type SeatId, mkSeatId } from "@benchboss/core";
+import { type SeatId, createRng, mkSeatId } from "@benchboss/core";
 import { gameConfig } from "../../tests/config";
 import { CLASSES, type ClassId } from "../src/classes";
 import { makeBattleRoyale } from "../src/game";
 import type { GameMap, Tile, TileKind } from "../src/map";
 import { plugin } from "../src/plugin";
 import { snapshot } from "../src/resolve";
+import { actingSeat, turnsRemain } from "../src/state";
 import type { BrState, Item, Unit } from "../src/types";
+import { zoneSchedule } from "../src/zone";
 
 export const game = makeBattleRoyale();
 export const seatsOf = (n: number): SeatId[] => Array.from({ length: n }, (_, i) => mkSeatId(i));
@@ -78,12 +80,15 @@ export function scenario(
       units.filter((u) => u.seat === seat).map((u) => u.cls),
     ]),
   ) as BrState["loadouts"];
+  const map = mapFromRows(rows);
+  const rules = overrides.rules ?? { maxRounds: 200, tilesPerSeat: 25 };
   const built: BrState = {
     ...base,
     phase: "orders",
     round: 1,
-    rules: { maxRounds: 200, tilesPerSeat: 25 },
-    map: mapFromRows(rows),
+    rules,
+    map,
+    zones: zoneSchedule(createRng("scenario").fork("zone"), map, rules.maxRounds),
     loadouts,
     units,
     items,
@@ -113,13 +118,43 @@ export const unit = (state: BrState, id: string): Unit => {
   return found;
 };
 
+/** Submits the acting seat's orders and resolves its turn (and the round, when it was the last). */
+export function playTurn(state: BrState, seat: SeatId, orders: unknown): BrState {
+  if (actingSeat(state) !== seat) throw Error(`${seat} is not acting`);
+  const result = game.submit(state, seat, orders, "match.orders");
+  if (!result.accepted) throw Error(`${seat}: ${result.reason}`);
+  return game.step(result.state);
+}
+
+/** Plays out the current round: each seat acts in turn with its orders (none by default). */
 export function submitAll(state: BrState, orders: Record<string, unknown>): BrState {
   let next = state;
-  for (const seat of state.seats) {
-    if (next.teams[seat]?.placement !== null) continue;
-    const result = game.submit(next, seat, orders[seat] ?? { orders: [] }, "match.orders");
-    if (!result.accepted) throw Error(`${seat}: ${result.reason}`);
-    next = result.state;
+  const round = state.round;
+  while (next.phase === "orders" && next.round === round) {
+    const seat = actingSeat(next);
+    if (seat === null || !turnsRemain(next)) {
+      next = game.step(next);
+      continue;
+    }
+    next = playTurn(next, seat, orders[seat] ?? { orders: [] });
   }
-  return game.step(next);
+  return next;
 }
+
+/** Plays empty turns until `seat` is the one to act. */
+export function advanceTo(state: BrState, seat: SeatId): BrState {
+  let next = state;
+  for (let guard = 0; guard < 200 && next.phase === "orders"; guard++) {
+    const acting = actingSeat(next);
+    if (acting === seat && next.pending === null) return next;
+    next =
+      acting === null || !turnsRemain(next)
+        ? game.step(next)
+        : playTurn(next, acting, { orders: [] });
+  }
+  throw Error(`${seat} never gets a turn`);
+}
+
+/** The seat's full observation at its next turn, other seats holding until then. */
+export const observeAt = (state: BrState, seat: SeatId) =>
+  game.observe(advanceTo(state, seat), seat);

@@ -23,7 +23,9 @@ export interface GameMap {
   spawns: Point[][];
 }
 
-export const MAX_HEIGHT = 3;
+/** Rolling ground from noise reaches this height; plateaus rise above it. */
+export const BASE_HEIGHT = 3;
+export const MAX_HEIGHT = 6;
 
 export const key = (p: Point): string => `${p.x},${p.y}`;
 export const chebyshev = (a: Point, b: Point): number =>
@@ -71,7 +73,7 @@ export const NEIGHBOURS: readonly Point[] = [
   { x: 1, y: 1 },
 ];
 
-export const zoneCenter = (map: GameMap): Point => ({
+export const mapCenter = (map: GameMap): Point => ({
   x: Math.floor((map.width - 1) / 2),
   y: Math.floor((map.height - 1) / 2),
 });
@@ -88,8 +90,5 @@ export function zoneRadius(map: GameMap, maxRounds: number, round: number): numb
 }
 
 export const stormDamage = (round: number): number => 1 + Math.floor(round / 10);
-
-export const inZone = (map: GameMap, maxRounds: number, round: number, p: Point): boolean =>
-  chebyshev(zoneCenter(map), p) <= zoneRadius(map, maxRounds, round);
 
 /** Row-major copies: grid[y][x]. */

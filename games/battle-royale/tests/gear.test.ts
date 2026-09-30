@@ -13,7 +13,18 @@ import { LOOT_SPAWN_GAP, itemAt, scatterLoot } from "../src/loot";
 import { chebyshev, key, tileAt } from "../src/map";
 import { plugin } from "../src/plugin";
 import type { BrState, Item } from "../src/types";
-import { flatRows, game, newMatch, reachCosts, scenario, submitAll, unit } from "./helpers";
+import {
+  advanceTo,
+  flatRows,
+  game,
+  newMatch,
+  observeAt,
+  playTurn,
+  reachCosts,
+  scenario,
+  submitAll,
+  unit,
+} from "./helpers";
 
 const s0 = mkSeatId(0);
 const s1 = mkSeatId(1);
@@ -38,12 +49,12 @@ test("every class carries a weapon and an ability and the observation reports bo
   expect(me?.damage).toBe(WEAPONS[CLASSES.sniper.weapon].damage);
   expect(me?.ability).toEqual({ id: CLASSES.sniper.ability, ready: true, readyRound: 1 });
   expect(me?.armour).toBe(0);
-  const seen = game.observe(state, s1).privateState.visibleEnemies[0];
+  const seen = observeAt(state, s1).privateState.visibleEnemies[0];
   expect(seen?.weapon).toBe(CLASSES.sniper.weapon);
   expect(seen?.armour).toBe(0);
 });
 
-test("a health pickup heals up to the maximum, resolves before damage lands and consumes the item", () => {
+test("a health pickup heals up to the maximum before the next team's attack lands and consumes the item", () => {
   const state = scenario(
     flatRows(6, 1),
     [
@@ -87,14 +98,19 @@ test("armour pickups stack to the cap, absorb attack damage first and never stop
   expect(unit(braced, "seat:0/0").armour).toBe(MAX_ARMOUR - damage);
   expect(unit(braced, "seat:0/0").hp).toBe(CLASSES.grunt.hp);
   expect(braced.teams[s1]?.damageDealt).toBe(damage);
-  const closing = {
-    ...scenario(flatRows(9, 9), [
+  // Round 3 of 4 closes the zone to one tile; the schedule is pinned to the centre.
+  const closing = scenario(
+    flatRows(9, 9),
+    [
       { seat: 0, cls: "grunt", x: 0, y: 0, armour: ARMOUR_PICKUP },
       { seat: 1, cls: "grunt", x: 4, y: 4 },
-    ]),
-    rules: { maxRounds: 4, tilesPerSeat: 25 },
-    round: 3,
-  };
+    ],
+    {
+      rules: { maxRounds: 4, tilesPerSeat: 25 },
+      zones: [9, 9, 9, 0].map((radius) => ({ center: { x: 4, y: 4 }, radius })),
+      round: 3,
+    },
+  );
   const stormed = submitAll(closing, {});
   expect(unit(stormed, "seat:0/0").armour).toBe(ARMOUR_PICKUP);
   expect(unit(stormed, "seat:0/0").hp).toBeLessThan(CLASSES.grunt.hp);
@@ -126,7 +142,7 @@ test("a weapon pickup swaps the unit's weapon, leaves the old one behind and cha
     weapon: "railgun",
     dropped: CLASSES.grunt.weapon,
   });
-  const me = game.observe(armed, s0).privateState.units[0];
+  const me = observeAt(armed, s0).privateState.units[0];
   expect(me?.range).toBe(WEAPONS.railgun.range);
   expect(me?.shots["1,0"]).toEqual(["seat:1/0"]);
   const shot = submitAll(armed, {
@@ -211,12 +227,13 @@ test("a grenade lands on a tile in range without sight, hits every unit around i
     from: { x: 0, y: 0 },
     at: { x: 4, y: 0 },
   });
-  const again = orders(thrown, s0, [
+  const cooling = advanceTo(thrown, s0);
+  const again = orders(cooling, s0, [
     { unit: "seat:0/0", action: { kind: "ability", at: { x: 4, y: 0 } } },
   ]);
   expect(again.accepted).toBe(false);
   expect(again.reason).toContain(`round ${1 + ABILITIES.grenade.cooldown + 1}`);
-  expect(game.observe(thrown, s0).privateState.units[0]?.ability.ready).toBe(false);
+  expect(game.observe(cooling, s0).privateState.units[0]?.ability.ready).toBe(false);
 });
 
 test("killing your own unit with a grenade credits no kill and no damage dealt", () => {
@@ -233,7 +250,7 @@ test("killing your own unit with a grenade credits no kill and no damage dealt",
   expect(next.teams[s0]?.damageDealt).toBe(0);
 });
 
-test("brace adds armour before the same round's damage and the ability then cools down", () => {
+test("brace adds armour before the next team's damage and the ability then cools down", () => {
   const state = scenario(flatRows(5, 1), [
     { seat: 0, cls: "vanguard", x: 0, y: 0 },
     { seat: 1, cls: "grunt", x: 3, y: 0 },
@@ -283,14 +300,15 @@ test("camouflage hides a sniper from enemies unless they stand beside it, and it
     { seat: 0, cls: "sniper", x: 0, y: 0 },
     { seat: 1, cls: "grunt", x: 4, y: 0 },
   ]);
-  const hidden = submitAll(state, {
-    [s0]: { orders: [{ unit: "seat:0/0", action: { kind: "ability" } }] },
+  const vanished = playTurn(state, s0, {
+    orders: [{ unit: "seat:0/0", action: { kind: "ability" } }],
   });
-  const blind = game.observe(hidden, s1);
+  const blind = game.observe(vanished, s1);
   expect(blind.privateState.visibleEnemies).toEqual([]);
   // The enemy watched the sniper vanish: the activation is disclosed, nothing after it is.
-  expect(blind.privateState.lastRound.map((e) => e.kind)).toEqual(["ability"]);
-  const later = game.observe(submitAll(hidden, {}), s1);
+  expect(blind.privateState.events.map((e) => e.kind)).toEqual(["turn", "ability"]);
+  const hidden = playTurn(vanished, s1, { orders: [] });
+  const later = observeAt(submitAll(hidden, {}), s1);
   expect(JSON.stringify(later)).not.toContain("seat:0/0");
   expect(
     orders(hidden, s1, [{ unit: "seat:1/0", action: { kind: "attack", target: "seat:0/0" } }])
@@ -300,22 +318,20 @@ test("camouflage hides a sniper from enemies unless they stand beside it, and it
   const adjacent = submitAll(hidden, {
     [s1]: { orders: [{ unit: "seat:1/0", moveTo: { x: 1, y: 0 } }] },
   });
-  expect(game.observe(adjacent, s1).privateState.visibleEnemies.map((u) => u.id)).toEqual([
+  expect(observeAt(adjacent, s1).privateState.visibleEnemies.map((u) => u.id)).toEqual([
     "seat:0/0",
   ]);
   const shot = submitAll(hidden, {
     [s0]: { orders: [{ unit: "seat:0/0", action: { kind: "attack", target: "seat:1/0" } }] },
   });
   expect(unit(shot, "seat:0/0").hiddenUntil).toBe(0);
-  expect(game.observe(shot, s1).privateState.visibleEnemies.map((u) => u.id)).toEqual(["seat:0/0"]);
+  expect(observeAt(shot, s1).privateState.visibleEnemies.map((u) => u.id)).toEqual(["seat:0/0"]);
   let quiet = hidden;
   for (let i = 0; i < ABILITIES.camo.duration; i++) {
-    expect(game.observe(quiet, s1).privateState.visibleEnemies).toEqual([]);
+    expect(observeAt(quiet, s1).privateState.visibleEnemies).toEqual([]);
     quiet = submitAll(quiet, {});
   }
-  expect(game.observe(quiet, s1).privateState.visibleEnemies.map((u) => u.id)).toEqual([
-    "seat:0/0",
-  ]);
+  expect(observeAt(quiet, s1).privateState.visibleEnemies.map((u) => u.id)).toEqual(["seat:0/0"]);
 });
 
 test("recon reveals enemies behind walls and through camouflage for the next orders, then fades", () => {
@@ -330,12 +346,12 @@ test("recon reveals enemies behind walls and through camouflage for the next ord
   const revealed = submitAll(state, {
     [s0]: { orders: [{ unit: "seat:0/0", action: { kind: "ability" } }] },
   });
-  const seen = game.observe(revealed, s0);
+  const seen = observeAt(revealed, s0);
   expect(seen.privateState.visibleEnemies.map((u) => u.id)).toEqual(["seat:1/0"]);
   expect(seen.privateState.units[0]?.shots).toEqual({});
   expect(seen.privateState.visibleEnemies[0]?.x).toBe(3);
   const faded = submitAll(revealed, {});
-  expect(game.observe(faded, s0).privateState.visibleEnemies).toEqual([]);
+  expect(observeAt(faded, s0).privateState.visibleEnemies).toEqual([]);
   expect(faded.reveals).toEqual([]);
 });
 
@@ -393,25 +409,28 @@ test("a team sees items only on tiles it sees now and forgets them the moment th
   expect(grabbed.items).toEqual([{ x: 1, y: 0, kind: "armour" }]);
   expect(game.observe(grabbed, s1).privateState.items).toEqual([]);
   // The wall keeps the armour tile out of seat 1's sight throughout; seat 0 still sees it.
-  expect(game.observe(grabbed, s0).privateState.items).toEqual([{ x: 1, y: 0, kind: "armour" }]);
+  expect(observeAt(grabbed, s0).privateState.items).toEqual([{ x: 1, y: 0, kind: "armour" }]);
   // Once the armour tile leaves seat 0's sight the observation carries no items at all.
   const walledOff = {
     ...grabbed,
     units: grabbed.units.map((u) => (u.seat === s0 ? { ...u, x: 3 } : u)),
   };
-  expect(game.observe(walledOff, s0).privateState.items).toEqual([]);
+  expect(observeAt(walledOff, s0).privateState.items).toEqual([]);
 });
 
 test("a fogged tile is unreachable and rejected identically whether or not an item lies there", () => {
   // The wall hides (6,0) and (6,1) from the grunt at (10,2); both are within its move points.
-  const fog = scenario(
-    ["00000000000", "0000000#000", "0000000#000"],
-    [
-      { seat: 0, cls: "grunt", x: 0, y: 0 },
-      { seat: 1, cls: "grunt", x: 10, y: 2 },
-    ],
-    {},
-    [{ x: 6, y: 1, kind: "health" }],
+  const fog = advanceTo(
+    scenario(
+      ["00000000000", "0000000#000", "0000000#000"],
+      [
+        { seat: 0, cls: "grunt", x: 0, y: 0 },
+        { seat: 1, cls: "grunt", x: 10, y: 2 },
+      ],
+      {},
+      [{ x: 6, y: 1, kind: "health" }],
+    ),
+    s1,
   );
   expect(game.observe(fog, s1).privateState.items).toEqual([]);
   const order = (x: number, y: number, pickup: boolean) =>

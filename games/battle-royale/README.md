@@ -1,15 +1,16 @@
 # Battle Royale
 
 Two to thirty agents each command a team of three armed actors on a fogged,
-seeded heightmap scattered with loot. Every team submits its orders at the same
-time; movement, pickups, attacks, class abilities and heals resolve together,
-then a closing storm damages anyone outside the zone. The last team with a
-living unit wins. Combat is deterministic; the match seed only shapes the map,
-loot, spawn assignment and nothing else.
+seeded heightmap scattered with loot. Teams act one at a time in a rotating
+initiative: the acting team's movement, pickups, attacks, class abilities and
+heals resolve in full before the next team looks at the board and orders. Once
+every team has acted, a closing storm damages anyone outside the zone. The last
+team with a living unit wins. Combat is deterministic; the match seed only
+shapes the map, loot, spawn assignment and nothing else.
 
-Game ID: `battle-royale`. Revision: `2.2.0`. Seats: 2–30 (default 4). Records
-made under revision `1.0.0` keep their identity: their frames still render, and
-re-executing them names an unavailable revision rather than these rules.
+Game ID: `battle-royale`. Revision: `3.1.0`. Seats: 2–30 (default 4). Records
+made under an earlier revision keep their identity: their frames still render,
+and re-executing them names an unavailable revision rather than these rules.
 
 ## Connect an agent
 
@@ -20,9 +21,15 @@ Start the reference host from the repository root and enqueue with
 bun examples/local-server.ts
 ```
 
-Use the normal BenchBoss next/submit flow. Both phases are simultaneous: every
-team receives a `turn` at once and the phase resolves when the last order (or
-default) is in.
+Use the normal BenchBoss next/submit flow. The loadout phase is simultaneous:
+every team receives a `turn` at once and it resolves when the last pick (or
+default) is in. From then on only one team acts at a time: you receive a `turn`
+when it is yours, your orders resolve the moment they are accepted, and the
+turn passes to the next team in `turnOrder`. Polling while another team acts
+returns a trimmed, waiting observation. Every turn is its own decision with a
+30-second limit, inference and transport included, so answer from the
+observation in hand rather than deliberating; silence commits your safe default
+and play moves on.
 
 ## Rules
 
@@ -30,16 +37,22 @@ Rule object (all fields optional):
 
 - `maxRounds`: integer 4–200, default 40. The zone closes to a single tile at
   three quarters of this value and the match ends at the cap.
-- `tilesPerSeat`: integer 9–600, default 300. The map is the smallest near-square
-  grid with at least `tilesPerSeat × seats` tiles, so two teams get 25x24 and thirty
-  get 95x95. Teams never see the whole map, so the allowance sets how much ground
+- `tilesPerSeat`: integer 9–1200, default 600. The map is the smallest near-square
+  grid with at least `tilesPerSeat × seats` tiles, so two teams get 35x35 and thirty
+  get 135x134. Teams never see the whole map, so the allowance sets how much ground
   there is to scout rather than how much an agent reads.
 
 ### Map
 
-- Tiles have an integer height 0–3 and a kind: `.` open, `+` cover, `#` wall.
-  Terrain is static but fogged: a team learns tiles only by seeing them and is
-  expected to remember them. Only the map size and the zone centre are public.
+- Tiles have an integer height 0–6 and a kind: `.` open, `+` cover, `#` wall.
+  Rolling ground runs 0–3; plateaus rise two or three levels above it with
+  cliff faces that cannot be climbed and at least one ramp each, so high ground
+  is worth holding and its approaches are worth watching. Every walkable tile
+  can be reached from every other: stranded ground gets a stair carved to it, a
+  small bump or pit is levelled, and a map with an unreachable pocket left is
+  never played. Terrain is static but fogged: a team learns tiles only by seeing them
+  and is expected to remember them. Only the map size and the zone centre are
+  public.
 - Eight-way movement. A step onto a tile one level higher costs 2 move points,
   any other step costs 1, walls and height differences of 2 or more are impassable.
   Movement is planned over the tiles the team can see now: fog is impassable
@@ -51,12 +64,13 @@ Rule object (all fields optional):
   line of sight. A team sees the union of its living units' vision.
 - No team can see another at spawn. Spawns are placed farthest-point first: one
   seeded origin on the outer ring, then each next team on the tile that no placed
-  spawn tile can see (the best class vision from the highest tile, 11) and that is
-  farthest from all placed teams. A generated map is rejected and retried when
-  spawns are not mutually reachable, when any spawn tile can see another team's,
-  when two teams' nearest tiles are closer than 4, or when fewer than 5% of its
-  tiles are cover or wall; after 24 attempts a flat open map with spread spawns is
-  used, which only happens when `tilesPerSeat` is far below the default.
+  spawn tile could see or be seen from (the best class vision plus the higher of
+  the two tiles, with line of sight) and that is farthest from all placed teams.
+  A generated map is rejected and retried when any walkable tile is unreachable,
+  when any spawn tile can see another team's, when two teams' nearest tiles are
+  closer than 4, or when fewer than 5% of its tiles are cover or wall; after 24
+  attempts a flat open map with spread spawns is used, which only happens when
+  `tilesPerSeat` is far below the default.
 
 ### Classes and loadout
 
@@ -131,7 +145,17 @@ items are never lost. Spectators see loot only in the terminal frame.
 
 ### Rounds
 
-Every living team submits `match.orders` with at most one order per unit:
+A round gives every living team one turn, in initiative order. The initiative
+rotates one seat per round (round 1 starts at seat 0, round 2 at seat 1, and so
+on, skipping eliminated teams) and is listed with each team's standing in the
+observation's `turnOrder`: `acted` teams have already moved this round, the
+`acting` team is ordering now, `waiting` teams act after it and `skipped` teams
+lost their last unit before their turn came. A team whose last unit falls stays
+on the board, without a turn, until the round ends; a round also ends early
+when only one team still fields a unit.
+
+On its turn the acting team submits `match.orders` with at most one order per
+unit:
 
 ```json
 {
@@ -144,6 +168,8 @@ Every living team submits `match.orders` with at most one order per unit:
 }
 ```
 
+- Everything in the observation is current: enemies stand where earlier teams
+  left them this round, and your orders are checked against that board.
 - `moveTo` must be a digit tile in that unit's `reach` grid from the
   observation; the digit is the move points it spends. Units may cross allies
   but not stop on them; visible enemies block.
@@ -164,28 +190,37 @@ Every living team submits `match.orders` with at most one order per unit:
 - Orders that break these rules are rejected with a reason and cost one of two
   retries per decision; exhausting them commits the safe default.
 
-Resolution order:
+Resolution of a turn, immediately after the orders are accepted and before the
+next team observes:
 
-1. Movement, one team at a time in initiative order (the initiative rotates one
-   seat per round and is listed in the observation), units in the order given.
-   A unit walks through allies but stops in front of any other unit, hidden
-   enemies included, and in front of anyone standing on its destination.
+1. First legs, units in the order given. A unit walks through allies but stops
+   in front of any other unit, hidden enemies included, and in front of anyone
+   standing on its destination.
 2. Pickups, brace, camo and recon, in the same order. A pickup whose unit was
    stopped short of its item, or whose item is no longer there, fizzles.
-3. Attacks, grenades, volleys and heals against first-leg positions, all at
-   once. An attack whose target is dead, out of range or out of sight fizzles;
-   a grenade thrown from a unit stopped out of range fizzles. Your observation
-   reports a fizzle against an enemy only as `missed`; fizzles on your own units
-   and pickups keep their reason. Damage and healing are summed before anyone
-   dies, so mutual kills are possible. Kills and damage dealt credit only hits on
-   enemies; hurting or killing your own unit credits nobody.
-4. Second legs (`thenTo`), in the same initiative and order sequence as step 1
-   and stopping before occupied tiles the same way. A unit that died, or that
-   was stopped short of its first destination, forfeits its second leg.
-5. Storm: every unit outside the safe zone after its final movement takes
-   `1 + floor(round / 10)` damage, ignoring armour. The zone is a Chebyshev
-   square around the map centre that shrinks linearly to the centre tile at
-   three quarters of `maxRounds`.
+3. Attacks, grenades, volleys and heals from first-leg positions. An attack
+   whose target is dead, out of range or out of sight fizzles; a grenade thrown
+   from a unit stopped out of range fizzles. Your observation reports a fizzle
+   against an enemy only as `missed`; fizzles on your own units and pickups keep
+   their reason. The turn's damage and healing are summed per unit before
+   deaths, so two of your units may finish one target together. Damage lands
+   now: a unit killed here is gone before its own team's turn. Kills and damage
+   dealt credit only hits on enemies; hurting or killing your own unit credits
+   nobody.
+4. Second legs (`thenTo`), in the same order and stopping before occupied
+   tiles the same way. A unit that died, or that was stopped short of its first
+   destination, forfeits its second leg.
+
+At the end of the round, after the last turn:
+
+5. Storm: every unit outside the safe zone takes `1 + floor(round / 10)`
+   damage, ignoring armour. The zone is a Chebyshev square that shrinks linearly
+   to a single tile at three quarters of `maxRounds`. Round 1 covers the whole
+   map around its centre; every later stage lies inside the one before but its
+   centre drifts by a seeded offset of up to the shrink, so the final tile can
+   be anywhere and is only revealed one stage ahead. The observation's `zone`
+   gives the current centre and radius and the next stage's `nextCenter` and
+   `nextRadius`.
 6. Teams with no living unit are eliminated together and share placement
    `1 + teams still alive`.
 
@@ -199,8 +234,9 @@ points of the placements they share.
 - Loadout phase: three grunts.
 - Orders phase: every unit moves to the reachable tile least exposed to next
   round's storm and takes no action.
-- Decision limit: 60 seconds per phase; no player total by default. If a host
-  configures one, running out eliminates the team immediately.
+- Decision limit: 30 seconds per turn; no player total by default. If a host
+  configures one, only the acting team's clock runs, and running out eliminates
+  the team immediately, its pending orders discarded.
 
 ### All chat
 
@@ -220,14 +256,17 @@ reference data is sent once, and a seat that has already committed for the
 current phase receives a trimmed observation until the round resolves.
 
 `publicState`: round, `maxRounds`, `map` (`width` and `height` only), `zone`
-(centre, current and next radius, current and next storm damage), `teams`
-(units alive and placement per seat) and `initiative`. During the loadout phase
-only, `catalog` carries the class, weapon and ability tables, `maxArmour`,
-`budget` and `teamSize`; agents keep it.
+(`center` and `radius` now, `nextCenter` and `nextRadius` for the next round,
+current and next storm damage), `teams`
+(units alive and placement per seat) and `turnOrder` (every living team in
+this round's initiative order with its standing: `acted`, `acting`, `waiting`
+or `skipped`; empty outside the orders phase). During the loadout phase only,
+`catalog` carries the class, weapon and ability tables, `maxArmour`, `budget`
+and `teamSize`; agents keep it.
 
-`privateState`: `committed` (true once your envelope for this phase was
-accepted, or when you are eliminated or the match is over; every field below is
-then null or empty); your `loadout`; `view`, the bounding box of the tiles your
+`privateState`: `committed` (true whenever it is not your turn: your envelope
+for this phase was accepted, another team is acting, you are eliminated or the
+match is over; every field below is then null or empty); your `loadout`; `view`, the bounding box of the tiles your
 team can see now as `{x, y, terrain, heights}` where `terrain` and `heights` are
 one string per row from that origin, `.`/`+`/`#` for open/cover/wall and a digit
 for height, with `?` on tiles outside your vision (null when you see nothing);
@@ -239,12 +278,17 @@ own tile and `.` where it cannot end this round) and `shots` (destinations
 with at least one attackable visible enemy, keyed `x,y`, each listing the
 attackable ids for the unit's current weapon); `visibleEnemies` with their
 armour and weapon; `items` as `{x, y, kind, weapon?}` for every item on a tile
-you can see now; `lastRound` events involving your
+you can see now; `events`, everything that happened since your previous turn
+(that turn included, so you see how your own orders resolved) involving your
 units or tiles you can see now; and `chat`, filled only in the turn after a
-kill. A `move` event carries the tiles walked in order; a move whose destination
-you can see discloses its whole path. An `ability` event is disclosed when its
-origin tile is visible, so an enemy watches a sniper vanish but learns nothing
-after. What your team saw in earlier rounds is not repeated; remember it.
+kill. Each team's turn opens with a `turn` event naming the seat; the events
+that follow it up to the next marker are that team's, and the storm and
+eliminations close the round. A `move` event carries the tiles walked in
+order; a move whose destination you can see discloses its whole path. An
+`ability` event is disclosed when its origin tile is visible, so an enemy
+watches a sniper vanish but learns nothing after. Events are filtered by what
+you can see now, not what you could see when they happened, and what your team
+saw at earlier turns is not repeated; remember it.
 
 ## Spectator views
 
@@ -263,22 +307,29 @@ with `kinds[code % kinds.length]` and `floor(code / kinds.length)`; a new
 terrain kind is appended to the list, so old frames decode with their own
 legend. The map unfogs as teams explore. It is the union of every team's
 discoveries, so a spectator can know more of the map than any one team. Frames
-also carry team unit counts, the round, zone radius, storm damage, eliminations
-and the recent all chat. A command that changes nothing a spectator sees, such as
-a clock advance, records no frame, and a recorded frame carries only the blocks
+also carry team unit counts, the round, the zone centre and radius now and next
+round, storm damage, eliminations and the recent all chat. `Turn order` lists the living teams in this round's
+initiative order as `<seat> <standing>` (`acted`, `acting`, `waiting` or
+`skipped`; empty outside the orders phase), and each team's `Teams` status
+repeats its standing, so a renderer knows who acts next without the rotation
+rule. A command that changes nothing
+a spectator sees, such as a clock advance, records no frame, and a recorded frame carries only the blocks
 that changed (fold frames forward with `foldFrames` to read the view at any
 point). Unit positions, loot, rosters and the unexplored map stay hidden until
 the terminal view, which is information-complete for a broadcaster:
 
 - `Loadouts`: seat, actors.
-- `Rounds`: one row per history entry with round, zone radius and storm damage.
-  Entry 0 is the spawn; a host forfeit inside a round adds an entry with that
-  round's number.
+- `Rounds`: one row per history entry with round, zone centre x and y, zone
+  radius and storm damage.
+  Entry 0 is the spawn and carries any loadout-phase forfeits; every round
+  played adds one entry, closed at round end or by the host forfeit that ends
+  the match.
 - `Units`: entry, unit, seat, class, x, y, hp, armour, weapon, ready round,
   hidden until for every living unit after that entry.
 - `Loot`: entry, x, y, item for every item still on the ground after that entry.
 - `Events`: entry, kind, unit, target, seat, from x/y, at x/y, value, note, path
-  for every move (note `blocked`; path = every tile stepped onto as space-separated
+  for every turn marker (seat = the team whose orders follow), move (note
+  `blocked`; path = every tile stepped onto as space-separated
   `x,y`, ending at the destination), attack/heal/blast (value = damage/amount),
   ability (note = ability id; target or at when it has one), pickup (note = item,
   `weapon:<id>` for weapons; value = the weapon left behind), fizzle (note =
@@ -288,20 +339,21 @@ the terminal view, which is information-complete for a broadcaster:
 
 ### Full view
 
-The folded view carries the whole match state, in this order: `Teams` and `Round`
-(as public); `Scores` (seat, living units, kills, damage dealt, placement or
+The folded view carries the whole match state, in this order: `Teams`, `Round`
+and `Turn order` (as public); `Scores` (seat, living units, kills, damage dealt, placement or
 blank); `Terrain kinds` and the whole `Map` from the first frame; `Units` (unit,
 seat, class, x, y, hp, armour, weapon, ready round, hidden until) for every
 living unit, camouflaged ones included; `Loot` (x, y, item) for every item on
 the ground; `Orders` (seat, unit, move to, then to, action, target, at) for
-every order accepted so far this round, empty again once the round resolves;
+every turn resolved so far this round, empty again once the round ends;
 `Vision` (seat, y, row) with one row per living team per map row, `#` where the
 team sees the tile and `.` elsewhere, recon discs included; `Recon` (seat, x, y,
-radius, until round) for active reveals; `Events` for the round just resolved,
-in the terminal `Events` layout; `Eliminations` (as public); and the whole
-`Chat` log. A frame is recorded after every command that changes any of this,
-so a full replay has a frame per accepted order; an order frame carries `Orders`
-and the seat's `Teams` status, a resolution frame the blocks the round moved.
+radius, until round) for active reveals; `Events` in the terminal `Events`
+layout for the previous round (under its history entry number) followed by
+this round so far (under the entry it will become); `Eliminations` (as public);
+and the whole `Chat` log. A frame is recorded after every command that changes
+any of this, so a full replay has a frame per turn carrying the blocks that
+turn moved; the last turn's frame also carries the round end.
 The terminal frame appends the public history tables as `Loadouts`, `Rounds`,
 `Units by entry`, `Loot by entry` and `Events by entry`, so the two terminal views
 disclose the same information.

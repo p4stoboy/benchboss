@@ -13,7 +13,8 @@ test("every advertised seat count initializes and defaults progress to explicit 
       const seats = Array.from({ length: count }, (_, i) => mkSeatId(i));
       const game = plugin.makeGame();
       let state = game.newMatch(gameConfig(plugin.manifest, "catalog", seats), "catalog-seed");
-      for (let guard = 0; guard < 100 && !game.isTerminal(state); guard++) {
+      // A sequential game spends one iteration per seat turn: the bound covers the longest catalog match.
+      for (let guard = 0; guard < 10_000 && !game.isTerminal(state); guard++) {
         for (const seat of seats) {
           const actions = game.legalActions(state, seat);
           if (!actions.length) continue;

@@ -1,14 +1,14 @@
 import type { SeatId } from "@benchboss/core";
 import type { ActionInvocation } from "@benchboss/protocol";
 import { DEFAULT_ROSTER } from "./classes";
-import { chebyshev, zoneCenter, zoneRadius } from "./map";
+import { chebyshev } from "./map";
 import { isEliminated, plans } from "./state";
 import type { BrState, UnitOrder } from "./types";
+import { zoneAt } from "./zone";
 
 /** Every unit heads for the tile that leaves it least exposed to next round's storm. */
 export function defaultOrders(state: BrState, seat: SeatId): UnitOrder[] {
-  const center = zoneCenter(state.map);
-  const radius = zoneRadius(state.map, state.rules.maxRounds, state.round + 1);
+  const { center, radius } = zoneAt(state, state.round + 1);
   const exposure = (p: { x: number; y: number }): number =>
     Math.max(0, chebyshev(center, p) - radius);
   return plans(state, seat).flatMap(({ unit, reaches }) => {

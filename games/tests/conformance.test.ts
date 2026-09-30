@@ -15,7 +15,7 @@ interface ReducedMatrix {
 }
 const REDUCED: Record<string, ReducedMatrix> = {
   "battle-royale": {
-    seatCounts: [2, 5, 12],
+    seatCounts: [2],
     options: { seeds: seeds.slice(0, 3), rules: [{ maxRounds: 8, tilesPerSeat: 9 }] },
   },
 };
