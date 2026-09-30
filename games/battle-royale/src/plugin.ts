@@ -17,6 +17,7 @@ import {
   BR_RULES_SCHEMA,
   MAX_SEATS,
   MIN_SEATS,
+  canOrder,
   isReady,
   makeBattleRoyale,
   recentChat,
@@ -24,7 +25,7 @@ import {
 import { itemLabel } from "./loot";
 import { TILE_KINDS, stormDamage, tileCode, zoneRadius } from "./map";
 import { forfeitSeats } from "./resolve";
-import { aliveSeats, isEliminated, ownUnits, unitById, visionOf } from "./state";
+import { aliveSeats, isEliminated, ownUnits, turnOrder, unitById, visionOf } from "./state";
 import type { BrState, Point, RoundEvent } from "./types";
 
 // The runtime spends an action on every call, rejected or not, so the phase allowance must
@@ -194,6 +195,8 @@ function eventRow(entry: number, event: RoundEvent): (string | number)[] {
       return cells("death", event.unit, "", "", null, event.at, "", "", "");
     case "eliminated":
       return cells("eliminated", "", "", event.seat, null, null, event.placement, "", "");
+    case "turn":
+      return cells("turn", "", "", event.seat, null, null, "", "", "");
   }
 }
 
@@ -291,12 +294,14 @@ export function brPublicView(state: BrState): SpectatorView {
       return `Round ${record?.eliminatedRound ?? "-"}: ${seat} out (${ordinal(record?.placement ?? 0)})`;
     });
   const columns = Array.from({ length: state.map.width }, (_, x) => String(x));
+  const standing = new Map(turnOrder(state).map((t) => [t.seat, t.status]));
   const blocks: SpectatorView["blocks"] = [
     {
       kind: "participants",
       title: "Teams",
       seats: state.seats.map((seat) => {
         const record = state.teams[seat];
+        const status = standing.get(seat);
         return {
           seat,
           status:
@@ -306,7 +311,7 @@ export function brPublicView(state: BrState): SpectatorView {
                 ? state.loadouts[seat]
                   ? "ready"
                   : "choosing loadout"
-                : `${ownUnits(state, seat).length} units${state.orders[seat] ? ", orders in" : ""}`,
+                : `${ownUnits(state, seat).length} units${status ? `, ${status}` : ""}`,
         };
       }),
     },
@@ -349,8 +354,8 @@ export function brPublicView(state: BrState): SpectatorView {
 }
 
 const orderRows = (state: BrState): (string | number)[][] =>
-  state.seats.flatMap((seat) =>
-    (state.orders[seat]?.orders ?? []).map((o) => [
+  state.turns.flatMap(({ seat, orders }) =>
+    orders.map((o) => [
       seat,
       o.unit,
       o.moveTo ? `${o.moveTo.x},${o.moveTo.y}` : "",
@@ -373,9 +378,10 @@ const visionRows = (state: BrState): (string | number)[][] =>
 
 /**
  * Complete-info projection, every frame: the whole map, every living unit (camouflaged ones
- * too), every item, the orders accepted so far this round, each living team's vision, active
- * recon discs and the last round's events. Nothing is hidden; the platform gates who reads it.
- * At terminal the public history tables follow, so the two terminal frames are at parity.
+ * too), every item, the orders of every turn resolved so far this round, each living team's
+ * vision, active recon discs and the events of the previous round and this one. Nothing is
+ * hidden; the platform gates who reads it. At terminal the public history tables follow, so the
+ * two terminal frames are at parity.
  */
 export function brFullView(state: BrState): SpectatorView {
   const base = brPublicView(state);
@@ -385,7 +391,8 @@ export function brFullView(state: BrState): SpectatorView {
     return block;
   };
   const columns = Array.from({ length: state.map.width }, (_, x) => String(x));
-  const entry = state.history.length - 1;
+  // The previous round sits in the last history entry; this round's events will form the next.
+  const entry = state.history.length;
   return {
     ...base,
     blocks: [
@@ -465,7 +472,10 @@ export function brFullView(state: BrState): SpectatorView {
         kind: "table",
         title: "Events",
         columns: EVENT_COLUMNS,
-        rows: state.lastRound.map((event) => eventRow(entry, event)),
+        rows: [
+          ...state.lastRound.map((event) => eventRow(entry - 1, event)),
+          ...state.events.map((event) => eventRow(entry, event)),
+        ],
       },
       keep("Eliminations"),
       {
@@ -489,10 +499,10 @@ export const plugin = {
   manifest: {
     protocolVersion: 1,
     id: BR_GAME_ID,
-    revision: "2.2.0",
+    revision: "3.0.0",
     title: "Battle Royale",
     description:
-      "Teams of three armed actors with class abilities fight over loot on a fogged heightmap; simultaneous orders, a closing storm and last team standing.",
+      "Teams of three armed actors with class abilities fight over loot on a fogged heightmap; one team acts at a time in rotating initiative, a closing storm and last team standing.",
     rulesSource: "games/battle-royale/README.md",
     seatCounts: Array.from({ length: MAX_SEATS - MIN_SEATS + 1 }, (_, i) => MIN_SEATS + i),
     defaultSeats: 4,
@@ -508,7 +518,7 @@ export const plugin = {
       },
       {
         phase: "orders",
-        what: "Every living team submits one order per unit: a move plus an attack, class ability, loot pickup or hold. Movement resolves in rotating initiative, pickups and self-abilities apply, attacks, blasts and heals land simultaneously, then the storm damages units outside the zone. Repeats until one team remains or the round cap.",
+        what: "Teams act one at a time in rotating initiative. The acting team submits one order per unit (a move plus an attack, class ability, loot pickup or hold) and its orders resolve at once: movement, pickups and self-abilities, attacks, blasts and heals with immediate damage, then second legs. The next team observes the result before it acts. Once every team has acted the storm damages units outside the zone and empty teams are eliminated together. Repeats until one team remains or the round cap.",
       },
     ],
     winConditions: [
@@ -516,7 +526,7 @@ export const plugin = {
       "At the round cap, survivors rank by living units, then total hit points, then damage dealt.",
     ],
     safeDefaults: [
-      "A missing loadout fields three grunts. Missing orders move every unit toward the safe zone without attacking. Player time exhaustion eliminates the team.",
+      "A missing loadout fields three grunts. Missing orders on a team's turn move every unit toward the safe zone without attacking. Player time exhaustion eliminates the team.",
     ],
     disclosure: "full-after-terminal",
   },
@@ -532,8 +542,7 @@ export const plugin = {
   participation: (state: BrState, seat: SeatId): Participation => {
     if (isEliminated(state, seat)) return { status: "finished", reason: "eliminated" };
     const acting =
-      (state.phase === "loadout" && state.loadouts[seat] === undefined) ||
-      (state.phase === "orders" && state.orders[seat] === undefined);
+      (state.phase === "loadout" && state.loadouts[seat] === undefined) || canOrder(state, seat);
     return { status: acting ? "acting" : "waiting" };
   },
   onHostEvent: (state: BrState, event: HostEvent): BrState =>

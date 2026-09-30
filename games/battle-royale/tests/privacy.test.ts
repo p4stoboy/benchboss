@@ -3,9 +3,18 @@ import { createRng, mkSeatId } from "@benchboss/core";
 import { renderSpectatorView } from "@benchboss/viewer";
 import { type Tile, type TileKind, key } from "../src/map";
 import { plugin } from "../src/plugin";
-import { visionOf } from "../src/state";
+import { actingSeat, turnsRemain, visionOf } from "../src/state";
 import type { BrState } from "../src/types";
-import { flatRows, game, newMatch, reachCosts, scenario, submitAll } from "./helpers";
+import {
+  flatRows,
+  game,
+  newMatch,
+  observeAt,
+  playTurn,
+  reachCosts,
+  scenario,
+  submitAll,
+} from "./helpers";
 import { randomOrders } from "./random-orders";
 
 const s0 = mkSeatId(0);
@@ -83,8 +92,8 @@ function assertObservationPrivacy(state: BrState, seat: ReturnType<typeof mkSeat
   for (const item of state.items)
     if (seen.has(key(item))) expect(observation.privateState.items).toContainEqual(item);
   expect(JSON.stringify(observation.publicState)).not.toContain('"items"');
-  for (const event of observation.privateState.lastRound) {
-    if (event.kind === "eliminated") continue;
+  for (const event of observation.privateState.events) {
+    if (event.kind === "eliminated" || event.kind === "turn") continue;
     if (own.has(event.unit) || ("target" in event && own.has(event.target ?? ""))) continue;
     if (event.kind === "move") expect(seen.has(key(event.to))).toBe(true);
     if (event.kind === "attack" || event.kind === "heal") {
@@ -145,7 +154,7 @@ const itemsOf = (view: View, title: string): string[] => {
   return block && "items" in block ? block.items : [];
 };
 
-/** The full view is complete and current: whole map, every living unit, item, order, vision row and reveal. */
+/** The full view is complete and current: whole map, every living unit, item, resolved order, vision row and reveal. */
 function assertFullView(state: BrState): void {
   const view = plugin.fullView(state);
   const pub = plugin.publicView(state);
@@ -154,9 +163,7 @@ function assertFullView(state: BrState): void {
     state.units.filter((u) => u.alive).map((u) => [u.id, u.x, u.y, u.hiddenUntil]),
   );
   expect(rowsOf(view, "Loot").map((r) => [r[0], r[1]])).toEqual(state.items.map((i) => [i.x, i.y]));
-  expect(rowsOf(view, "Orders")).toHaveLength(
-    Object.values(state.orders).reduce((n, o) => n + o.orders.length, 0),
-  );
+  expect(rowsOf(view, "Orders")).toHaveLength(state.turns.reduce((n, t) => n + t.orders.length, 0));
   const vision = rowsOf(view, "Vision");
   for (const seat of state.seats) {
     const mine = vision.filter((r) => r[0] === seat);
@@ -174,7 +181,10 @@ function assertFullView(state: BrState): void {
       .filter((r) => r.untilRound >= state.round)
       .map((r) => [r.seat, r.center.x, r.center.y, r.radius, r.untilRound]),
   );
-  expect(rowsOf(view, "Events")).toHaveLength(state.lastRound.length);
+  expect(rowsOf(view, "Events").map((r) => r[0])).toEqual([
+    ...state.lastRound.map(() => state.history.length - 1),
+    ...state.events.map(() => state.history.length),
+  ]);
   expect(itemsOf(view, "Chat")).toHaveLength(state.chat.length);
   expect(view.result).toEqual(pub.result);
   expect(view.progress).toEqual(pub.progress);
@@ -242,7 +252,7 @@ test("the live spectator map reveals tiles as teams see them and stays revealed;
   expect(rowsOf(full, "Events by entry")).toEqual(rowsOf(pub, "Events"));
 });
 
-test("the full view lists orders as they arrive and clears them at resolution; camouflage and recon are shown", () => {
+test("the full view lists each resolved turn's orders and clears them at round end; camouflage and recon are shown", () => {
   const state = scenario(
     ["000000", "000000"],
     [
@@ -270,17 +280,27 @@ test("the full view lists orders as they arrive and clears them at resolution; c
   );
   expect(submitted.accepted).toBe(true);
   assertFullView(submitted.state);
-  expect(rowsOf(plugin.fullView(submitted.state), "Orders")).toEqual([
-    [s0, "seat:0/0", "1,0", "", "pickup", "", ""],
-  ]);
-  const other = game.submit(submitted.state, s1, { orders: [] }, "match.orders");
-  expect(other.accepted).toBe(true);
-  const resolved = game.step(other.state);
+  expect(rowsOf(plugin.fullView(submitted.state), "Orders")).toEqual([]);
+  const resolved = game.step(submitted.state);
   assertFullView(resolved);
-  const after = plugin.fullView(resolved);
+  const during = plugin.fullView(resolved);
+  expect(rowsOf(during, "Orders")).toEqual([[s0, "seat:0/0", "1,0", "", "pickup", "", ""]]);
+  expect(rowsOf(during, "Events").map((r) => [r[0], r[1]])).toEqual([
+    [1, "turn"],
+    [1, "move"],
+    [1, "pickup"],
+  ]);
+  expect(rowsOf(during, "Loot")).toEqual([]);
+  const ended = playTurn(resolved, s1, { orders: [] });
+  assertFullView(ended);
+  const after = plugin.fullView(ended);
   expect(rowsOf(after, "Orders")).toEqual([]);
-  expect(rowsOf(after, "Events").map((r) => r[1])).toContain("pickup");
-  expect(rowsOf(after, "Loot")).toEqual([]);
+  expect(rowsOf(after, "Events").map((r) => [r[0], r[1]])).toEqual([
+    [1, "turn"],
+    [1, "move"],
+    [1, "pickup"],
+    [1, "turn"],
+  ]);
 });
 
 test("shots never read unseen terrain: a fogged cell on the sight line neither offers nor withholds a target", () => {
@@ -317,7 +337,7 @@ test("shots never read unseen terrain: a fogged cell on the sight line neither o
     target: "seat:1/0",
     reason: "no line of sight",
   });
-  expect(game.observe(fizzled, s0).privateState.lastRound).toContainEqual({
+  expect(observeAt(fizzled, s0).privateState.events).toContainEqual({
     kind: "fizzle",
     unit: "seat:0/0",
     target: "seat:1/0",
@@ -355,16 +375,11 @@ test("an enemy that walks out of view leaves no trace in the next observation", 
       { seat: 1, cls: "scout", x: 3, y: 0 },
     ],
   );
-  const start = game.step({
-    ...state,
-    orders: { [s0]: { orders: [] }, [s1]: { orders: [] } },
-    paths: {},
-  });
-  expect(game.observe(start, s0).privateState.visibleEnemies).toHaveLength(1);
-  const after = submitAll(start, {
+  expect(game.observe(state, s0).privateState.visibleEnemies).toHaveLength(1);
+  const after = submitAll(state, {
     [s1]: { orders: [{ unit: "seat:1/0", moveTo: { x: 9, y: 0 } }] },
   });
-  const observation = game.observe(after, s0);
+  const observation = observeAt(after, s0);
   expect(observation.privateState.visibleEnemies).toEqual([]);
   expect(JSON.stringify(observation)).not.toContain("seat:1/0");
 });
@@ -385,7 +400,6 @@ test("live public views depend only on disclosed state; terminal views disclose 
     loadouts: {},
     lastRound: [{ kind: "death", unit: "seat:0/0", at: { x: 1, y: 1 } }],
     history: [],
-    paths: {},
     items: [],
   };
   expect(plugin.publicView(scrambled)).toEqual(plugin.publicView(state));
@@ -435,6 +449,11 @@ test("generated matches never leak unseen positions through observations or live
     state = game.step(state);
     const everSeen = new Set<string>();
     while (state.phase === "orders") {
+      const acting = actingSeat(state);
+      if (acting === null || !turnsRemain(state)) {
+        state = game.step(state);
+        continue;
+      }
       for (const seat of state.seats) assertObservationPrivacy(state, seat);
       assertSpectatorFog(state);
       assertFullView(state);
@@ -449,12 +468,7 @@ test("generated matches never leak unseen positions through observations or live
         history: [],
       };
       expect(plugin.publicView(hidden)).toEqual(plugin.publicView(state));
-      const orders = Object.fromEntries(
-        state.seats
-          .filter((seat) => state.teams[seat]?.placement === null)
-          .map((seat) => [seat, randomOrders(state, seat, rng)]),
-      );
-      state = submitAll(state, orders);
+      state = playTurn(state, acting, randomOrders(state, acting, rng));
     }
     expect(state.phase).toBe("terminal");
     assertFullView(state);

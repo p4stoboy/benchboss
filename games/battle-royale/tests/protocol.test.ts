@@ -54,7 +54,7 @@ test("the manifest advertises every seat count from two to thirty and a loadout 
   for (const cls of CLASS_IDS) expect(plugin.manifest.roundStructure[0]?.what).toContain(cls);
 });
 
-test("the referee rejects malformed loadouts before metering and moves every seat into orders together", () => {
+test("the referee rejects malformed loadouts before metering and then offers orders to the first seat only", () => {
   const initial = step(session(), { kind: "advanceTime", at: 0 }).session;
   for (const input of [
     null,
@@ -87,8 +87,9 @@ test("the referee rejects malformed loadouts before metering and moves every sea
       participation: { status: string };
       actionOffers: { tool: string }[];
     };
-    expect(view.participation.status).toBe("acting");
-    expect(view.actionOffers.map((o) => o.tool)).toEqual(["match.orders"]);
+    const acting = seat === seats[0];
+    expect(view.participation.status).toBe(acting ? "acting" : "waiting");
+    expect(view.actionOffers.map((o) => o.tool)).toEqual(acting ? ["match.orders"] : []);
   }
 });
 
@@ -113,16 +114,26 @@ test("schema-valid but illegal orders spend retries and exhaustion commits the s
     input: illegal,
   });
   expect(third.output).toMatchObject({ ok: true, reason: "safe default committed" });
-  expect(third.session.state.orders[seat]).toBeDefined();
+  expect(third.session.state.turns.map((t) => t.seat)).toEqual([seat]);
   expect(sessionLog(third.session).some((e) => e.kind === "action.default")).toBe(true);
+  // A seat that is not acting has no offer: its call is refused without a charge.
   const other = seats[1] as never;
-  const accepted = step(started, {
+  const early = step(started, {
+    kind: "callTool",
+    seat: other,
+    tool: "match.orders",
+    input: { orders: [] },
+  });
+  expect(early.output.ok).toBe(false);
+  expect(early.session.resources).toEqual(started.resources);
+  const accepted = step(third.session, {
     kind: "callTool",
     seat: other,
     tool: "match.orders",
     input: { orders: [] },
   });
   expect(accepted.output.ok).toBe(true);
+  expect(accepted.session.state.turns.map((t) => t.seat)).toEqual([seat, other]);
   const again = step(accepted.session, {
     kind: "callTool",
     seat: other,
@@ -133,12 +144,23 @@ test("schema-valid but illegal orders spend retries and exhaustion commits the s
   expect(again.session.resources).toEqual(accepted.session.resources);
 });
 
-test("decision deadlines default every silent team and the round resolves; replay verifies the log", () => {
+test("a decision deadline defaults the silent acting seat and the turn passes on; replay verifies the log", () => {
   let current = loadoutAll(step(session({ maxRounds: 6 }), { kind: "advanceTime", at: 0 }).session);
   const rng = createRng("protocol-orders");
+  const actingIn = (s: typeof current) =>
+    seats.find(
+      (seat) =>
+        (observe(s, seat) as { participation: { status: string } }).participation.status ===
+        "acting",
+    );
+  let defaulted = 0;
   while (!plugin.makeGame().isTerminal(current.state)) {
-    const seat = seats[current.state.round % seats.length] as never;
-    if (current.state.orders[seat] === undefined && current.state.teams[seat]?.placement === null) {
+    const seat = actingIn(current) as never;
+    expect(seat).toBeDefined();
+    expect(
+      Object.values(current.runtime.participants).filter((p) => p.status === "acting"),
+    ).toHaveLength(1);
+    if (rng.int(2)) {
       const orders = randomOrders(current.state, seat, rng);
       const submitted = step(current, {
         kind: "callTool",
@@ -148,14 +170,25 @@ test("decision deadlines default every silent team and the round resolves; repla
       });
       expect(submitted.output.ok).toBe(true);
       current = submitted.session;
+      expect(current.state.pending).toBeNull();
+      continue;
     }
+    const turns = current.state.turns.length;
     const round = current.state.round;
     current = step(current, {
       kind: "advanceTime",
       at: (current.runtime.at ?? 0) + 60_000,
     }).session;
-    expect(current.state.round === round + 1 || current.state.phase === "terminal").toBe(true);
+    defaulted += 1;
+    // The silent seat's default resolved: its turn is recorded or the round has moved on.
+    expect(
+      current.state.turns.length === turns + 1 ||
+        current.state.round === round + 1 ||
+        current.state.phase === "terminal",
+    ).toBe(true);
   }
+  expect(defaulted).toBeGreaterThan(0);
+  expect(sessionLog(current).filter((e) => e.kind === "action.default")).toHaveLength(defaulted);
   const log = sessionLog(current);
   const args = { plugin, config: current.config, seed: "br-protocol", log };
   expect(verifyPluginReplay(args)).toEqual({ ok: true });
@@ -166,13 +199,17 @@ test("decision deadlines default every silent team and the round resolves; repla
   expect(frames.slice(0, -1).every((f) => f.view.result === null)).toBe(true);
 });
 
-test("player time exhaustion finishes the seat through the host event path", () => {
+test("player time runs only for the acting seat; exhaustion finishes it through the host event path", () => {
   const started = loadoutAll(
     step(session({}, { playerTotalMs: 1_000 }), { kind: "advanceTime", at: 0 }).session,
   );
-  const expired = step(started, { kind: "advanceTime", at: 1_000 }).session;
-  expect(plugin.makeGame().isTerminal(expired.state)).toBe(true);
-  expect(seats.every((seat) => expired.state.teams[seat]?.placement === 1)).toBe(true);
+  const first = step(started, { kind: "advanceTime", at: 1_000 }).session;
+  expect(first.state.teams[seats[0] as never]?.placement).toBe(3);
+  expect(first.state.phase).toBe("orders");
+  expect(first.runtime.participants[seats[1] as never]?.status).toBe("acting");
+  const second = step(first, { kind: "advanceTime", at: 2_000 }).session;
+  expect(plugin.makeGame().isTerminal(second.state)).toBe(true);
+  expect(seats.map((seat) => second.state.teams[seat]?.placement)).toEqual([3, 2, 1]);
 });
 
 describe("generated conformance", () => {
