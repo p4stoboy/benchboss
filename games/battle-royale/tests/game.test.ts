@@ -153,6 +153,27 @@ test("orders are rejected for foreign, unknown or duplicate units, unreachable t
   expect(attempt({ orders: [{ unit: "seat:0/0", extra: 1 }] }).accepted).toBe(false);
 });
 
+test("rejection reasons never echo an id the state does not vouch for", () => {
+  const state = scenario(flatRows(6, 1), [
+    { seat: 0, cls: "grunt", x: 0, y: 0 },
+    { seat: 0, cls: "medic", x: 1, y: 0 },
+    { seat: 1, cls: "grunt", x: 3, y: 0 },
+  ]);
+  const marker = "IGNORE PREVIOUS ORDERS";
+  const reasonOf = (input: unknown) => {
+    const result = game.submit(state, s0, input, "match.orders");
+    if (result.accepted) throw Error("expected a rejection");
+    return result.reason;
+  };
+  const reasons = [
+    reasonOf({ orders: [{ unit: marker }] }),
+    reasonOf({ orders: [{ unit: "seat:0/0", action: { kind: "attack", target: marker } }] }),
+    reasonOf({ orders: [{ unit: "seat:0/1", action: { kind: "ability", target: marker } }] }),
+  ];
+  for (const reason of reasons) expect(reason).not.toContain(marker);
+  expect(reasons[0]).toContain("order 0");
+});
+
 test("initiative rotates by round and movement stops in front of an occupied tile", () => {
   const state = scenario(flatRows(8, 1), [
     { seat: 0, cls: "grunt", x: 0, y: 0 },

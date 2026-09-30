@@ -333,11 +333,12 @@ function validateOrders(
   const paths: Record<string, Point[][]> = {};
   const used = new Set<string>();
   const fail = (reason: string) => ({ ok: false as const, reason });
-  for (const order of orders.orders) {
+  // Reasons name only ids the state vouches for; unknown ids are never echoed.
+  for (const [index, order] of orders.orders.entries()) {
+    const plan = planned.find((p) => p.unit.id === order.unit);
+    if (!plan) return fail(`order ${index} names no living unit of yours`);
     if (used.has(order.unit)) return fail(`duplicate order for ${order.unit}`);
     used.add(order.unit);
-    const plan = planned.find((p) => p.unit.id === order.unit);
-    if (!plan) return fail(`${order.unit} is not one of your living units`);
     const destination = order.moveTo ?? plan.unit;
     const reach = plan.reaches.find((r) => samePoint(r, destination));
     if (!reach) return fail(`${order.unit} cannot reach ${destination.x},${destination.y}`);
@@ -357,7 +358,8 @@ function validateOrders(
     const action = order.action;
     if (!action || action.kind === "hold") continue;
     if (action.kind === "attack") {
-      if (!enemies.has(action.target)) return fail(`${action.target} is not a visible enemy`);
+      if (!enemies.has(action.target))
+        return fail(`${order.unit} attack target is not a visible enemy`);
       if (!reach.targets.includes(action.target))
         return fail(`${order.unit} cannot attack ${action.target} from ${reach.x},${reach.y}`);
       continue;
@@ -386,14 +388,14 @@ function validateOrders(
     }
     if (!action.target || action.at !== undefined) return fail(`${ability} needs a target unit`);
     if (spec.target === "enemy") {
-      if (!enemies.has(action.target)) return fail(`${action.target} is not a visible enemy`);
+      if (!enemies.has(action.target)) return fail(`${ability} target is not a visible enemy`);
       if (!reach.targets.includes(action.target))
         return fail(`${order.unit} cannot attack ${action.target} from ${reach.x},${reach.y}`);
       continue;
     }
     const ally = unitById(state, action.target);
     if (!ally?.alive || ally.seat !== seat || ally.id === order.unit)
-      return fail(`${action.target} is not another living unit of yours`);
+      return fail(`${ability} target is not another living unit of yours`);
   }
   return { ok: true, paths };
 }
