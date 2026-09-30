@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { createRng, mkSeatId } from "@benchboss/core";
 import { renderSpectatorView } from "@benchboss/viewer";
-import { type TileKind, key } from "../src/map";
+import { type Tile, type TileKind, key } from "../src/map";
 import { plugin } from "../src/plugin";
 import { visionOf } from "../src/state";
 import type { BrState } from "../src/types";
@@ -104,16 +104,29 @@ function assertObservationPrivacy(state: BrState, seat: ReturnType<typeof mkSeat
   }
 }
 
+/** Decodes a frame's `Map` table with the legend that frame carries; `null` for an unexplored tile. */
+function decodeMap(view: ReturnType<typeof plugin.publicView>): (Tile | null)[][] {
+  const legend = view.blocks.find((b) => b.kind === "list" && b.title === "Terrain kinds");
+  const table = view.blocks.find((b) => b.kind === "table" && b.title === "Map");
+  const kinds = legend && "items" in legend ? legend.items : [];
+  const rows = table && "rows" in table ? table.rows : [];
+  expect(kinds.length).toBeGreaterThan(0);
+  return rows.map((row) =>
+    row.map((cell) => {
+      expect(typeof cell).toBe("number");
+      const code = Number(cell);
+      if (code < 0) return null;
+      const kind = kinds[code % kinds.length];
+      expect(kind).toBeDefined();
+      return { h: Math.floor(code / kinds.length), kind: kind as TileKind };
+    }),
+  );
+}
+
 /** Live spectator grids show exactly the explored tiles; every tile some living team sees now is explored. */
 function assertSpectatorFog(state: BrState): void {
-  const view = plugin.publicView(state);
-  const table = (title: string) => {
-    const block = view.blocks.find((b) => b.kind === "table" && b.title === title);
-    return block && "rows" in block ? block.rows : [];
-  };
-  const heights = table("Heights");
-  const terrain = table("Terrain");
-  expect(heights).toHaveLength(state.map.height);
+  const decoded = decodeMap(plugin.publicView(state));
+  expect(decoded).toHaveLength(state.map.height);
   const seenNow = new Set<string>();
   for (const seat of state.seats)
     if (state.teams[seat]?.placement === null)
@@ -122,8 +135,7 @@ function assertSpectatorFog(state: BrState): void {
     row.forEach((tile, x) => {
       const explored = state.explored[`${x},${y}`] === true;
       if (seenNow.has(`${x},${y}`)) expect(explored).toBe(true);
-      expect(heights[y]?.[x]).toBe(explored ? tile.h : "?");
-      expect(terrain[y]?.[x]).toBe(explored ? tile.kind : "?");
+      expect(decoded[y]?.[x]).toEqual(explored ? tile : null);
     }),
   );
 }
@@ -131,12 +143,11 @@ function assertSpectatorFog(state: BrState): void {
 test("the live spectator map reveals tiles as teams see them and stays revealed; terminal shows all", () => {
   let state = newMatch(2, "fog");
   const before = plugin.publicView(state);
-  const cells = (view: typeof before, title: string) => {
-    const block = view.blocks.find((b) => b.kind === "table" && b.title === title);
-    return block && "rows" in block ? block.rows.flat() : [];
-  };
-  expect(cells(before, "Heights").every((c) => c === "?")).toBe(true);
-  expect(cells(before, "Terrain").every((c) => c === "?")).toBe(true);
+  expect(
+    decodeMap(before)
+      .flat()
+      .every((tile) => tile === null),
+  ).toBe(true);
   for (const seat of state.seats)
     state = game.submit(
       state,
@@ -172,9 +183,7 @@ test("the live spectator map reveals tiles as teams see them and stays revealed;
     phaseId: "p",
     at: 1,
   }) as BrState;
-  const full = plugin.publicView(terminal);
-  expect(cells(full, "Heights")).toEqual(terminal.map.tiles.flat().map((t) => t.h));
-  expect(cells(full, "Terrain")).toEqual(terminal.map.tiles.flat().map((t) => t.kind));
+  expect(decodeMap(plugin.publicView(terminal))).toEqual(terminal.map.tiles);
 });
 
 test("shots never read unseen terrain: a fogged cell on the sight line neither offers nor withholds a target", () => {
@@ -305,7 +314,7 @@ test("live public views depend only on disclosed state; terminal views disclose 
   expect(JSON.stringify(plugin.publicView(state))).not.toContain("ranger");
   const chatted: BrState = { ...state, chat: [{ round: 1, seat: s1, text: "we see you" }] };
   expect(JSON.stringify(plugin.publicView(chatted).blocks)).toContain("seat:1: we see you");
-  expect(renderSpectatorView(plugin.publicView(state))).toContain("Terrain");
+  expect(renderSpectatorView(plugin.publicView(state))).toContain("Map");
   const terminal = plugin.onHostEvent?.(state, {
     kind: "player_time_exhausted",
     seats: state.seats.slice(1),

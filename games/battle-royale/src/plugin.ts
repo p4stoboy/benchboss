@@ -22,7 +22,7 @@ import {
   recentChat,
 } from "./game";
 import { itemLabel } from "./loot";
-import { stormDamage, zoneRadius } from "./map";
+import { TILE_KINDS, stormDamage, tileCode, zoneRadius } from "./map";
 import { forfeitSeats } from "./resolve";
 import { aliveSeats, isEliminated, ownUnits, unitById } from "./state";
 import type { BrState, Point, RoundEvent } from "./types";
@@ -198,16 +198,18 @@ function eventRow(entry: number, event: RoundEvent): (string | number)[] {
 }
 
 /**
- * Live frames carry the explored terrain, counts, eliminations and chat only; positions, loot,
- * rosters and the unexplored map appear at terminal.
+ * Live frames carry the explored map as one integer per tile (`-1` unexplored, else
+ * `tileCode` under the `Terrain kinds` legend), counts, eliminations and chat only; positions,
+ * loot, rosters and the unexplored map appear at terminal.
  */
 export function brPublicView(state: BrState): SpectatorView {
   const result = brResult(state);
   const round = Math.max(1, state.round);
   const revealed = (x: number, y: number): boolean =>
     state.phase === "terminal" || state.explored[`${x},${y}`] === true;
-  const grid = (cell: (tile: BrState["map"]["tiles"][number][number]) => string | number) =>
-    state.map.tiles.map((row, y) => row.map((tile, x) => (revealed(x, y) ? cell(tile) : "?")));
+  const mapRows = state.map.tiles.map((row, y) =>
+    row.map((tile, x) => (revealed(x, y) ? tileCode(tile) : -1)),
+  );
   const eliminations = state.seats
     .filter((seat) => isEliminated(state, seat))
     .sort((a, b) => (state.teams[b]?.placement ?? 0) - (state.teams[a]?.placement ?? 0))
@@ -245,8 +247,8 @@ export function brPublicView(state: BrState): SpectatorView {
         { label: "Storm damage", value: stormDamage(round) },
       ],
     },
-    { kind: "table", title: "Heights", columns, rows: grid((tile) => tile.h) },
-    { kind: "table", title: "Terrain", columns, rows: grid((tile) => tile.kind) },
+    { kind: "list", title: "Terrain kinds", items: [...TILE_KINDS] },
+    { kind: "table", title: "Map", columns, rows: mapRows },
     { kind: "list", title: "Eliminations", items: eliminations },
     {
       kind: "list",

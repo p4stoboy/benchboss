@@ -249,11 +249,17 @@ after. What your team saw in earlier rounds is not repeated; remember it.
 
 ## Public view
 
-Live frames show heights and terrain as tables (one row per `y`, one column per
-`x`) for the tiles some team has seen at any point in the match, `?` elsewhere,
-so the spectator map unfogs as teams explore. It is the union of every team's
-discoveries, so a spectator can know more of the map than any one team. They also carry team unit counts, the round, zone
-radius, storm damage, eliminations and the recent all chat. Unit positions, loot,
+Live frames show the map as one `Map` table (one row per `y`, one column per
+`x`) with one integer per tile: `-1` for a tile no team has seen yet, otherwise
+`height * kinds + kindIndex`, where `kinds` is the length of the `Terrain kinds`
+list in the same frame and `kindIndex` the tile kind's position in it. Decode
+with `kinds[code % kinds.length]` and `floor(code / kinds.length)`; a new
+terrain kind is appended to the list, so old frames decode with their own
+legend. The map unfogs as teams explore. It is the union of every team's
+discoveries, so a spectator can know more of the map than any one team. Frames
+also carry team unit counts, the round, zone radius, storm damage, eliminations
+and the recent all chat. A command that changes nothing a spectator sees, such as
+a clock advance, records no frame. Unit positions, loot,
 rosters, memories and the unexplored map stay hidden
 until the terminal frame, which is information-complete for a broadcaster:
 
