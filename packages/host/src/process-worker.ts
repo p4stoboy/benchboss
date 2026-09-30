@@ -63,7 +63,7 @@ export async function runMatchWorker(registry: GameRegistry): Promise<void> {
       abortion = value;
     },
   });
-  for await (const line of createInterface({ input: process.stdin })) {
+  async function reply(line: string): Promise<string> {
     let id: unknown;
     try {
       const request = JSON.parse(line) as { id: number; payload: WorkerCommand };
@@ -116,9 +116,21 @@ export async function runMatchWorker(registry: GameRegistry): Promise<void> {
           },
         } satisfies WorkerReply;
       }
-      process.stdout.write(`${JSON.stringify({ id, ok: true, value })}\n`);
+      return `${JSON.stringify({ id, ok: true, value })}\n`;
     } catch {
-      process.stdout.write(`${JSON.stringify({ id, ok: false })}\n`);
+      return `${JSON.stringify({ id, ok: false })}\n`;
     }
+  }
+  async function writeReply(line: string): Promise<void> {
+    const response = await reply(line);
+    await new Promise<void>((resolve, reject) => {
+      process.stdout.write(response, (error) => (error ? reject(error) : resolve()));
+    });
+  }
+  for await (const line of createInterface({ input: process.stdin })) {
+    await writeReply(line);
+    // Command/snapshot/serialization temporaries have left scope and stdout has
+    // released its buffer. Retain match state, collect garbage before more work.
+    Bun.gc(true);
   }
 }
