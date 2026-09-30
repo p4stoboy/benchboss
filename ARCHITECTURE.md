@@ -276,7 +276,7 @@ States and semantics:
   acting seat only), host events and the fog-safe public view.
   `games/battle-royale/tests/`: map/LoS/path properties, rule scenarios, gear
   (weapons, abilities, armour, loot) scenarios, privacy invariants, referee
-  integration and generated conformance at sampled seat counts (2, 5, 12, 30) with
+  integration and generated conformance at two seats (the catalog gate covers every seat count with defaults) with
   small rules, since harness cost grows with the square of commands.
 
 States and semantics:

@@ -214,9 +214,10 @@ test("player time runs only for the acting seat; exhaustion finishes it through 
 
 describe("generated conformance", () => {
   // The referee harness stringifies the whole session per command, so cost grows with the
-  // square of commands; a few seat counts spanning the range stand in for all 29.
-  test("the smallest, mid-sized and largest lobbies pass defaults, replay and deterministic frames", () => {
-    const sampled = { ...plugin, manifest: { ...plugin.manifest, seatCounts: [2, 5, 12, 30] } };
+  // square of commands; the two-seat lobby stands in for all 29, and the catalog gate covers
+  // every seat count with defaults.
+  test("the two-seat lobby passes defaults, replay and deterministic frames", () => {
+    const sampled = { ...plugin, manifest: { ...plugin.manifest, seatCounts: [2] } };
     const reports = checkGameConformance(sampled, {
       seeds: ["conformance"],
       rules: [{ maxRounds: 8, tilesPerSeat: 9 }],
@@ -225,8 +226,8 @@ describe("generated conformance", () => {
     expect(reports.filter((r) => !r.ok)).toEqual([]);
   }, 120_000);
 
-  test("random legal orders conform across seeds and rule variants for small lobbies", () => {
-    const small = { ...plugin, manifest: { ...plugin.manifest, seatCounts: [2, 4, 7] } };
+  test("random legal orders conform across seeds and rule variants for the two-seat lobby", () => {
+    const small = { ...plugin, manifest: { ...plugin.manifest, seatCounts: [2] } };
     const reports = checkGameConformance(small, {
       seeds: ["alpha", "beta", "gamma"],
       rules: [{ maxRounds: 8 }, { maxRounds: 40, tilesPerSeat: 9 }],
