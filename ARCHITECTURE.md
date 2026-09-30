@@ -407,8 +407,9 @@ States and semantics:
   live public views carry a `Terrain kinds` legend list (`TILE_KINDS` order, append-only)
   and a `Map` table with one integer per tile (`-1` unexplored, else
   `h * kinds + kindIndex` from `tileCode` in `games/battle-royale/src/map.ts`), counts,
-  zone, eliminations and the 50 most recent chat lines and are independent of
-  positions, loot and rosters. The terminal view shows the whole map. `brFullView`
+  zone, a `Turn order` list (`<seat> <status>` per living seat in initiative order from
+  `turnOrder`; empty outside orders), eliminations and the 50 most recent chat lines and
+  are independent of positions, loot and rosters. The terminal view shows the whole map. `brFullView`
   (`plugin.fullView`) is the complete-info projection recorded as `fullFrames`: the
   folded view carries `Scores`, the whole `Map`, `Units` (every living unit, camouflaged
   included, with `hiddenUntil`), `Loot`, `Orders` (every turn resolved so far this
@@ -416,7 +417,8 @@ States and semantics:
   living seat per map row from `visionOf`), `Recon` (active reveals), `Events` for
   `state.lastRound` under entry `history.length − 1` then `state.events` under
   `history.length`, and the whole chat, with `Teams` (status `N units, <turn status>`),
-  `Round`, `Eliminations`, `progress` and `result` identical to the public view; at terminal it appends the public history tables as `Units by
+  `Round`, `Turn order`, `Eliminations`, `progress` and `result` identical to the public
+  view; at terminal it appends the public history tables as `Units by
   entry`, `Loot by entry`, `Events by entry`. History is an ordered list of entries
   (spawn, then each round) with zone radius, storm damage, living units (position, hp,
   armour, weapon, ready round, hidden until), remaining items and events (`turn`

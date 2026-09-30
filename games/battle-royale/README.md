@@ -293,8 +293,11 @@ terrain kind is appended to the list, so old frames decode with their own
 legend. The map unfogs as teams explore. It is the union of every team's
 discoveries, so a spectator can know more of the map than any one team. Frames
 also carry team unit counts, the round, zone radius, storm damage, eliminations
-and the recent all chat; each team's `Teams` status names its standing in the
-round (`acting`, `acted`, `waiting`, `skipped`). A command that changes nothing
+and the recent all chat. `Turn order` lists the living teams in this round's
+initiative order as `<seat> <standing>` (`acted`, `acting`, `waiting` or
+`skipped`; empty outside the orders phase), and each team's `Teams` status
+repeats its standing, so a renderer knows who acts next without the rotation
+rule. A command that changes nothing
 a spectator sees, such as a clock advance, records no frame, and a recorded frame carries only the blocks
 that changed (fold frames forward with `foldFrames` to read the view at any
 point). Unit positions, loot, rosters and the unexplored map stay hidden until
@@ -320,8 +323,8 @@ the terminal view, which is information-complete for a broadcaster:
 
 ### Full view
 
-The folded view carries the whole match state, in this order: `Teams` and `Round`
-(as public); `Scores` (seat, living units, kills, damage dealt, placement or
+The folded view carries the whole match state, in this order: `Teams`, `Round`
+and `Turn order` (as public); `Scores` (seat, living units, kills, damage dealt, placement or
 blank); `Terrain kinds` and the whole `Map` from the first frame; `Units` (unit,
 seat, class, x, y, hp, armour, weapon, ready round, hidden until) for every
 living unit, camouflaged ones included; `Loot` (x, y, item) for every item on

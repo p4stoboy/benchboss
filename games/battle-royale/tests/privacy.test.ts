@@ -188,7 +188,7 @@ function assertFullView(state: BrState): void {
   expect(itemsOf(view, "Chat")).toHaveLength(state.chat.length);
   expect(view.result).toEqual(pub.result);
   expect(view.progress).toEqual(pub.progress);
-  for (const title of ["Teams", "Round", "Eliminations"])
+  for (const title of ["Teams", "Round", "Turn order", "Eliminations"])
     expect(view.blocks.find((b) => b.title === title)).toEqual(
       pub.blocks.find((b) => b.title === title),
     );

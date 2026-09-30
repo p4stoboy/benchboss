@@ -1066,3 +1066,28 @@ test("a loadout-phase forfeit lands in the spawn entry and is disclosed in the f
   ]);
   expect(advanceTo(state, s1).round).toBe(1);
 });
+
+test("live spectator frames list the round's turn order with each seat's standing", () => {
+  const state = scenario(flatRows(12, 1), [
+    { seat: 0, cls: "grunt", x: 0, y: 0 },
+    { seat: 1, cls: "grunt", x: 2, y: 0, hp: 1 },
+    { seat: 2, cls: "grunt", x: 11, y: 0 },
+  ]);
+  const order = (view: { blocks: { kind: string; title: string }[] }) => {
+    const block = view.blocks.find((b) => b.title === "Turn order");
+    return block?.kind === "list" && "items" in block ? block.items : undefined;
+  };
+  expect(order(plugin.publicView(newMatch(3)))).toEqual([]);
+  expect(order(plugin.publicView(state))).toEqual([
+    `${s0} acting`,
+    `${s1} waiting`,
+    `${s2} waiting`,
+  ]);
+  const shot = playTurn(state, s0, {
+    orders: [{ unit: "seat:0/0", action: { kind: "attack", target: "seat:1/0" } }],
+  });
+  expect(order(plugin.publicView(shot))).toEqual([`${s0} acted`, `${s1} skipped`, `${s2} acting`]);
+  const ended = playTurn(shot, s2, { orders: [] });
+  expect(order(plugin.publicView(ended))).toEqual([`${s2} acting`, `${s0} waiting`]);
+  expect(order(plugin.fullView(ended))).toEqual(order(plugin.publicView(ended)));
+});

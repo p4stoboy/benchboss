@@ -275,8 +275,9 @@ function historyBlocks(state: BrState, titles: HistoryTitles): SpectatorView["bl
 
 /**
  * Live frames carry the explored map as one integer per tile (`-1` unexplored, else
- * `tileCode` under the `Terrain kinds` legend), counts, eliminations and chat only; positions,
- * loot, rosters and the unexplored map appear at terminal.
+ * `tileCode` under the `Terrain kinds` legend), counts, the round's turn order with each
+ * seat's standing, eliminations and chat only; positions, loot, rosters and the unexplored
+ * map appear at terminal.
  */
 export function brPublicView(state: BrState): SpectatorView {
   const result = brResult(state);
@@ -324,6 +325,11 @@ export function brPublicView(state: BrState): SpectatorView {
         { label: "Zone radius", value: zoneRadius(state.map, state.rules.maxRounds, round) },
         { label: "Storm damage", value: stormDamage(round) },
       ],
+    },
+    {
+      kind: "list",
+      title: "Turn order",
+      items: turnOrder(state).map((t) => `${t.seat} ${t.status}`),
     },
     { kind: "list", title: "Terrain kinds", items: [...TILE_KINDS] },
     { kind: "table", title: "Map", columns, rows: mapRows },
@@ -398,6 +404,7 @@ export function brFullView(state: BrState): SpectatorView {
     blocks: [
       keep("Teams"),
       keep("Round"),
+      keep("Turn order"),
       {
         kind: "table",
         title: "Scores",
