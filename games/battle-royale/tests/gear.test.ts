@@ -98,14 +98,19 @@ test("armour pickups stack to the cap, absorb attack damage first and never stop
   expect(unit(braced, "seat:0/0").armour).toBe(MAX_ARMOUR - damage);
   expect(unit(braced, "seat:0/0").hp).toBe(CLASSES.grunt.hp);
   expect(braced.teams[s1]?.damageDealt).toBe(damage);
-  const closing = {
-    ...scenario(flatRows(9, 9), [
+  // Round 3 of 4 closes the zone to one tile; the schedule is pinned to the centre.
+  const closing = scenario(
+    flatRows(9, 9),
+    [
       { seat: 0, cls: "grunt", x: 0, y: 0, armour: ARMOUR_PICKUP },
       { seat: 1, cls: "grunt", x: 4, y: 4 },
-    ]),
-    rules: { maxRounds: 4, tilesPerSeat: 25 },
-    round: 3,
-  };
+    ],
+    {
+      rules: { maxRounds: 4, tilesPerSeat: 25 },
+      zones: [9, 9, 9, 0].map((radius) => ({ center: { x: 4, y: 4 }, radius })),
+      round: 3,
+    },
+  );
   const stormed = submitAll(closing, {});
   expect(unit(stormed, "seat:0/0").armour).toBe(ARMOUR_PICKUP);
   expect(unit(stormed, "seat:0/0").hp).toBeLessThan(CLASSES.grunt.hp);

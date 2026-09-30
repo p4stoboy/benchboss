@@ -2,8 +2,9 @@ import { expect, test } from "bun:test";
 import { createRng } from "@benchboss/core";
 import { validateSchema } from "@benchboss/protocol";
 import { defaultOrders, safeDefault } from "../src/defaults";
-import { chebyshev, zoneCenter, zoneRadius } from "../src/map";
+import { chebyshev } from "../src/map";
 import { actingSeat, turnsRemain } from "../src/state";
+import { zoneAt } from "../src/zone";
 import { game, newMatch, playTurn, unit } from "./helpers";
 import { randomOrders } from "./random-orders";
 
@@ -25,8 +26,7 @@ test("default orders are legal and never leave a unit more exposed to the next s
         state = game.step(state);
         continue;
       }
-      const center = zoneCenter(state.map);
-      const radius = zoneRadius(state.map, state.rules.maxRounds, state.round + 1);
+      const { center, radius } = zoneAt(state, state.round + 1);
       const exposure = (p: { x: number; y: number }) => Math.max(0, chebyshev(center, p) - radius);
       const chosen = safeDefault(state, seat);
       const offer = game.legalActions(state, seat)[0];

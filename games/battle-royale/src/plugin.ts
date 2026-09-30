@@ -23,10 +23,11 @@ import {
   recentChat,
 } from "./game";
 import { itemLabel } from "./loot";
-import { TILE_KINDS, stormDamage, tileCode, zoneRadius } from "./map";
+import { TILE_KINDS, stormDamage, tileCode } from "./map";
 import { forfeitSeats } from "./resolve";
 import { aliveSeats, isEliminated, ownUnits, turnOrder, unitById, visionOf } from "./state";
 import type { BrState, Point, RoundEvent } from "./types";
+import { zoneAt } from "./zone";
 
 // The runtime spends an action on every call, rejected or not, so the phase allowance must
 // cover the accepted submission plus both semantic retries. The game itself accepts one
@@ -218,8 +219,15 @@ function historyBlocks(state: BrState, titles: HistoryTitles): SpectatorView["bl
     {
       kind: "table",
       title: "Rounds",
-      columns: ["Entry", "Round", "Zone radius", "Storm damage"],
-      rows: state.history.map((entry, i) => [i, entry.round, entry.zoneRadius, entry.stormDamage]),
+      columns: ["Entry", "Round", "Zone x", "Zone y", "Zone radius", "Storm damage"],
+      rows: state.history.map((entry, i) => [
+        i,
+        entry.round,
+        entry.zoneCenter.x,
+        entry.zoneCenter.y,
+        entry.zoneRadius,
+        entry.stormDamage,
+      ]),
     },
     {
       kind: "table",
@@ -282,6 +290,8 @@ function historyBlocks(state: BrState, titles: HistoryTitles): SpectatorView["bl
 export function brPublicView(state: BrState): SpectatorView {
   const result = brResult(state);
   const round = Math.max(1, state.round);
+  const zone = zoneAt(state, round);
+  const nextZone = zoneAt(state, round + 1);
   const revealed = (x: number, y: number): boolean =>
     state.phase === "terminal" || state.explored[`${x},${y}`] === true;
   const mapRows = state.map.tiles.map((row, y) =>
@@ -322,8 +332,13 @@ export function brPublicView(state: BrState): SpectatorView {
       values: [
         { label: "Round", value: state.round },
         { label: "Teams alive", value: aliveSeats(state).length },
-        { label: "Zone radius", value: zoneRadius(state.map, state.rules.maxRounds, round) },
+        { label: "Zone x", value: zone.center.x },
+        { label: "Zone y", value: zone.center.y },
+        { label: "Zone radius", value: zone.radius },
         { label: "Storm damage", value: stormDamage(round) },
+        { label: "Next zone x", value: nextZone.center.x },
+        { label: "Next zone y", value: nextZone.center.y },
+        { label: "Next zone radius", value: nextZone.radius },
       ],
     },
     {
@@ -506,7 +521,7 @@ export const plugin = {
   manifest: {
     protocolVersion: 1,
     id: BR_GAME_ID,
-    revision: "3.0.0",
+    revision: "3.1.0",
     title: "Battle Royale",
     description:
       "Teams of three armed actors with class abilities fight over loot on a fogged heightmap; one team acts at a time in rotating initiative, a closing storm and last team standing.",

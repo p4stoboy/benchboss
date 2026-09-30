@@ -8,7 +8,7 @@ every team has acted, a closing storm damages anyone outside the zone. The last
 team with a living unit wins. Combat is deterministic; the match seed only
 shapes the map, loot, spawn assignment and nothing else.
 
-Game ID: `battle-royale`. Revision: `3.0.0`. Seats: 2–30 (default 4). Records
+Game ID: `battle-royale`. Revision: `3.1.0`. Seats: 2–30 (default 4). Records
 made under an earlier revision keep their identity: their frames still render,
 and re-executing them names an unavailable revision rather than these rules.
 
@@ -37,16 +37,22 @@ Rule object (all fields optional):
 
 - `maxRounds`: integer 4–200, default 40. The zone closes to a single tile at
   three quarters of this value and the match ends at the cap.
-- `tilesPerSeat`: integer 9–600, default 300. The map is the smallest near-square
-  grid with at least `tilesPerSeat × seats` tiles, so two teams get 25x24 and thirty
-  get 95x95. Teams never see the whole map, so the allowance sets how much ground
+- `tilesPerSeat`: integer 9–1200, default 600. The map is the smallest near-square
+  grid with at least `tilesPerSeat × seats` tiles, so two teams get 35x35 and thirty
+  get 135x134. Teams never see the whole map, so the allowance sets how much ground
   there is to scout rather than how much an agent reads.
 
 ### Map
 
-- Tiles have an integer height 0–3 and a kind: `.` open, `+` cover, `#` wall.
-  Terrain is static but fogged: a team learns tiles only by seeing them and is
-  expected to remember them. Only the map size and the zone centre are public.
+- Tiles have an integer height 0–6 and a kind: `.` open, `+` cover, `#` wall.
+  Rolling ground runs 0–3; plateaus rise two or three levels above it with
+  cliff faces that cannot be climbed and at least one ramp each, so high ground
+  is worth holding and its approaches are worth watching. Every walkable tile
+  can be reached from every other: stranded ground gets a stair carved to it, a
+  small bump or pit is levelled, and a map with an unreachable pocket left is
+  never played. Terrain is static but fogged: a team learns tiles only by seeing them
+  and is expected to remember them. Only the map size and the zone centre are
+  public.
 - Eight-way movement. A step onto a tile one level higher costs 2 move points,
   any other step costs 1, walls and height differences of 2 or more are impassable.
   Movement is planned over the tiles the team can see now: fog is impassable
@@ -58,12 +64,13 @@ Rule object (all fields optional):
   line of sight. A team sees the union of its living units' vision.
 - No team can see another at spawn. Spawns are placed farthest-point first: one
   seeded origin on the outer ring, then each next team on the tile that no placed
-  spawn tile can see (the best class vision from the highest tile, 11) and that is
-  farthest from all placed teams. A generated map is rejected and retried when
-  spawns are not mutually reachable, when any spawn tile can see another team's,
-  when two teams' nearest tiles are closer than 4, or when fewer than 5% of its
-  tiles are cover or wall; after 24 attempts a flat open map with spread spawns is
-  used, which only happens when `tilesPerSeat` is far below the default.
+  spawn tile could see or be seen from (the best class vision plus the higher of
+  the two tiles, with line of sight) and that is farthest from all placed teams.
+  A generated map is rejected and retried when any walkable tile is unreachable,
+  when any spawn tile can see another team's, when two teams' nearest tiles are
+  closer than 4, or when fewer than 5% of its tiles are cover or wall; after 24
+  attempts a flat open map with spread spawns is used, which only happens when
+  `tilesPerSeat` is far below the default.
 
 ### Classes and loadout
 
@@ -207,8 +214,13 @@ next team observes:
 At the end of the round, after the last turn:
 
 5. Storm: every unit outside the safe zone takes `1 + floor(round / 10)`
-   damage, ignoring armour. The zone is a Chebyshev square around the map centre
-   that shrinks linearly to the centre tile at three quarters of `maxRounds`.
+   damage, ignoring armour. The zone is a Chebyshev square that shrinks linearly
+   to a single tile at three quarters of `maxRounds`. Round 1 covers the whole
+   map around its centre; every later stage lies inside the one before but its
+   centre drifts by a seeded offset of up to the shrink, so the final tile can
+   be anywhere and is only revealed one stage ahead. The observation's `zone`
+   gives the current centre and radius and the next stage's `nextCenter` and
+   `nextRadius`.
 6. Teams with no living unit are eliminated together and share placement
    `1 + teams still alive`.
 
@@ -244,7 +256,8 @@ reference data is sent once, and a seat that has already committed for the
 current phase receives a trimmed observation until the round resolves.
 
 `publicState`: round, `maxRounds`, `map` (`width` and `height` only), `zone`
-(centre, current and next radius, current and next storm damage), `teams`
+(`center` and `radius` now, `nextCenter` and `nextRadius` for the next round,
+current and next storm damage), `teams`
 (units alive and placement per seat) and `turnOrder` (every living team in
 this round's initiative order with its standing: `acted`, `acting`, `waiting`
 or `skipped`; empty outside the orders phase). During the loadout phase only,
@@ -294,8 +307,8 @@ with `kinds[code % kinds.length]` and `floor(code / kinds.length)`; a new
 terrain kind is appended to the list, so old frames decode with their own
 legend. The map unfogs as teams explore. It is the union of every team's
 discoveries, so a spectator can know more of the map than any one team. Frames
-also carry team unit counts, the round, zone radius, storm damage, eliminations
-and the recent all chat. `Turn order` lists the living teams in this round's
+also carry team unit counts, the round, the zone centre and radius now and next
+round, storm damage, eliminations and the recent all chat. `Turn order` lists the living teams in this round's
 initiative order as `<seat> <standing>` (`acted`, `acting`, `waiting` or
 `skipped`; empty outside the orders phase), and each team's `Teams` status
 repeats its standing, so a renderer knows who acts next without the rotation
@@ -306,7 +319,8 @@ point). Unit positions, loot, rosters and the unexplored map stay hidden until
 the terminal view, which is information-complete for a broadcaster:
 
 - `Loadouts`: seat, actors.
-- `Rounds`: one row per history entry with round, zone radius and storm damage.
+- `Rounds`: one row per history entry with round, zone centre x and y, zone
+  radius and storm damage.
   Entry 0 is the spawn and carries any loadout-phase forfeits; every round
   played adds one entry, closed at round end or by the host forfeit that ends
   the match.

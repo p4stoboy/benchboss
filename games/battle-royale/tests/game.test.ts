@@ -475,7 +475,13 @@ test("the storm damages units outside the zone; teams lost to combat and storm i
     { seat: 2, cls: "grunt", x: 4, y: 6, hp: 1 },
     { seat: 3, cls: "grunt", x: 8, y: 8, hp: 1 },
   ]);
-  const closing = { ...state, rules: { maxRounds: 4, tilesPerSeat: 25 }, round: 3 };
+  // Round 3 of 4 closes the zone to the centre tile; the schedule is pinned so the test is stable.
+  const closing = {
+    ...state,
+    rules: { maxRounds: 4, tilesPerSeat: 25 },
+    zones: [9, 9, 9, 0].map((radius) => ({ center: { x: 4, y: 4 }, radius })),
+    round: 3,
+  };
   const next = submitAll(closing, {
     [s0]: { orders: [{ unit: "seat:0/0", action: { kind: "attack", target: "seat:2/0" } }] },
   });
@@ -908,9 +914,9 @@ test("the terminal view carries every history entry as scalar tables a broadcast
     return block;
   };
   expect(table("Rounds").rows).toEqual([
-    [0, 0, 6, 1],
-    [1, 1, 6, 1],
-    [2, 2, 6, 1],
+    [0, 0, 2, 0, 6, 1],
+    [1, 1, 2, 0, 6, 1],
+    [2, 2, 2, 0, 6, 1],
   ]);
   expect(table("Units").rows).toEqual([
     [0, "seat:0/0", s0, "grunt", 0, 0, 8, 0, "rifle", 1, 0],

@@ -5,17 +5,22 @@ import { BR_DEFAULT_RULES } from "../src/game";
 import {
   MAX_SPAWN_VISION,
   MIN_SPAWN_GAP,
+  allTilesConnected,
   generateMap,
   spawnGap,
   spawnsHidden,
 } from "../src/generate";
 import {
+  BASE_HEIGHT,
+  type GameMap,
+  MAX_HEIGHT,
+  NEIGHBOURS,
   closeRound,
   key,
+  mapCenter,
   mapSize,
   stepCost,
   stormDamage,
-  zoneCenter,
   zoneRadius,
 } from "../src/map";
 
@@ -26,11 +31,10 @@ test("map area covers every seat's tile allowance with a near-square shape", () 
       expect(width * height).toBeGreaterThanOrEqual(seats * tilesPerSeat);
       expect(Math.abs(width - height)).toBeLessThanOrEqual(1);
     }
-  expect(mapSize(2, BR_DEFAULT_RULES.tilesPerSeat)).toEqual({ width: 25, height: 24 });
+  expect(mapSize(2, BR_DEFAULT_RULES.tilesPerSeat)).toEqual({ width: 35, height: 35 });
 });
 
 test("at the default allowance no team can see another at spawn and every map has terrain", () => {
-  expect(MAX_SPAWN_VISION).toBe(11);
   for (const seats of [2, 5, 12, 30])
     for (const seed of ["a", "b", "c"]) {
       const map = generateMap(
@@ -55,6 +59,73 @@ test("at the default allowance no team can see another at spawn and every map ha
   );
   expect(spawnsHidden(duel)).toBe(true);
   expect(spawnGap(duel)).toBeGreaterThanOrEqual(MAX_SPAWN_VISION);
+});
+
+/** Adjacent walkable tiles that cannot step onto each other in either direction. */
+function cliffEdges(map: GameMap): number {
+  let edges = 0;
+  for (let y = 0; y < map.height; y++)
+    for (let x = 0; x < map.width; x++)
+      for (const d of NEIGHBOURS) {
+        const a = { x, y };
+        const b = { x: x + d.x, y: y + d.y };
+        if (b.y < 0 || b.y >= map.height || b.x < 0 || b.x >= map.width) continue;
+        const walkable =
+          map.tiles[y]?.[x]?.kind !== "wall" && map.tiles[b.y]?.[b.x]?.kind !== "wall";
+        if (walkable && stepCost(map, a, b) === null && stepCost(map, b, a) === null) edges++;
+      }
+  return edges;
+}
+
+test("default maps rise above the rolling ground with cliffs, and every walkable tile stays reachable", () => {
+  for (const seats of [2, 5, 12, 30])
+    for (const seed of ["a", "b", "c"]) {
+      const map = generateMap(
+        createRng(`${seed}:${seats}`),
+        seats,
+        BR_DEFAULT_RULES.tilesPerSeat,
+        TEAM_SIZE,
+      );
+      const heights = map.tiles.flat().map((t) => t.h);
+      expect(Math.max(...heights)).toBeGreaterThan(BASE_HEIGHT);
+      expect(Math.max(...heights)).toBeLessThanOrEqual(MAX_HEIGHT);
+      expect(Math.min(...heights)).toBeGreaterThanOrEqual(0);
+      expect(cliffEdges(map)).toBeGreaterThan(0);
+      expect(allTilesConnected(map)).toBe(true);
+    }
+});
+
+test("the connectivity check rejects a walkable tile no path reaches", () => {
+  const map = generateMap(createRng("pocket"), 2, BR_DEFAULT_RULES.tilesPerSeat, TEAM_SIZE);
+  expect(allTilesConnected(map)).toBe(true);
+  const spawn = new Set(map.spawns.flat().map(key));
+  // The first interior tile whose 3x3 block holds no spawn; the BFS starts from a spawn.
+  const block = (p: { x: number; y: number }) => [
+    p,
+    ...NEIGHBOURS.map((d) => ({ x: p.x + d.x, y: p.y + d.y })),
+  ];
+  let pocket: { x: number; y: number } | null = null;
+  for (let y = 1; y < map.height - 1 && !pocket; y++)
+    for (let x = 1; x < map.width - 1 && !pocket; x++)
+      if (block({ x, y }).every((p) => !spawn.has(key(p)))) pocket = { x, y };
+  if (!pocket) throw Error("no free block");
+  const tiles = block(pocket).map((p) => map.tiles[p.y]?.[p.x]);
+  const [centre, ...ring] = tiles as [
+    GameMap["tiles"][number][number],
+    ...GameMap["tiles"][number][number][],
+  ];
+  centre.kind = "open";
+  for (const t of ring) t.kind = "wall";
+  expect(allTilesConnected(map)).toBe(false);
+  // A raised pocket with no ramp is just as unreachable as a walled one.
+  for (const t of ring) {
+    t.kind = "open";
+    t.h = 0;
+  }
+  centre.h = 2;
+  expect(allTilesConnected(map)).toBe(false);
+  centre.h = 1;
+  expect(allTilesConnected(map)).toBe(true);
 });
 
 test("an allowance too small to hide spawns still yields a connected, spread-out map", () => {
@@ -131,7 +202,7 @@ test("the zone shrinks monotonically to the centre tile before the round cap and
     expect(zoneRadius(map, maxRounds, closeRound(maxRounds))).toBe(0);
     expect(closeRound(maxRounds)).toBeLessThanOrEqual(maxRounds);
     expect(zoneRadius(map, maxRounds, 1)).toBeGreaterThanOrEqual(
-      Math.max(zoneCenter(map).x, zoneCenter(map).y),
+      Math.max(mapCenter(map).x, mapCenter(map).y),
     );
   }
 });

@@ -1,4 +1,4 @@
-import { type SeatId, mkSeatId } from "@benchboss/core";
+import { type SeatId, createRng, mkSeatId } from "@benchboss/core";
 import { gameConfig } from "../../tests/config";
 import { CLASSES, type ClassId } from "../src/classes";
 import { makeBattleRoyale } from "../src/game";
@@ -7,6 +7,7 @@ import { plugin } from "../src/plugin";
 import { snapshot } from "../src/resolve";
 import { actingSeat, turnsRemain } from "../src/state";
 import type { BrState, Item, Unit } from "../src/types";
+import { zoneSchedule } from "../src/zone";
 
 export const game = makeBattleRoyale();
 export const seatsOf = (n: number): SeatId[] => Array.from({ length: n }, (_, i) => mkSeatId(i));
@@ -79,12 +80,15 @@ export function scenario(
       units.filter((u) => u.seat === seat).map((u) => u.cls),
     ]),
   ) as BrState["loadouts"];
+  const map = mapFromRows(rows);
+  const rules = overrides.rules ?? { maxRounds: 200, tilesPerSeat: 25 };
   const built: BrState = {
     ...base,
     phase: "orders",
     round: 1,
-    rules: { maxRounds: 200, tilesPerSeat: 25 },
-    map: mapFromRows(rows),
+    rules,
+    map,
+    zones: zoneSchedule(createRng("scenario").fork("zone"), map, rules.maxRounds),
     loadouts,
     units,
     items,

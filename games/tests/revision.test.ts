@@ -11,7 +11,7 @@ import { GAMES } from "../catalog";
 test("a record pinned to a superseded battle-royale revision is refused, never replayed under new rules", () => {
   const registry = createRegistry(GAMES);
   const current = registry.buildConfig("m", "battle-royale", [mkSeatId(0), mkSeatId(1)]);
-  expect(current.identity.revision).toBe("3.0.0");
+  expect(current.identity.revision).toBe("3.1.0");
   expect(registry.resolve(current).id).toBe("battle-royale");
   const recorded = { ...current, identity: { ...current.identity, revision: "1.0.0" } };
   expect(() => registry.resolve(recorded)).toThrow("plugin identity mismatch");

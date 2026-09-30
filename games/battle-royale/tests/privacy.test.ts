@@ -3,6 +3,7 @@ import { createRng, mkSeatId } from "@benchboss/core";
 import { renderSpectatorView } from "@benchboss/viewer";
 import { type Tile, type TileKind, key } from "../src/map";
 import { plugin } from "../src/plugin";
+import { resolveTurn } from "../src/resolve";
 import { actingSeat, turnsRemain, visionOf } from "../src/state";
 import type { BrState } from "../src/types";
 import {
@@ -468,7 +469,20 @@ test("generated matches never leak unseen positions through observations or live
         history: [],
       };
       expect(plugin.publicView(hidden)).toEqual(plugin.publicView(state));
-      state = playTurn(state, acting, randomOrders(state, acting, rng));
+      const submitted = game.submit(
+        state,
+        acting,
+        randomOrders(state, acting, rng),
+        "match.orders",
+      );
+      expect(submitted.accepted).toBe(true);
+      // A unit may discover tiles on its turn and die to the storm at round end in the same
+      // step; its discoveries still count, so sample the resolved turn before the round closes.
+      const resolved = resolveTurn(submitted.state);
+      for (const seat of resolved.seats)
+        if (resolved.teams[seat]?.placement === null)
+          for (const tile of visionOf(resolved, seat)) everSeen.add(tile);
+      state = game.step(submitted.state);
     }
     expect(state.phase).toBe("terminal");
     assertFullView(state);

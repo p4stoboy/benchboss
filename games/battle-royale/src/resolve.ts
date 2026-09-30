@@ -1,7 +1,7 @@
 import type { SeatId } from "@benchboss/core";
 import { ABILITIES, ARMOUR_PICKUP, CLASSES, HEALTH_PICKUP, MAX_ARMOUR } from "./classes";
 import { attackBlocker, damageFor } from "./combat";
-import { chebyshev, inZone, key, stormDamage, zoneRadius } from "./map";
+import { chebyshev, key, stormDamage } from "./map";
 import { aliveSeats, isEliminated, markExplored, maxHp, unitById } from "./state";
 import type {
   BrState,
@@ -13,13 +13,16 @@ import type {
   Unit,
   UnitOrder,
 } from "./types";
+import { inZone, zoneAt } from "./zone";
 
 /** History entry for `round` from the given living units and the events that produced them. */
 export function snapshot(state: BrState, round: number, events: RoundEvent[]): RoundSnapshot {
   const effective = Math.max(1, round);
+  const zone = zoneAt(state, effective);
   return {
     round,
-    zoneRadius: zoneRadius(state.map, state.rules.maxRounds, effective),
+    zoneCenter: zone.center,
+    zoneRadius: zone.radius,
     stormDamage: stormDamage(effective),
     units: state.units
       .filter((u) => u.alive)
@@ -285,8 +288,9 @@ function applyCombat(state: BrState, turn: Turn, units: Unit[], events: RoundEve
 /** The storm ignores armour. */
 function applyStorm(state: BrState, units: Unit[], events: RoundEvent[]): void {
   const amount = stormDamage(state.round);
+  const zone = zoneAt(state, state.round);
   for (const unit of units) {
-    if (!unit.alive || inZone(state.map, state.rules.maxRounds, state.round, unit)) continue;
+    if (!unit.alive || inZone(zone, unit)) continue;
     unit.hp = Math.max(0, unit.hp - amount);
     events.push({ kind: "storm", unit: unit.id, at: at(unit), damage: amount });
     if (unit.hp > 0) continue;
