@@ -150,6 +150,14 @@ test("a pickup is rejected without an item at the destination and fizzles when t
   ]);
   expect(rejected.accepted).toBe(false);
   expect(rejected.reason).toContain("no known item");
+  // An item seen last round but gone now is no longer a legal pickup: nothing is remembered.
+  const taken = { ...state, items: [] };
+  expect(game.observe(state, s0).privateState.items).toEqual([{ x: 3, y: 0, kind: "health" }]);
+  expect(game.observe(taken, s0).privateState.items).toEqual([]);
+  expect(
+    orders(taken, s0, [{ unit: "seat:0/0", moveTo: { x: 3, y: 0 }, action: { kind: "pickup" } }])
+      .reason,
+  ).toContain("no known item");
   const blocked = submitAll(state, {
     [s0]: { orders: [{ unit: "seat:0/0", moveTo: { x: 3, y: 0 }, action: { kind: "pickup" } }] },
   });
@@ -280,7 +288,6 @@ test("camouflage hides a sniper from enemies unless they stand beside it, and it
   });
   const blind = game.observe(hidden, s1);
   expect(blind.privateState.visibleEnemies).toEqual([]);
-  expect(blind.privateState.lastSeen).toEqual([]);
   // The enemy watched the sniper vanish: the activation is disclosed, nothing after it is.
   expect(blind.privateState.lastRound.map((e) => e.kind)).toEqual(["ability"]);
   const later = game.observe(submitAll(hidden, {}), s1);
@@ -326,7 +333,7 @@ test("recon reveals enemies behind walls and through camouflage for the next ord
   const seen = game.observe(revealed, s0);
   expect(seen.privateState.visibleEnemies.map((u) => u.id)).toEqual(["seat:1/0"]);
   expect(seen.privateState.units[0]?.shots).toEqual({});
-  expect(revealed.memory[s0]?.["seat:1/0"]?.x).toBe(3);
+  expect(seen.privateState.visibleEnemies[0]?.x).toBe(3);
   const faded = submitAll(revealed, {});
   expect(game.observe(faded, s0).privateState.visibleEnemies).toEqual([]);
   expect(faded.reveals).toEqual([]);
@@ -357,7 +364,7 @@ test("loot is seeded, one item per tile, never on walls or beside spawns, and hi
   expect(itemAt(state.items, first)).toEqual(first);
 });
 
-test("a team learns of an item when it sees the tile, remembers it out of sight and cannot probe fogged tiles", () => {
+test("a team sees items only on tiles it sees now and forgets them the moment they leave view", () => {
   const state = scenario(
     ["00#00000000"],
     [
@@ -370,35 +377,29 @@ test("a team learns of an item when it sees the tile, remembers it out of sight 
       { x: 4, y: 0, kind: "health" },
     ],
   );
-  const known = game.observe(state, s0).privateState.items;
-  expect(known).toEqual([{ x: 1, y: 0, kind: "armour", round: 1 }]);
-  // Seat 0 walks over the armour and away again; seat 1 reaches sight of the health pack.
+  expect(game.observe(state, s0).privateState.items).toEqual([{ x: 1, y: 0, kind: "armour" }]);
+  expect(game.observe(state, s1).privateState.items).toEqual([]);
+  // Seat 1 walks into sight of the health pack, then takes it while seat 0 never sees that tile.
   const scouted = submitAll(state, {
-    [s0]: { orders: [{ unit: "seat:0/0", moveTo: { x: 1, y: 0 } }] },
     [s1]: { orders: [{ unit: "seat:1/0", moveTo: { x: 9, y: 0 } }] },
   });
-  expect(game.observe(scouted, s1).privateState.items).toEqual([
-    { x: 4, y: 0, kind: "health", round: 2 },
-  ]);
-  // Seat 1 takes the health pack while seat 0 has never seen that tile.
+  expect(game.observe(scouted, s1).privateState.items).toEqual([{ x: 4, y: 0, kind: "health" }]);
   const taken = submitAll(scouted, {
-    [s1]: {
-      orders: [{ unit: "seat:1/0", moveTo: { x: 5, y: 0 } }],
-    },
+    [s1]: { orders: [{ unit: "seat:1/0", moveTo: { x: 5, y: 0 } }] },
   });
   const grabbed = submitAll(taken, {
-    [s1]: {
-      orders: [{ unit: "seat:1/0", moveTo: { x: 4, y: 0 }, action: { kind: "pickup" } }],
-    },
+    [s1]: { orders: [{ unit: "seat:1/0", moveTo: { x: 4, y: 0 }, action: { kind: "pickup" } }] },
   });
   expect(grabbed.items).toEqual([{ x: 1, y: 0, kind: "armour" }]);
   expect(game.observe(grabbed, s1).privateState.items).toEqual([]);
-  expect(game.observe(grabbed, s0).privateState.items).toEqual([
-    { x: 1, y: 0, kind: "armour", round: 4 },
-  ]);
-  // The wall keeps the armour tile out of seat 1's sight throughout.
-  const seat1Knows = game.observe(grabbed, s1).privateState.items.map((i) => i.kind);
-  expect(seat1Knows).toEqual([]);
+  // The wall keeps the armour tile out of seat 1's sight throughout; seat 0 still sees it.
+  expect(game.observe(grabbed, s0).privateState.items).toEqual([{ x: 1, y: 0, kind: "armour" }]);
+  // Once the armour tile leaves seat 0's sight the observation carries no items at all.
+  const walledOff = {
+    ...grabbed,
+    units: grabbed.units.map((u) => (u.seat === s0 ? { ...u, x: 3 } : u)),
+  };
+  expect(game.observe(walledOff, s0).privateState.items).toEqual([]);
 });
 
 test("a fogged tile is unreachable and rejected identically whether or not an item lies there", () => {

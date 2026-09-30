@@ -347,7 +347,7 @@ export const plugin = {
   manifest: {
     protocolVersion: 1,
     id: BR_GAME_ID,
-    revision: "2.1.0",
+    revision: "2.2.0",
     title: "Battle Royale",
     description:
       "Teams of three armed actors with class abilities fight over loot on a fogged heightmap; simultaneous orders, a closing storm and last team standing.",

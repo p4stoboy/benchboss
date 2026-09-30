@@ -76,17 +76,12 @@ function assertObservationPrivacy(state: BrState, seat: ReturnType<typeof mkSeat
   }
   expect(JSON.stringify(observation.publicState)).not.toContain('"tiles"');
   expect(JSON.stringify(observation.publicState)).not.toContain('"terrain"');
-  for (const remembered of observation.privateState.lastSeen) {
-    const memory = state.memory[seat]?.[remembered.id];
-    expect(memory).toEqual(remembered);
-  }
   for (const item of observation.privateState.items) {
-    expect(state.itemMemory[seat]?.[key(item)]).toEqual(item);
-    if (seen.has(key(item))) {
-      const { round: _round, ...actual } = item;
-      expect(state.items).toContainEqual(actual);
-    }
+    expect(seen.has(key(item))).toBe(true);
+    expect(state.items).toContainEqual(item);
   }
+  for (const item of state.items)
+    if (seen.has(key(item))) expect(observation.privateState.items).toContainEqual(item);
   expect(JSON.stringify(observation.publicState)).not.toContain('"items"');
   for (const event of observation.privateState.lastRound) {
     if (event.kind === "eliminated") continue;
@@ -228,7 +223,7 @@ test("shots never read unseen terrain: a fogged cell on the sight line neither o
   });
 });
 
-test("a wall hides an enemy from observation, attacks and memory until it is seen", () => {
+test("a wall hides an enemy from observation and attacks until it is seen", () => {
   const state = scenario(
     ["0#0"],
     [
@@ -238,7 +233,6 @@ test("a wall hides an enemy from observation, attacks and memory until it is see
   );
   const hidden = game.observe(state, s0);
   expect(hidden.privateState.visibleEnemies).toEqual([]);
-  expect(hidden.privateState.lastSeen).toEqual([]);
   expect(hidden.privateState.units[0]?.shots).toEqual({});
   expect(JSON.stringify(hidden)).not.toContain("seat:1/0");
   const open = scenario(
@@ -251,7 +245,7 @@ test("a wall hides an enemy from observation, attacks and memory until it is see
   expect(game.observe(open, s0).privateState.visibleEnemies.map((u) => u.id)).toEqual(["seat:1/0"]);
 });
 
-test("memory keeps the last sighting after an enemy walks out of view", () => {
+test("an enemy that walks out of view leaves no trace in the next observation", () => {
   const state = scenario(
     ["0000000000"],
     [
@@ -259,9 +253,8 @@ test("memory keeps the last sighting after an enemy walks out of view", () => {
       { seat: 1, cls: "scout", x: 3, y: 0 },
     ],
   );
-  const withMemory = { ...state, memory: { [s0]: {}, [s1]: {} } };
   const start = game.step({
-    ...withMemory,
+    ...state,
     orders: { [s0]: { orders: [] }, [s1]: { orders: [] } },
     paths: {},
   });
@@ -271,22 +264,7 @@ test("memory keeps the last sighting after an enemy walks out of view", () => {
   });
   const observation = game.observe(after, s0);
   expect(observation.privateState.visibleEnemies).toEqual([]);
-  expect(observation.privateState.lastSeen).toEqual([
-    {
-      id: "seat:1/0",
-      seat: s1,
-      cls: "scout",
-      x: 3,
-      y: 0,
-      hp: 6,
-      armour: 0,
-      weapon: "knife",
-      round: 2,
-    },
-  ]);
-  expect(
-    observation.privateState.lastRound.some((e) => e.kind === "move" && e.unit === "seat:1/0"),
-  ).toBe(false);
+  expect(JSON.stringify(observation)).not.toContain("seat:1/0");
 });
 
 test("live public views depend only on disclosed state; terminal views disclose rosters and history", () => {
@@ -303,12 +281,10 @@ test("live public views depend only on disclosed state; terminal views disclose 
     ...state,
     units: state.units.map((u) => ({ ...u, x: 0, y: 0, hp: 1, cls: "sniper" })),
     loadouts: {},
-    memory: {},
     lastRound: [{ kind: "death", unit: "seat:0/0", at: { x: 1, y: 1 } }],
     history: [],
     paths: {},
     items: [],
-    itemMemory: {},
   };
   expect(plugin.publicView(scrambled)).toEqual(plugin.publicView(state));
   expect(JSON.stringify(plugin.publicView(state))).not.toContain("ranger");
@@ -366,9 +342,7 @@ test("generated matches never leak unseen positions through observations or live
       const hidden = {
         ...state,
         units: state.units.map((u) => ({ ...u, x: 0, y: 0 })),
-        memory: {},
         items: [],
-        itemMemory: {},
         history: [],
       };
       expect(plugin.publicView(hidden)).toEqual(plugin.publicView(state));

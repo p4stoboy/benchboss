@@ -3,7 +3,7 @@ import { ABILITIES, CLASSES } from "./classes";
 import { attackBlocker } from "./combat";
 import { type GameMap, chebyshev, inBounds, key } from "./map";
 import { type Reach, reachableTiles } from "./path";
-import type { BrState, Point, Reveal, SeenItem, SeenUnit, Unit } from "./types";
+import type { BrState, Item, Point, Reveal, Unit } from "./types";
 import { visibleTiles } from "./vision";
 
 export const unitById = (state: BrState, id: string): Unit | undefined =>
@@ -125,59 +125,16 @@ export function continuations(state: BrState, seat: SeatId, unit: Unit, from: Re
   return remaining > 0 ? reachableTiles(state.map, from, remaining, blocked, passable, seen) : [];
 }
 
-/** Items a seat knows about: everything last seen on a tile it could see. */
-export const knownItems = (state: BrState, seat: SeatId): SeenItem[] =>
-  Object.values(state.itemMemory[seat] ?? {});
+/** Items on tiles the seat sees now. Remembering earlier sightings is the agent's job. */
+export const visibleItems = (state: BrState, seat: SeatId, seen = visionOf(state, seat)): Item[] =>
+  state.items.filter((item) => seen.has(key(item)));
 
-export const knownItemAt = (state: BrState, seat: SeatId, p: Point): SeenItem | undefined =>
-  state.itemMemory[seat]?.[key(p)];
-
-/** Every visible tile's item knowledge is refreshed; unseen tiles keep their last sighting. */
-export function rememberItems(
-  state: BrState,
-  visions: Partial<Record<SeatId, Set<string>>> = {},
-): BrState {
-  const itemMemory: BrState["itemMemory"] = {};
-  for (const seat of state.seats) {
-    const known: Record<string, SeenItem> = { ...(state.itemMemory[seat] ?? {}) };
-    if (!isEliminated(state, seat)) {
-      const seen = visions[seat] ?? visionOf(state, seat);
-      for (const tile of Object.keys(known)) if (seen.has(tile)) delete known[tile];
-      for (const item of state.items)
-        if (seen.has(key(item))) known[key(item)] = { ...item, round: state.round };
-    }
-    itemMemory[seat] = known;
-  }
-  return { ...state, itemMemory };
-}
-
-/** Sighting memory, item memory and the spectator's explored set, from one vision pass per seat. */
-export function rememberSightings(state: BrState): BrState {
-  const memory: BrState["memory"] = {};
+/** The spectator's explored set: every tile any living team sees now joins it. */
+export function markExplored(state: BrState): BrState {
   const explored: BrState["explored"] = { ...state.explored };
-  const visions: Partial<Record<SeatId, Set<string>>> = {};
-  for (const seat of state.seats) {
-    const entries: Record<string, SeenUnit> = { ...(state.memory[seat] ?? {}) };
-    if (!isEliminated(state, seat)) {
-      const seen = visionOf(state, seat);
-      visions[seat] = seen;
-      for (const tile of seen) explored[tile] = true;
-      for (const enemy of visibleEnemies(state, seat, seen))
-        entries[enemy.id] = {
-          id: enemy.id,
-          seat: enemy.seat,
-          cls: enemy.cls,
-          x: enemy.x,
-          y: enemy.y,
-          hp: enemy.hp,
-          armour: enemy.armour,
-          weapon: enemy.weapon,
-          round: state.round,
-        };
-    }
-    memory[seat] = entries;
-  }
-  return rememberItems({ ...state, memory, explored }, visions);
+  for (const seat of state.seats)
+    if (!isEliminated(state, seat)) for (const tile of visionOf(state, seat)) explored[tile] = true;
+  return { ...state, explored };
 }
 
 export const samePoint = (a: Point, b: Point): boolean => a.x === b.x && a.y === b.y;

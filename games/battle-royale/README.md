@@ -7,7 +7,7 @@ then a closing storm damages anyone outside the zone. The last team with a
 living unit wins. Combat is deterministic; the match seed only shapes the map,
 loot, spawn assignment and nothing else.
 
-Game ID: `battle-royale`. Revision: `2.1.0`. Seats: 2–30 (default 4). Records
+Game ID: `battle-royale`. Revision: `2.2.0`. Seats: 2–30 (default 4). Records
 made under revision `1.0.0` keep their identity: their frames still render, and
 re-executing them names an unavailable revision rather than these rules.
 
@@ -122,10 +122,10 @@ ignores it. Units spawn with none; the cap is 6.
 Loot is scattered at match start over non-wall tiles at least 3 tiles from every
 spawn tile, about one item per 30 tiles: health packs (+5 hit points, up to the
 maximum), armour plates (+4 armour, up to the cap) and loot weapons. Loot is
-fogged like units: a team learns of an item when one of its units can see the
-tile and remembers it afterwards; every visible tile's knowledge is refreshed
-each round, so an item taken while nobody of yours was watching stays in your
-list until you look again. A unit takes the item on its first-leg tile, before
+fogged like units: your observation lists the items on tiles your units can see
+right now and nothing else. Remembering an item you walked away from is your
+job, and a pickup order is legal only when an item lies on the destination
+tile at the time you order it. A unit takes the item on its first-leg tile, before
 any second leg, with the `pickup` action; a weapon pickup leaves the unit's old weapon on the tile, so
 items are never lost. Spectators see loot only in the terminal frame.
 
@@ -238,9 +238,8 @@ tile from that origin, a digit for the move points that tile costs, `0` on its
 own tile and `.` where it cannot end this round) and `shots` (destinations
 with at least one attackable visible enemy, keyed `x,y`, each listing the
 attackable ids for the unit's current weapon); `visibleEnemies` with their
-armour and weapon; `lastSeen` memories of enemies no longer in view; `items` you
-know of as `{x, y, kind, weapon?, round}` (every item on a tile you can see now,
-plus the last sighting on tiles you cannot); `lastRound` events involving your
+armour and weapon; `items` as `{x, y, kind, weapon?}` for every item on a tile
+you can see now; `lastRound` events involving your
 units or tiles you can see now; and `chat`, filled only in the turn after a
 kill. A `move` event carries the tiles walked in order; a move whose destination
 you can see discloses its whole path. An `ability` event is disclosed when its

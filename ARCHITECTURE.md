@@ -245,7 +245,7 @@ States and semantics:
 - `games/battle-royale/src/{classes,combat,loot,state,resolve}.ts`: class, weapon
   and ability catalogs and budget, weapon range/damage modifiers, seeded loot
   scatter, planning (reach and attackable targets per destination) from a seat's own
-  knowledge including recon reveals and camouflage, sighting memory, and WeGo round
+  knowledge including recon reveals and camouflage, and WeGo round
   resolution: initiative-ordered movement, pickups and self-abilities, simultaneous
   attacks/blasts/heals with armour, storm, elimination, ranking and host-forced
   forfeits.
@@ -259,7 +259,7 @@ States and semantics:
 
 States and semantics:
 
-- Catalog revisions are `1.0.0` for RPS, Spy and Chess and `2.1.0` for Battle
+- Catalog revisions are `1.0.0` for RPS, Spy and Chess and `2.2.0` for Battle
   Royale. RPS supports 2–10 seats; Spy supports 5/7/9; Chess supports 2; Battle
   Royale supports 2–30 (default 4). Each game has one implementation; unavailable
   revisions fail, so records made under an earlier revision render from their
@@ -300,9 +300,8 @@ States and semantics:
   (camouflaged while `round <= hiddenUntil`). Loot: `state.items`, at most one per
   tile, scattered from `rng.fork("loot")` over non-wall tiles ≥ 3 from every spawn
   tile at one item per 30 tiles (health +5 hp, armour +4, or a loot weapon). Loot is
-  fogged: `state.itemMemory[seat]` maps tile keys to the item last seen there with its
-  round; every visible tile is refreshed each round (deleted when empty) and unseen
-  tiles keep their last sighting.
+  fogged: `visibleItems(state, seat)` is the items on tiles the seat sees now; the
+  game keeps no per-team memory of units or items (an agent remembers for itself).
   Orders: at most one order per living own unit with optional `moveTo` (must be in
   that unit's reach: Dijkstra over currently visible tiles only, against own units
   and visible enemies), optional `thenTo` (a second leg from `moveTo` with the
@@ -312,9 +311,9 @@ States and semantics:
   the sight line against seen tiles only, unseen tiles assumed clear, so a listed shot
   can still fizzle), ability (must
   be ready; recon/brace/camo take nothing, grenade takes `at` within 4 of the
-  destination, volley a listed target, heal another own unit), pickup (the seat's item
-  memory must hold one on the destination, so a fogged tile rejects identically with or
-  without an item; a vanished item fizzles at resolution) or hold. Semantic rejection spends a retry; exhaustion commits the
+  destination, volley a listed target, heal another own unit), pickup (an item must lie
+  on the destination now; a fogged destination is already unreachable, so it rejects
+  identically with or without an item; an item taken before resolution fizzles) or hold. Semantic rejection spends a retry; exhaustion commits the
   default (move each unit to the reachable tile least exposed to next round's zone,
   no action). Both envelopes take optional `chat` (1..280 chars) appended as
   `{round, seat, text}` to a global public log only when the envelope is accepted;
@@ -356,7 +355,7 @@ States and semantics:
   units with weapon, armour, ability readiness, `reach` (`{x, y, rows}` cost grid: a
   digit per first-leg destination, `.` elsewhere, bounded by the visible reach) and
   `shots` (destination key → attackable ids), visible enemies (with armour and
-  weapon), remembered last sightings, the seat's item memory, last-round events only
+  weapon), items on tiles seen now, last-round events only
   for own units or positions currently visible (ability events by origin tile, blasts
   and pickups by their tile; a fizzle whose target is an enemy carries reason `missed`
   in place of the stored reason), and `chat` per the kill gate above. `state.explored` is
