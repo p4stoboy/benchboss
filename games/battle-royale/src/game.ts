@@ -21,15 +21,7 @@ import {
 } from "./classes";
 import { generateMap } from "./generate";
 import { scatterLoot } from "./loot";
-import {
-  type TileKind,
-  chebyshev,
-  inBounds,
-  key,
-  stormDamage,
-  zoneCenter,
-  zoneRadius,
-} from "./map";
+import { type TileKind, chebyshev, inBounds, key, stormDamage } from "./map";
 import type { Reach } from "./path";
 import { endRound, resolveTurn, snapshot } from "./resolve";
 import {
@@ -59,16 +51,17 @@ import {
   visionOf,
 } from "./state";
 import type { BrState, ChatMessage, Item, Orders, Point, RoundEvent, Unit } from "./types";
+import { zoneAt, zoneSchedule } from "./zone";
 
 export const BR_GAME_ID = "battle-royale";
 export const MIN_SEATS = 2;
 export const MAX_SEATS = 30;
-export const BR_DEFAULT_RULES = { maxRounds: 40, tilesPerSeat: 300 };
+export const BR_DEFAULT_RULES = { maxRounds: 40, tilesPerSeat: 600 };
 export const BR_RULES_SCHEMA = {
   type: "object",
   properties: {
     maxRounds: { type: "integer", minimum: 4, maximum: 200 },
-    tilesPerSeat: { type: "integer", minimum: 9, maximum: 600 },
+    tilesPerSeat: { type: "integer", minimum: 9, maximum: 1200 },
   },
   additionalProperties: false,
 };
@@ -108,6 +101,7 @@ export interface BrObservation {
     zone: {
       center: Point;
       radius: number;
+      nextCenter: Point;
       nextRadius: number;
       stormDamage: number;
       nextStormDamage: number;
@@ -443,6 +437,7 @@ export function makeBattleRoyale(): GameModule<BrState, unknown, BrObservation, 
         seats: [...seats],
         rules,
         map,
+        zones: zoneSchedule(createRng(seed).fork("zone"), map, rules.maxRounds),
         round: 0,
         loadouts: {},
         units: [],
@@ -466,16 +461,18 @@ export function makeBattleRoyale(): GameModule<BrState, unknown, BrObservation, 
         (state.phase === "loadout" && state.loadouts[seat] !== undefined) ||
         (state.phase === "orders" && !canOrder(state, seat)) ||
         state.phase === "terminal";
-      const center = zoneCenter(state.map);
       const round = Math.max(1, state.round);
+      const zone = zoneAt(state, round);
+      const nextZone = zoneAt(state, round + 1);
       const publicState: BrObservation["publicState"] = {
         round: state.round,
         maxRounds: state.rules.maxRounds,
         map: { width: state.map.width, height: state.map.height },
         zone: {
-          center,
-          radius: zoneRadius(state.map, state.rules.maxRounds, round),
-          nextRadius: zoneRadius(state.map, state.rules.maxRounds, round + 1),
+          center: zone.center,
+          radius: zone.radius,
+          nextCenter: nextZone.center,
+          nextRadius: nextZone.radius,
           stormDamage: stormDamage(round),
           nextStormDamage: stormDamage(round + 1),
         },

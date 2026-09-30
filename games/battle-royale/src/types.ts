@@ -120,6 +120,7 @@ export interface ResolvedTurn {
  */
 export interface RoundSnapshot {
   round: number;
+  zoneCenter: Point;
   zoneRadius: number;
   stormDamage: number;
   units: {
@@ -137,6 +138,12 @@ export interface RoundSnapshot {
   events: RoundEvent[];
 }
 
+/** A Chebyshev square: the safe tiles of one round. */
+export interface ZoneStage {
+  center: Point;
+  radius: number;
+}
+
 export interface BrState {
   matchId: string;
   seed: string;
@@ -144,6 +151,8 @@ export interface BrState {
   seats: SeatId[];
   rules: { maxRounds: number; tilesPerSeat: number };
   map: GameMap;
+  /** Indexed by round (entry 0 mirrors round 1); the last entry is the final tile. */
+  zones: ZoneStage[];
   round: number;
   loadouts: Record<SeatId, ClassId[]>;
   units: Unit[];

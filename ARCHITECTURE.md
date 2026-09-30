@@ -276,12 +276,12 @@ States and semantics:
   acting seat only), host events and the fog-safe public view.
   `games/battle-royale/tests/`: map/LoS/path properties, rule scenarios, gear
   (weapons, abilities, armour, loot) scenarios, privacy invariants, referee
-  integration and generated conformance at sampled seat counts (2, 5, 12, 30) with
+  integration and generated conformance at two seats (the catalog gate covers every seat count with defaults) with
   small rules, since harness cost grows with the square of commands.
 
 States and semantics:
 
-- Catalog revisions are `1.0.0` for RPS, Spy and Chess and `3.0.0` for Battle
+- Catalog revisions are `1.0.0` for RPS, Spy and Chess and `3.1.0` for Battle
   Royale. RPS supports 2–10 seats; Spy supports 5/7/9; Chess supports 2; Battle
   Royale supports 2–30 (default 4). Each game has one implementation; unavailable
   revisions fail, so records made under an earlier revision render from their
@@ -297,7 +297,7 @@ States and semantics:
   call spends an action) and two retries per decision. Names are game-owned and generic
   metering references them; runtime code contains no game-specific allowance names.
 - Battle Royale defaults to 30 seconds per decision and no player total. Rules
-  `maxRounds` (4..200, default 40) and `tilesPerSeat` (9..600, default 300); unknown
+  `maxRounds` (4..200, default 40) and `tilesPerSeat` (9..1200, default 600); unknown
   keys fail. Phases: `loadout` (every seat acts once, simultaneously), repeated
   `orders` (one seat acts per phase; a round is one turn per living seat in
   `initiative` order, seats rotated by `(round − 1) mod N` with eliminated seats
@@ -311,17 +311,37 @@ States and semantics:
   seat (`turnOrder`): `acted`, `acting`, `waiting`, `skipped` (no living unit and no
   turn yet; eliminated at round end).
 - Battle Royale map: near-square grid of at least `tilesPerSeat × seats` tiles, tile
-  height 0..3 and kind open/cover/wall, generated from `rng.fork("map")` in
-  `games/battle-royale/src/generate.ts`. Spawn origins are farthest-point placed
-  (seeded outer-ring start, then the tile farthest from all placed origins among tiles
-  no placed spawn can see within `MAX_SPAWN_VISION` = best class vision + max height =
-  11) and clustered by breadth-first claim; an attempt is rejected unless spawns are
-  mutually reachable, hidden from every other team, at least `MIN_SPAWN_GAP` = 4 apart
-  and at least 5% of tiles are non-open; after 24 attempts a flat open map with spread
-  spawns is used. The default allowance is the smallest at which 30 seats reliably pass.
+  height 0..`MAX_HEIGHT` = 6 and kind open/cover/wall, generated from `rng.fork("map")`
+  in `games/battle-royale/src/generate.ts`. Per attempt: rounded bilinear noise 0..3
+  (`BASE_HEIGHT`), wall/cover scatter, then `max(1, round(area / 400))` plateaus (4-way
+  grown blobs of 12..40 tiles raised 2 or 3, clamped; overlaps stack) each with
+  `1 + floor(size / 16)` ramps (from a border tile inward, tile k at outside height + k,
+  forced open, until the blob is within one level), a connectivity repair (per pass, each
+  component other than the largest gets a stair across its gentlest edge into the higher
+  side; a region of ≤ 8 tiles no stair fits is flattened to one level off that neighbour,
+  or walled when sealed; up to 24 passes), then spawns. Spawn origins are
+  farthest-point placed (seeded outer-ring start, then the tile farthest from all placed
+  origins among tiles no placed spawn tile exposes: within Chebyshev best class vision +
+  max(observer height, target height) with line of sight; `MAX_SPAWN_VISION` = best
+  vision + `MAX_HEIGHT` = 14 bounds the search) and clustered by breadth-first claim; an
+  attempt is rejected unless every non-wall tile is in one `stepCost` component, spawns
+  are hidden from every other team, at least `MIN_SPAWN_GAP` = 4 apart and at least 5% of
+  tiles are non-open; after 24 attempts a flat open map with spread spawns is used. The
+  default allowance is twice the smallest at which 30 seats reliably pass.
   Spawn clusters are assigned to seats by a seeded shuffle. Steps: +1 level costs 2, otherwise 1, |Δh| ≥ 2 or wall
   impassable. Line of sight is symmetric; walls and surfaces above the eye-to-eye line
   block; cover does not. Vision = class vision + observer height.
+- Battle Royale zone: `state.zones` (`games/battle-royale/src/zone.ts`, from
+  `rng.fork("zone")` at match creation) is one `{center, radius}` stage per round, index 0
+  mirroring round 1 and the last index `closeRound` = `floor(3·maxRounds/4)`. Radius
+  follows `zoneRadius` (linear to 0 at the close); stage 1 is centred on the map; each
+  later centre is the previous plus a seeded per-axis offset in `[-slack, slack]` with
+  `slack` = previous radius − radius, clamped to the map, so every stage lies inside the
+  one before. `zoneAt(state, round)` clamps the round into `[1, close]`, so rounds past
+  the close share the final tile. The observation's `zone` carries the current stage and
+  the next (`nextCenter`, `nextRadius`); public `Round` metrics carry both; `Rounds`
+  history rows carry the stage's centre and radius. Safe defaults minimise exposure to the
+  next stage.
 - Battle Royale loadout: exactly three classes from scout/grunt/vanguard/ranger/medic/
   sniper with total cost ≤ 9; default three grunts. Each class issues one weapon
   (knife/rifle/hammer/carbine/pistol/longrifle; loot adds shotgun/autorifle/marksman/
@@ -368,8 +388,8 @@ States and semantics:
   forfeits its second leg). The turn is appended to `state.turns` with its orders,
   `pending` cleared, `recentKills[seat]` set to this turn's kills and `explored`
   extended. Round end (`endRound`, once no turns remain): storm damage
-  `1 + floor(round/10)` ignoring armour outside a Chebyshev zone that shrinks linearly
-  to the centre tile at `floor(3·maxRounds/4)`; teams with no living unit finish together
+  `1 + floor(round/10)` ignoring armour outside the round's zone stage; teams with no
+  living unit finish together
   with placement `1 + teams alive`; the round's events become one history entry and
   `lastRound`; `events`, `turns` reset; reveals expiring this round dropped; `round + 1`.
   Terminal at ≤ 1 team or past `maxRounds`; survivors rank by units, hit points, then
@@ -420,7 +440,7 @@ States and semantics:
   `Round`, `Turn order`, `Eliminations`, `progress` and `result` identical to the public
   view; at terminal it appends the public history tables as `Units by
   entry`, `Loot by entry`, `Events by entry`. History is an ordered list of entries
-  (spawn, then each round) with zone radius, storm damage, living units (position, hp,
+  (spawn, then each round) with zone centre and radius, storm damage, living units (position, hp,
   armour, weapon, ready round, hidden until), remaining items and events (`turn`
   markers per seat; moves carry the walked tile path); the terminal view
   emits it as scalar `Loadouts`, `Rounds`, `Units`, `Loot` and `Events` tables plus
