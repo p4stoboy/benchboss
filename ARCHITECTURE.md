@@ -96,8 +96,10 @@ States and semantics:
   results stay in the acting agent's observation/result path.
 - `packages/referee/src/conformance.ts`: reusable seeded acceptance checks
   for every advertised seat count, defaults/generated actions, bounded progress,
-  explicit outcomes, replay and deterministic public frames. Game privacy scenarios
-  remain game-owned; the helper imports no official package or test framework.
+  explicit outcomes, replay, deterministic public and full frames, and (for games
+  with `fullView`) a full-view `result` canonically equal to the public one at every
+  step. Game privacy scenarios remain game-owned; the helper imports no official
+  package or test framework.
 
 States and semantics:
 
