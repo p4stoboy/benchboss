@@ -90,8 +90,23 @@ export function scenario(
     items,
     reveals: [],
     itemMemory: {},
+    recentKills: {},
+    explored: {},
   };
   return rememberItems({ ...built, history: [snapshot(built, 0, [])], ...overrides });
+}
+
+/** Tile key → move cost for every reachable tile in an observation's reach grid. */
+export function reachCosts(
+  reach: { x: number; y: number; rows: string[] } | undefined,
+): Map<string, number> {
+  const costs = new Map<string, number>();
+  reach?.rows.forEach((row, dy) =>
+    [...row].forEach((ch, dx) => {
+      if (ch !== ".") costs.set(`${reach.x + dx},${reach.y + dy}`, Number(ch));
+    }),
+  );
+  return costs;
 }
 
 export const unit = (state: BrState, id: string): Unit => {

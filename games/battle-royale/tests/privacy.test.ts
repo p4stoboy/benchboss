@@ -1,19 +1,26 @@
 import { expect, test } from "bun:test";
 import { createRng, mkSeatId } from "@benchboss/core";
 import { renderSpectatorView } from "@benchboss/viewer";
-import { key } from "../src/map";
+import { type TileKind, key } from "../src/map";
 import { plugin } from "../src/plugin";
 import { visionOf } from "../src/state";
 import type { BrState } from "../src/types";
-import { flatRows, game, newMatch, scenario, submitAll } from "./helpers";
+import { flatRows, game, newMatch, reachCosts, scenario, submitAll } from "./helpers";
 import { randomOrders } from "./random-orders";
 
 const s0 = mkSeatId(0);
 const s1 = mkSeatId(1);
+const TERRAIN_CHAR: Record<TileKind, string> = { open: ".", cover: "+", wall: "#" };
 
 /** Every position a seat learns about belongs to its own units or lies inside its current vision. */
 function assertObservationPrivacy(state: BrState, seat: ReturnType<typeof mkSeatId>): void {
   const observation = game.observe(state, seat);
+  if (observation.privateState.committed) {
+    expect(observation.privateState.view).toBeNull();
+    expect(observation.privateState.units).toEqual([]);
+    expect(observation.privateState.visibleEnemies).toEqual([]);
+    return;
+  }
   const seen = visionOf(state, seat);
   const own = new Set(state.units.filter((u) => u.seat === seat).map((u) => u.id));
   const mine = state.units.filter((u) => u.seat === seat && u.alive);
@@ -32,10 +39,43 @@ function assertObservationPrivacy(state: BrState, seat: ReturnType<typeof mkSeat
           ),
       ).toBe(true);
   }
-  for (const unit of observation.privateState.units)
-    for (const reach of unit.reachable)
-      for (const target of reach.targets)
+  for (const unit of observation.privateState.units) {
+    const costs = reachCosts(unit.reach);
+    expect(costs.get(`${unit.x},${unit.y}`)).toBe(0);
+    for (const tile of costs.keys()) expect(seen.has(tile)).toBe(true);
+    const reach = new Set(costs.keys());
+    for (const [tile, targets] of Object.entries(unit.shots)) {
+      expect(reach.has(tile)).toBe(true);
+      for (const target of targets)
         expect(seen.has(key(state.units.find((u) => u.id === target) as never))).toBe(true);
+    }
+  }
+  const view = observation.privateState.view;
+  expect(view === null).toBe(seen.size === 0);
+  if (view) {
+    expect(view.terrain.length).toBe(view.heights.length);
+    view.terrain.forEach((row, dy) => {
+      expect(row.length).toBe(view.heights[dy]?.length ?? -1);
+      [...row].forEach((ch, dx) => {
+        const at = { x: view.x + dx, y: view.y + dy };
+        const tile = state.map.tiles[at.y]?.[at.x];
+        const shown = view.heights[dy]?.[dx];
+        if (!seen.has(key(at))) {
+          expect(ch).toBe("?");
+          expect(shown).toBe("?");
+          return;
+        }
+        expect(ch).toBe(TERRAIN_CHAR[tile?.kind ?? "open"]);
+        expect(shown).toBe(String(tile?.h));
+      });
+    });
+    for (const tile of seen) {
+      const [x, y] = tile.split(",").map(Number);
+      expect(view.terrain[(y ?? 0) - view.y]?.[(x ?? 0) - view.x]).not.toBe("?");
+    }
+  }
+  expect(JSON.stringify(observation.publicState)).not.toContain('"tiles"');
+  expect(JSON.stringify(observation.publicState)).not.toContain('"terrain"');
   for (const remembered of observation.privateState.lastSeen) {
     const memory = state.memory[seat]?.[remembered.id];
     expect(memory).toEqual(remembered);
@@ -64,6 +104,121 @@ function assertObservationPrivacy(state: BrState, seat: ReturnType<typeof mkSeat
   }
 }
 
+/** Live spectator grids show exactly the explored tiles; every tile some living team sees now is explored. */
+function assertSpectatorFog(state: BrState): void {
+  const view = plugin.publicView(state);
+  const table = (title: string) => {
+    const block = view.blocks.find((b) => b.kind === "table" && b.title === title);
+    return block && "rows" in block ? block.rows : [];
+  };
+  const heights = table("Heights");
+  const terrain = table("Terrain");
+  expect(heights).toHaveLength(state.map.height);
+  const seenNow = new Set<string>();
+  for (const seat of state.seats)
+    if (state.teams[seat]?.placement === null)
+      for (const t of visionOf(state, seat)) seenNow.add(t);
+  state.map.tiles.forEach((row, y) =>
+    row.forEach((tile, x) => {
+      const explored = state.explored[`${x},${y}`] === true;
+      if (seenNow.has(`${x},${y}`)) expect(explored).toBe(true);
+      expect(heights[y]?.[x]).toBe(explored ? tile.h : "?");
+      expect(terrain[y]?.[x]).toBe(explored ? tile.kind : "?");
+    }),
+  );
+}
+
+test("the live spectator map reveals tiles as teams see them and stays revealed; terminal shows all", () => {
+  let state = newMatch(2, "fog");
+  const before = plugin.publicView(state);
+  const cells = (view: typeof before, title: string) => {
+    const block = view.blocks.find((b) => b.kind === "table" && b.title === title);
+    return block && "rows" in block ? block.rows.flat() : [];
+  };
+  expect(cells(before, "Heights").every((c) => c === "?")).toBe(true);
+  expect(cells(before, "Terrain").every((c) => c === "?")).toBe(true);
+  for (const seat of state.seats)
+    state = game.submit(
+      state,
+      seat,
+      { actors: ["scout", "grunt", "grunt"] },
+      "match.loadout",
+    ).state;
+  state = game.step(state);
+  assertSpectatorFog(state);
+  const spawnExplored = Object.keys(state.explored);
+  expect(spawnExplored.length).toBeGreaterThan(0);
+  expect(spawnExplored.length).toBeLessThan(state.map.width * state.map.height);
+  const moved = submitAll(state, {
+    [s0]: {
+      orders: state.units
+        .filter((u) => u.seat === s0)
+        .map((u) => {
+          const plan = game.observe(state, s0).privateState.units.find((p) => p.id === u.id);
+          const far = [...reachCosts(plan?.reach).keys()].at(-1)?.split(",").map(Number) ?? [
+            u.x,
+            u.y,
+          ];
+          return { unit: u.id, moveTo: { x: far[0], y: far[1] } };
+        }),
+    },
+  });
+  assertSpectatorFog(moved);
+  for (const tile of spawnExplored) expect(moved.explored[tile]).toBe(true);
+  expect(Object.keys(moved.explored).length).toBeGreaterThanOrEqual(spawnExplored.length);
+  const terminal = plugin.onHostEvent?.(moved, {
+    kind: "player_time_exhausted",
+    seats: [s1],
+    phaseId: "p",
+    at: 1,
+  }) as BrState;
+  const full = plugin.publicView(terminal);
+  expect(cells(full, "Heights")).toEqual(terminal.map.tiles.flat().map((t) => t.h));
+  expect(cells(full, "Terrain")).toEqual(terminal.map.tiles.flat().map((t) => t.kind));
+});
+
+test("shots never read unseen terrain: a fogged cell on the sight line neither offers nor withholds a target", () => {
+  // The wall at (1,1) hides (2,2) and (3,2) from the ranger; the enemy at (4,1) is in plain view.
+  const rows = (cell: string) => ["00000", "0#000", `00${cell}00`, "00000", "00000"];
+  const specs = [
+    { seat: 0, cls: "ranger" as const, x: 0, y: 0 },
+    { seat: 1, cls: "grunt" as const, x: 4, y: 1 },
+  ];
+  const clear = scenario(rows("0"), specs);
+  const walled = scenario(rows("#"), specs);
+  expect(visionOf(clear, s0)).toEqual(visionOf(walled, s0));
+  expect(visionOf(clear, s0).has("2,2")).toBe(false);
+  const shotsIn = (state: BrState) => game.observe(state, s0).privateState.units[0]?.shots ?? {};
+  expect(shotsIn(walled)).toEqual(shotsIn(clear));
+  // The line from (0,3) crosses the fogged cell: offered either way, since unseen tiles count as clear.
+  expect(shotsIn(walled)["0,3"]).toEqual(["seat:1/0"]);
+  // The line from the ranger's own tile also crosses fog, yet the enemy stands in plain view.
+  expect(shotsIn(walled)["0,0"]).toEqual(["seat:1/0"]);
+  expect(game.observe(walled, s0).privateState.view).toEqual(
+    game.observe(clear, s0).privateState.view,
+  );
+  const order = {
+    orders: [
+      { unit: "seat:0/0", moveTo: { x: 0, y: 3 }, action: { kind: "attack", target: "seat:1/0" } },
+    ],
+  };
+  const landed = submitAll(clear, { [s0]: order });
+  expect(landed.lastRound.some((e) => e.kind === "attack")).toBe(true);
+  const fizzled = submitAll(walled, { [s0]: order });
+  expect(fizzled.lastRound).toContainEqual({
+    kind: "fizzle",
+    unit: "seat:0/0",
+    target: "seat:1/0",
+    reason: "no line of sight",
+  });
+  expect(game.observe(fizzled, s0).privateState.lastRound).toContainEqual({
+    kind: "fizzle",
+    unit: "seat:0/0",
+    target: "seat:1/0",
+    reason: "missed",
+  });
+});
+
 test("a wall hides an enemy from observation, attacks and memory until it is seen", () => {
   const state = scenario(
     ["0#0"],
@@ -75,7 +230,7 @@ test("a wall hides an enemy from observation, attacks and memory until it is see
   const hidden = game.observe(state, s0);
   expect(hidden.privateState.visibleEnemies).toEqual([]);
   expect(hidden.privateState.lastSeen).toEqual([]);
-  expect(hidden.privateState.units[0]?.reachable.every((r) => r.targets.length === 0)).toBe(true);
+  expect(hidden.privateState.units[0]?.shots).toEqual({});
   expect(JSON.stringify(hidden)).not.toContain("seat:1/0");
   const open = scenario(
     ["000"],
@@ -191,8 +346,14 @@ test("generated matches never leak unseen positions through observations or live
         "match.loadout",
       ).state;
     state = game.step(state);
+    const everSeen = new Set<string>();
     while (state.phase === "orders") {
       for (const seat of state.seats) assertObservationPrivacy(state, seat);
+      assertSpectatorFog(state);
+      for (const seat of state.seats)
+        if (state.teams[seat]?.placement === null)
+          for (const tile of visionOf(state, seat)) everSeen.add(tile);
+      for (const tile of Object.keys(state.explored)) expect(everSeen.has(tile)).toBe(true);
       const hidden = {
         ...state,
         units: state.units.map((u) => ({ ...u, x: 0, y: 0 })),

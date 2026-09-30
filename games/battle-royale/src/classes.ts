@@ -73,12 +73,12 @@ export interface ClassSpec {
 }
 
 export const CLASSES: Record<ClassId, ClassSpec> = {
-  scout: { cost: 2, hp: 6, move: 6, vision: 8, weapon: "knife", ability: "recon" },
-  grunt: { cost: 2, hp: 8, move: 4, vision: 5, weapon: "rifle", ability: "grenade" },
-  vanguard: { cost: 3, hp: 14, move: 4, vision: 4, weapon: "hammer", ability: "brace" },
-  ranger: { cost: 3, hp: 8, move: 4, vision: 6, weapon: "carbine", ability: "volley" },
-  medic: { cost: 3, hp: 9, move: 4, vision: 5, weapon: "pistol", ability: "heal" },
-  sniper: { cost: 4, hp: 6, move: 3, vision: 7, weapon: "longrifle", ability: "camo" },
+  scout: { cost: 2, hp: 6, move: 8, vision: 8, weapon: "knife", ability: "recon" },
+  grunt: { cost: 2, hp: 8, move: 6, vision: 5, weapon: "rifle", ability: "grenade" },
+  vanguard: { cost: 3, hp: 14, move: 5, vision: 4, weapon: "hammer", ability: "brace" },
+  ranger: { cost: 3, hp: 8, move: 6, vision: 6, weapon: "carbine", ability: "volley" },
+  medic: { cost: 3, hp: 9, move: 6, vision: 5, weapon: "pistol", ability: "heal" },
+  sniper: { cost: 4, hp: 6, move: 4, vision: 7, weapon: "longrifle", ability: "camo" },
 };
 
 export const TEAM_SIZE = 3;

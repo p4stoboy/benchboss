@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { createRng } from "@benchboss/core";
 import { TEAM_SIZE } from "../src/classes";
+import { BR_DEFAULT_RULES } from "../src/game";
 import {
   MAX_SPAWN_VISION,
   MIN_SPAWN_GAP,
@@ -25,14 +26,19 @@ test("map area covers every seat's tile allowance with a near-square shape", () 
       expect(width * height).toBeGreaterThanOrEqual(seats * tilesPerSeat);
       expect(Math.abs(width - height)).toBeLessThanOrEqual(1);
     }
-  expect(mapSize(2, 150)).toEqual({ width: 18, height: 17 });
+  expect(mapSize(2, BR_DEFAULT_RULES.tilesPerSeat)).toEqual({ width: 25, height: 24 });
 });
 
 test("at the default allowance no team can see another at spawn and every map has terrain", () => {
   expect(MAX_SPAWN_VISION).toBe(11);
   for (const seats of [2, 5, 12, 30])
     for (const seed of ["a", "b", "c"]) {
-      const map = generateMap(createRng(`${seed}:${seats}`), seats, 150, TEAM_SIZE);
+      const map = generateMap(
+        createRng(`${seed}:${seats}`),
+        seats,
+        BR_DEFAULT_RULES.tilesPerSeat,
+        TEAM_SIZE,
+      );
       expect(spawnsHidden(map)).toBe(true);
       expect(spawnGap(map)).toBeGreaterThanOrEqual(MIN_SPAWN_GAP);
       const tiles = map.tiles.flat();
@@ -41,7 +47,12 @@ test("at the default allowance no team can see another at spawn and every map ha
       );
     }
   // The live duel that spawned four tiles apart on bare ground, regenerated at the new default.
-  const duel = generateMap(createRng("c23af099485043edd91ce108dd7003d5"), 2, 150, TEAM_SIZE);
+  const duel = generateMap(
+    createRng("c23af099485043edd91ce108dd7003d5"),
+    2,
+    BR_DEFAULT_RULES.tilesPerSeat,
+    TEAM_SIZE,
+  );
   expect(spawnsHidden(duel)).toBe(true);
   expect(spawnGap(duel)).toBeGreaterThanOrEqual(MAX_SPAWN_VISION);
 });

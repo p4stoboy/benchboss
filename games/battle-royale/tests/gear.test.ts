@@ -13,7 +13,7 @@ import { LOOT_SPAWN_GAP, itemAt, scatterLoot } from "../src/loot";
 import { chebyshev, key, tileAt } from "../src/map";
 import { plugin } from "../src/plugin";
 import type { BrState, Item } from "../src/types";
-import { flatRows, game, newMatch, scenario, submitAll, unit } from "./helpers";
+import { flatRows, game, newMatch, reachCosts, scenario, submitAll, unit } from "./helpers";
 
 const s0 = mkSeatId(0);
 const s1 = mkSeatId(1);
@@ -110,8 +110,9 @@ test("a weapon pickup swaps the unit's weapon, leaves the old one behind and cha
     {},
     [{ x: 1, y: 0, kind: "weapon", weapon: "railgun" }],
   );
-  const before = game.observe(state, s0).privateState.units[0]?.reachable;
-  expect(before?.find((r) => r.x === 1)?.targets).toEqual([]);
+  const before = game.observe(state, s0).privateState.units[0];
+  expect(reachCosts(before?.reach).get("1,0")).toBe(1);
+  expect(before?.shots).toEqual({});
   const armed = submitAll(state, {
     [s0]: { orders: [{ unit: "seat:0/0", moveTo: { x: 1, y: 0 }, action: { kind: "pickup" } }] },
   });
@@ -127,7 +128,7 @@ test("a weapon pickup swaps the unit's weapon, leaves the old one behind and cha
   });
   const me = game.observe(armed, s0).privateState.units[0];
   expect(me?.range).toBe(WEAPONS.railgun.range);
-  expect(me?.reachable.find((r) => r.cost === 0)?.targets).toEqual(["seat:1/0"]);
+  expect(me?.shots["1,0"]).toEqual(["seat:1/0"]);
   const shot = submitAll(armed, {
     [s0]: { orders: [{ unit: "seat:0/0", action: { kind: "attack", target: "seat:1/0" } }] },
   });
@@ -175,7 +176,7 @@ test("a grenade lands on a tile in range without sight, hits every unit around i
   );
   // The thrower itself is walled off from every enemy; the grenade needs no sight line.
   const thrower = game.observe(state, s0).privateState.units.find((u) => u.id === "seat:0/0");
-  expect(thrower?.reachable.every((r) => r.targets.length === 0)).toBe(true);
+  expect(thrower?.shots).toEqual({});
   const range = ABILITIES.grenade.range;
   const tooFar = orders(state, s0, [
     { unit: "seat:0/0", action: { kind: "ability", at: { x: range + 1, y: 0 } } },
@@ -192,7 +193,8 @@ test("a grenade lands on a tile in range without sight, hits every unit around i
   expect(unit(thrown, "seat:1/0").hp).toBe(CLASSES.grunt.hp - blast);
   expect(unit(thrown, "seat:1/1").hp).toBe(CLASSES.scout.hp - blast);
   expect(unit(thrown, "seat:1/2").hp).toBe(CLASSES.grunt.hp);
-  expect(thrown.teams[s0]?.damageDealt).toBe(3 * blast);
+  // Two enemies were hit; the blast on the thrower's own scout is not credited.
+  expect(thrown.teams[s0]?.damageDealt).toBe(2 * blast);
   expect(thrown.lastRound.filter((e) => e.kind === "blast")).toHaveLength(3);
   expect(thrown.lastRound).toContainEqual({
     kind: "ability",
@@ -209,7 +211,7 @@ test("a grenade lands on a tile in range without sight, hits every unit around i
   expect(game.observe(thrown, s0).privateState.units[0]?.ability.ready).toBe(false);
 });
 
-test("killing your own unit with a grenade credits no kill", () => {
+test("killing your own unit with a grenade credits no kill and no damage dealt", () => {
   const state = scenario(flatRows(9, 1), [
     { seat: 0, cls: "grunt", x: 0, y: 0 },
     { seat: 0, cls: "scout", x: 4, y: 0, hp: 1 },
@@ -220,6 +222,7 @@ test("killing your own unit with a grenade credits no kill", () => {
   });
   expect(unit(next, "seat:0/1").alive).toBe(false);
   expect(next.teams[s0]?.kills).toBe(0);
+  expect(next.teams[s0]?.damageDealt).toBe(0);
 });
 
 test("brace adds armour before the same round's damage and the ability then cools down", () => {
@@ -322,7 +325,7 @@ test("recon reveals enemies behind walls and through camouflage for the next ord
   });
   const seen = game.observe(revealed, s0);
   expect(seen.privateState.visibleEnemies.map((u) => u.id)).toEqual(["seat:1/0"]);
-  expect(seen.privateState.units[0]?.reachable.every((r) => r.targets.length === 0)).toBe(true);
+  expect(seen.privateState.units[0]?.shots).toEqual({});
   expect(revealed.memory[s0]?.["seat:1/0"]?.x).toBe(3);
   const faded = submitAll(revealed, {});
   expect(game.observe(faded, s0).privateState.visibleEnemies).toEqual([]);
@@ -398,8 +401,8 @@ test("a team learns of an item when it sees the tile, remembers it out of sight 
   expect(seat1Knows).toEqual([]);
 });
 
-test("a pickup ordered onto a fogged tile is rejected identically whether or not an item lies there", () => {
-  // The wall hides (6,0) and (6,1) from the grunt at (10,2); both stay reachable around it.
+test("a fogged tile is unreachable and rejected identically whether or not an item lies there", () => {
+  // The wall hides (6,0) and (6,1) from the grunt at (10,2); both are within its move points.
   const fog = scenario(
     ["00000000000", "0000000#000", "0000000#000"],
     [
@@ -414,10 +417,15 @@ test("a pickup ordered onto a fogged tile is rejected identically whether or not
     orders(fog, s1, [
       { unit: "seat:1/0", moveTo: { x, y }, ...(pickup ? { action: { kind: "pickup" } } : {}) },
     ]);
-  expect(order(6, 1, false).accepted).toBe(true);
-  expect(order(6, 0, false).accepted).toBe(true);
-  const withItem = order(6, 1, true);
-  const without = order(6, 0, true);
-  expect(withItem.accepted).toBe(false);
-  expect(withItem.reason.replace("6,1", "")).toBe(without.reason.replace("6,0", ""));
+  const reach = reachCosts(game.observe(fog, s1).privateState.units[0]?.reach);
+  expect(reach.has("8,0")).toBe(true);
+  expect(reach.has("6,0")).toBe(false);
+  expect(reach.has("6,1")).toBe(false);
+  for (const pickup of [false, true]) {
+    const withItem = order(6, 1, pickup);
+    const without = order(6, 0, pickup);
+    expect(withItem.accepted).toBe(false);
+    expect(withItem.reason.replace("6,1", "")).toBe(without.reason.replace("6,0", ""));
+  }
+  expect(order(8, 0, false).accepted).toBe(true);
 });

@@ -51,6 +51,8 @@ export interface UnitOrder {
   unit: string;
   moveTo?: Point;
   action?: Action;
+  /** A second destination walked after the action with the move points `moveTo` left over. */
+  thenTo?: Point;
 }
 
 export interface Orders {
@@ -151,9 +153,13 @@ export interface BrState {
   /** Per seat, items by tile key as last seen; refreshed for every visible tile each round. */
   itemMemory: Record<SeatId, Record<string, SeenItem>>;
   orders: Record<SeatId, Orders>;
-  /** Resolved movement per ordered unit, computed when the order was accepted. */
-  paths: Record<SeatId, Record<string, Point[]>>;
+  /** Resolved movement per ordered unit, one path per leg, computed when the order was accepted. */
+  paths: Record<SeatId, Record<string, Point[][]>>;
   teams: Record<SeatId, TeamRecord>;
+  /** Kill credits from the most recent round resolution; gates chat delivery next turn. */
+  recentKills: Record<SeatId, number>;
+  /** Tile keys any team has ever seen; the live spectator map reveals only these. */
+  explored: Record<string, true>;
   memory: Record<SeatId, Record<string, SeenUnit>>;
   lastRound: RoundEvent[];
   history: RoundSnapshot[];

@@ -85,8 +85,14 @@ export function plans(state: BrState, seat: SeatId): UnitPlan[] {
   return computed;
 }
 
+/**
+ * Movement is planned over the tiles the team can see now: fog is impassable until seen. Shots
+ * assume unseen tiles on the sight line are clear, so the listing reads no unseen terrain; the
+ * true line is checked at resolution and a blocked shot fizzles.
+ */
 function computePlans(state: BrState, seat: SeatId): UnitPlan[] {
   const seen = visionOf(state, seat);
+  const known = (p: Point): boolean => seen.has(key(p));
   const enemies = visibleEnemies(state, seat, seen);
   const blocked = new Set(enemies.map(key));
   const own = ownUnits(state, seat);
@@ -95,14 +101,28 @@ function computePlans(state: BrState, seat: SeatId): UnitPlan[] {
     unit,
     reaches: [
       { x: unit.x, y: unit.y, cost: 0, path: [] },
-      ...reachableTiles(state.map, unit, CLASSES[unit.cls].move, blocked, passable),
+      ...reachableTiles(state.map, unit, CLASSES[unit.cls].move, blocked, passable, seen),
     ].map((reach) => ({
       ...reach,
       targets: enemies
-        .filter((enemy) => attackBlocker(state.map, reach, unit.weapon, enemy) === null)
+        .filter((enemy) => attackBlocker(state.map, reach, unit.weapon, enemy, known) === null)
         .map((enemy) => enemy.id),
     })),
   }));
+}
+
+/** Where a unit can still walk after acting at `from`, with the points its first leg left. */
+export function continuations(state: BrState, seat: SeatId, unit: Unit, from: Reach): Reach[] {
+  const seen = visionOf(state, seat);
+  const blocked = new Set(visibleEnemies(state, seat, seen).map(key));
+  // The unit vacates its own tile on the first leg, so it may end the second leg there.
+  const passable = new Set(
+    ownUnits(state, seat)
+      .filter((u) => u.id !== unit.id)
+      .map(key),
+  );
+  const remaining = CLASSES[unit.cls].move - from.cost;
+  return remaining > 0 ? reachableTiles(state.map, from, remaining, blocked, passable, seen) : [];
 }
 
 /** Items a seat knows about: everything last seen on a tile it could see. */
@@ -113,12 +133,15 @@ export const knownItemAt = (state: BrState, seat: SeatId, p: Point): SeenItem | 
   state.itemMemory[seat]?.[key(p)];
 
 /** Every visible tile's item knowledge is refreshed; unseen tiles keep their last sighting. */
-export function rememberItems(state: BrState): BrState {
+export function rememberItems(
+  state: BrState,
+  visions: Partial<Record<SeatId, Set<string>>> = {},
+): BrState {
   const itemMemory: BrState["itemMemory"] = {};
   for (const seat of state.seats) {
     const known: Record<string, SeenItem> = { ...(state.itemMemory[seat] ?? {}) };
     if (!isEliminated(state, seat)) {
-      const seen = visionOf(state, seat);
+      const seen = visions[seat] ?? visionOf(state, seat);
       for (const tile of Object.keys(known)) if (seen.has(tile)) delete known[tile];
       for (const item of state.items)
         if (seen.has(key(item))) known[key(item)] = { ...item, round: state.round };
@@ -128,12 +151,18 @@ export function rememberItems(state: BrState): BrState {
   return { ...state, itemMemory };
 }
 
+/** Sighting memory, item memory and the spectator's explored set, from one vision pass per seat. */
 export function rememberSightings(state: BrState): BrState {
   const memory: BrState["memory"] = {};
+  const explored: BrState["explored"] = { ...state.explored };
+  const visions: Partial<Record<SeatId, Set<string>>> = {};
   for (const seat of state.seats) {
     const entries: Record<string, SeenUnit> = { ...(state.memory[seat] ?? {}) };
-    if (!isEliminated(state, seat))
-      for (const enemy of visibleEnemies(state, seat))
+    if (!isEliminated(state, seat)) {
+      const seen = visionOf(state, seat);
+      visions[seat] = seen;
+      for (const tile of seen) explored[tile] = true;
+      for (const enemy of visibleEnemies(state, seat, seen))
         entries[enemy.id] = {
           id: enemy.id,
           seat: enemy.seat,
@@ -145,9 +174,10 @@ export function rememberSightings(state: BrState): BrState {
           weapon: enemy.weapon,
           round: state.round,
         };
+    }
     memory[seat] = entries;
   }
-  return rememberItems({ ...state, memory });
+  return rememberItems({ ...state, memory, explored }, visions);
 }
 
 export const samePoint = (a: Point, b: Point): boolean => a.x === b.x && a.y === b.y;
