@@ -20,4 +20,6 @@ Bun.gc = (force) => {
   process.stderr.write(`${JSON.stringify({ force, pending, writes })}\n`);
   return collect(force);
 };
-await runMatchWorker(lifecycleGame().registry);
+await runMatchWorker(lifecycleGame().registry, {
+  afterReply: process.argv.includes("--collect") ? () => Bun.gc(true) : undefined,
+});

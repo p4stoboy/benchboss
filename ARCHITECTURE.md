@@ -210,9 +210,10 @@ States and semantics:
   or excess resident memory cancels that match. Workers receive only an explicit
   environment; service credentials stay in the parent. This is fault containment,
   not an OS sandbox for untrusted code. Imports still come from approved packages.
-- The worker waits for each reply to finish writing, then forces a full Bun garbage
-  collection before reading the next command, including error replies. Temporary
-  command/serialization values leave scope first; live match history remains retained.
+- The worker waits for each reply to finish writing, then invokes the optional
+  `afterReply` cleanup hook before the next command, including error replies. The
+  default performs no explicit collection; embedding hosts own GC policy. Temporary
+  command/serialization values leave scope before the hook; live history remains retained.
 - Execution commands default to 2s, 256 MiB RSS and 8 MiB messages. Agent decision
   windows and parent persistence are outside the execution watchdog. RSS uses
   Linux `/proc` or a parent-side `ps` query on other supported systems.
