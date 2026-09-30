@@ -370,17 +370,20 @@ export function resolveTurn(state: BrState): BrState {
       damageDealt: record.damageDealt + damageDealt,
     },
   };
-  return markExplored({
-    ...state,
-    units,
-    items,
-    reveals,
-    teams,
-    events,
-    recentKills: { ...state.recentKills, [turn.seat]: kills },
-    turns: [...state.turns, { seat: turn.seat, orders: turn.orders }],
-    pending: null,
-  });
+  return markExplored(
+    {
+      ...state,
+      units,
+      items,
+      reveals,
+      teams,
+      events,
+      recentKills: { ...state.recentKills, [turn.seat]: kills },
+      turns: [...state.turns, { seat: turn.seat, orders: turn.orders }],
+      pending: null,
+    },
+    [turn.seat],
+  );
 }
 
 /** Storm, eliminations and the round's history entry once every due seat has acted. */
@@ -400,7 +403,8 @@ export function endRound(state: BrState): BrState {
     pending: null,
     round: next.round + 1,
   };
-  return finishIfDecided(markExplored(next));
+  // Storm deaths and expired reveals only shrink vision; nothing new to explore at round end.
+  return finishIfDecided(next);
 }
 
 /**

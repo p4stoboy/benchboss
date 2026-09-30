@@ -167,10 +167,13 @@ export function continuations(state: BrState, seat: SeatId, unit: Unit, from: Re
 export const visibleItems = (state: BrState, seat: SeatId, seen = visionOf(state, seat)): Item[] =>
   state.items.filter((item) => seen.has(key(item)));
 
-/** The spectator's explored set: every tile any living team sees now joins it. */
-export function markExplored(state: BrState): BrState {
+/**
+ * The spectator's explored set: every tile the given living teams see now joins it. Only a
+ * team's own turn (or the spawn) can show it new tiles, so callers pass the seats that moved.
+ */
+export function markExplored(state: BrState, seats: readonly SeatId[] = state.seats): BrState {
   const explored: BrState["explored"] = { ...state.explored };
-  for (const seat of state.seats)
+  for (const seat of seats)
     if (!isEliminated(state, seat)) for (const tile of visionOf(state, seat)) explored[tile] = true;
   return { ...state, explored };
 }
