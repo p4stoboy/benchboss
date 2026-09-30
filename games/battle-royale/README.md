@@ -246,7 +246,14 @@ you can see discloses its whole path. An `ability` event is disclosed when its
 origin tile is visible, so an enemy watches a sniper vanish but learns nothing
 after. What your team saw in earlier rounds is not repeated; remember it.
 
-## Public view
+## Spectator views
+
+The game publishes two spectator projections. The public view is fogged and is
+what the unauthenticated endpoints serve; the full view hides nothing and the
+platform gates it behind an API key (the protocol and the reference host do not
+check who asks).
+
+### Public view
 
 Live frames show the map as one `Map` table (one row per `y`, one column per
 `x`) with one integer per tile: `-1` for a tile no team has seen yet, otherwise
@@ -259,7 +266,7 @@ discoveries, so a spectator can know more of the map than any one team. Frames
 also carry team unit counts, the round, zone radius, storm damage, eliminations
 and the recent all chat. A command that changes nothing a spectator sees, such as
 a clock advance, records no frame. Unit positions, loot,
-rosters, memories and the unexplored map stay hidden
+rosters and the unexplored map stay hidden
 until the terminal frame, which is information-complete for a broadcaster:
 
 - `Loadouts`: seat, actors.
@@ -277,3 +284,22 @@ until the terminal frame, which is information-complete for a broadcaster:
   reason), storm (value = damage), death and elimination (value = placement), in
   resolution order. Blank cells mean not applicable.
 - `Chat`: the complete log.
+
+### Full view
+
+Every frame carries the whole match state, in this order: `Teams` and `Round`
+(as public); `Scores` (seat, living units, kills, damage dealt, placement or
+blank); `Terrain kinds` and the whole `Map` from the first frame; `Units` (unit,
+seat, class, x, y, hp, armour, weapon, ready round, hidden until) for every
+living unit, camouflaged ones included; `Loot` (x, y, item) for every item on
+the ground; `Orders` (seat, unit, move to, then to, action, target, at) for
+every order accepted so far this round, empty again once the round resolves;
+`Vision` (seat, y, row) with one row per living team per map row, `#` where the
+team sees the tile and `.` elsewhere, recon discs included; `Recon` (seat, x, y,
+radius, until round) for active reveals; `Events` for the round just resolved,
+in the terminal `Events` layout; `Eliminations` (as public); and the whole
+`Chat` log. A frame is recorded after every command that changes any of this,
+so a full replay has a frame per accepted order. The terminal frame appends the
+public history tables as `Loadouts`, `Rounds`, `Units by entry`, `Loot by entry`
+and `Events by entry`, so the two terminal frames disclose the same information.
+`progress` and `result` are identical in both views.
