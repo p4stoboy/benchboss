@@ -15,6 +15,7 @@ export function validateSchema(
 }
 
 export * from "./contracts";
+export * from "./frames";
 export * from "./validation";
 
 import type { ClockSnapshot, GameRevision, ResourceBalances, ResultCause } from "./contracts";
@@ -94,6 +95,12 @@ export interface SpectatorView {
   resources?: Record<string, ResourceBalances>;
 }
 
+/**
+ * One recorded step of a spectator stream. `view.blocks` holds only the blocks that differ
+ * from the stream's folded view at the previous frame (every block on the first frame);
+ * progress, result, clocks and resources are complete on every frame. Read a stream with
+ * `foldFrames`.
+ */
 export interface PublicFrame {
   seq: number;
   view: SpectatorView;

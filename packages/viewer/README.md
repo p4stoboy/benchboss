@@ -18,7 +18,7 @@ recorded view, and malformed off-page entries still fail validation.
 ## Optional canvas
 
 An optional canvas draws the same `SpectatorView` already returned by `publicView`
-and stored in replay frames. No additional state, wire field or canvas schema is
+and folded from replay frames (`foldFrames`). No additional state, wire field or canvas schema is
 required or supported. A game exports a `GameCanvasRenderer` from a separate
 browser-only package subpath; the host explicitly registers it alongside HTML:
 
@@ -48,7 +48,8 @@ missing contexts or exceptions hide only the canvas. HTML stays available.
 
 Add `theme: () => palette` to the mount options to supply `CanvasTheme` from host
 design tokens. It is read on each draw; call `update` after a theme change. Theme
-and font choices never enter persisted game state. Each render must be independent
-of earlier frames, use CSS pixels and avoid input mutation, network requests and
+and font choices never enter persisted game state. Each render takes a complete
+view (the host folds recorded frames before calling it) and must be independent
+of earlier renders, use CSS pixels and avoid input mutation, network requests and
 timers. Renderer code is trusted bundled code, never loaded from public data. The
 root viewer export does not import browser code or game renderers.
