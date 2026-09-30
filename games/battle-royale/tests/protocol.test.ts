@@ -1,9 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import { createRng, mkSeatId } from "@benchboss/core";
 import { createRegistry } from "@benchboss/host";
+import { foldFrames } from "@benchboss/protocol";
 import {
   checkGameConformance,
   decisionId,
+  fullFrames,
   newSession,
   observe,
   publicFrames,
@@ -244,4 +246,87 @@ describe("generated conformance", () => {
     });
     expect(reports.filter((r) => !r.ok)).toEqual([]);
   }, 600_000);
+});
+
+test("a turn's full frame re-sends vision only for seats whose vision could have changed", () => {
+  const lobby = [mkSeatId(0), mkSeatId(1), mkSeatId(2), mkSeatId(3)];
+  const registry = createRegistry([plugin]);
+  const config = registry.buildConfig("br-vision", "battle-royale", lobby);
+  let current = newSession({
+    ...plugin,
+    game: plugin.makeGame(),
+    config,
+    seed: "br-vision",
+    defaultAction: plugin.safeDefault,
+  });
+  current = step(current, { kind: "advanceTime", at: 0 }).session;
+  for (const seat of lobby)
+    current = step(current, {
+      kind: "callTool",
+      seat,
+      tool: "match.loadout",
+      input: { actors: ["scout", "grunt", "medic"] },
+    }).session;
+  const rng = createRng("vision-frames");
+  const game = plugin.makeGame();
+  const acted: (string | null)[] = [];
+  for (let guard = 0; guard < 400 && !game.isTerminal(current.state); guard++) {
+    const seat = lobby.find(
+      (s) =>
+        (observe(current, s) as { participation: { status: string } }).participation.status ===
+        "acting",
+    ) as never;
+    const before = fullFrames(current).length;
+    current = step(current, {
+      kind: "callTool",
+      seat,
+      tool: "match.orders",
+      input: randomOrders(current.state, seat, rng),
+    }).session;
+    for (let i = before; i < fullFrames(current).length; i++) acted[i] = seat;
+  }
+  const frames = fullFrames(current);
+  expect(frames.length).toBeGreaterThan(lobby.length * 4);
+  // Spawn is the first frame in which anyone sees a tile; loadout frames carry blank rows.
+  const spawn = frames.findIndex((f) =>
+    f.view.blocks.some(
+      (b) =>
+        b.title.startsWith("Vision ") &&
+        "rows" in b &&
+        b.rows.some((r) => String(r[1]).includes("#")),
+    ),
+  );
+  expect(spawn).toBeGreaterThan(0);
+  expect(
+    frames[spawn]?.view.blocks.filter((b) => b.title.startsWith("Vision ")).map((b) => b.title),
+  ).toEqual(lobby.map((seat) => `Vision ${seat}`));
+  let fewer = 0;
+  const table = (view: ReturnType<typeof foldFrames>, title: string) => {
+    const block = view?.blocks.find((b) => b.title === title);
+    return block && "rows" in block ? block.rows : [];
+  };
+  const roster = (view: ReturnType<typeof foldFrames>) =>
+    new Map(table(view, "Units").map((r) => [String(r[0]), r.slice(1, 5).join(",")]));
+  for (let i = spawn + 1; i < frames.length; i++) {
+    const frame = frames[i];
+    if (!frame) throw Error("missing frame");
+    const before = foldFrames(frames, i);
+    const after = foldFrames(frames, i + 1);
+    // Vision may change for the acting seat, for a seat whose roster or positions changed, and
+    // for a seat whose recon disc expired with the round; nobody else's block may be re-sent.
+    const allowed = new Set<string>();
+    if (acted[i]) allowed.add(acted[i] as string);
+    const now = roster(after);
+    const then = roster(before);
+    for (const id of new Set([...now.keys(), ...then.keys()]))
+      if (now.get(id) !== then.get(id)) allowed.add(id.split("/")[0] as string);
+    if (frame.view.blocks.some((b) => b.title === "Round"))
+      for (const r of table(before, "Recon")) allowed.add(String(r[0]));
+    const sent = frame.view.blocks
+      .filter((b) => b.title.startsWith("Vision "))
+      .map((b) => b.title.slice("Vision ".length));
+    for (const seat of sent) expect(allowed.has(seat)).toBe(true);
+    if (sent.length && sent.length < lobby.length) fewer += 1;
+  }
+  expect(fewer).toBeGreaterThan(0);
 });

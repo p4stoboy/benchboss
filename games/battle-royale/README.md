@@ -8,7 +8,7 @@ every team has acted, a closing storm damages anyone outside the zone. The last
 team with a living unit wins. Combat is deterministic; the match seed only
 shapes the map, loot, spawn assignment and nothing else.
 
-Game ID: `battle-royale`. Revision: `3.1.0`. Seats: 2–30 (default 4). Records
+Game ID: `battle-royale`. Revision: `3.2.0`. Seats: 2–30 (default 4). Records
 made under an earlier revision keep their identity: their frames still render,
 and re-executing them names an unavailable revision rather than these rules.
 
@@ -346,8 +346,10 @@ seat, class, x, y, hp, armour, weapon, ready round, hidden until) for every
 living unit, camouflaged ones included; `Loot` (x, y, item) for every item on
 the ground; `Orders` (seat, unit, move to, then to, action, target, at) for
 every turn resolved so far this round, empty again once the round ends;
-`Vision` (seat, y, row) with one row per living team per map row, `#` where the
-team sees the tile and `.` elsewhere, recon discs included; `Recon` (seat, x, y,
+one `Vision <seat>` table (y, row) per seat in seat order, holding one row per map
+row for a living team, `#` where the team sees the tile and `.` elsewhere, recon
+discs included, and no rows once the team is out (so a turn's frame carries the
+acting team's vision, not every team's); `Recon` (seat, x, y,
 radius, until round) for active reveals; `Events` in the terminal `Events`
 layout for the previous round (under its history entry number) followed by
 this round so far (under the entry it will become); `Eliminations` (as public);

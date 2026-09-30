@@ -4,6 +4,7 @@ import type {
   HostEvent,
   Participation,
   ResourceAllowances,
+  SpectatorBlock,
   SpectatorView,
   TimingPolicy,
 } from "@benchboss/protocol";
@@ -387,14 +388,27 @@ const orderRows = (state: BrState): (string | number)[][] =>
     ]),
   );
 
-const visionRows = (state: BrState): (string | number)[][] =>
-  aliveSeats(state).flatMap((seat) => {
-    const seen = visionOf(state, seat);
-    return state.map.tiles.map((row, y) => [
-      seat,
-      y,
-      row.map((_, x) => (seen.has(`${x},${y}`) ? "#" : ".")).join(""),
-    ]);
+/**
+ * One `Vision <seat>` table per seat, in seat order for every seat in the match so the block
+ * set and order never change across a stream. A living seat's block holds one row per map row;
+ * an eliminated seat's block is empty. Per-seat blocks keep a turn's frame to the acting
+ * seat's rows (plus any seat whose units it changed) instead of every seat's.
+ */
+const visionBlocks = (state: BrState): SpectatorBlock[] =>
+  state.seats.map((seat) => {
+    const alive = aliveSeats(state).includes(seat);
+    const seen = alive ? visionOf(state, seat) : new Set<string>();
+    return {
+      kind: "table",
+      title: `Vision ${seat}`,
+      columns: ["Y", "Row"],
+      rows: alive
+        ? state.map.tiles.map((row, y) => [
+            y,
+            row.map((_, x) => (seen.has(`${x},${y}`) ? "#" : ".")).join(""),
+          ])
+        : [],
+    };
   });
 
 /**
@@ -481,7 +495,7 @@ export function brFullView(state: BrState): SpectatorView {
         columns: ["Seat", "Unit", "Move to", "Then to", "Action", "Target", "At"],
         rows: orderRows(state),
       },
-      { kind: "table", title: "Vision", columns: ["Seat", "Y", "Row"], rows: visionRows(state) },
+      ...visionBlocks(state),
       {
         kind: "table",
         title: "Recon",
@@ -521,7 +535,7 @@ export const plugin = {
   manifest: {
     protocolVersion: 1,
     id: BR_GAME_ID,
-    revision: "3.1.0",
+    revision: "3.2.0",
     title: "Battle Royale",
     description:
       "Teams of three armed actors with class abilities fight over loot on a fogged heightmap; one team acts at a time in rotating initiative, a closing storm and last team standing.",

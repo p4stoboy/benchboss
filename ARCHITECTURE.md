@@ -281,7 +281,7 @@ States and semantics:
 
 States and semantics:
 
-- Catalog revisions are `1.0.0` for RPS, Spy and Chess and `3.1.0` for Battle
+- Catalog revisions are `1.0.0` for RPS, Spy and Chess and `3.2.0` for Battle
   Royale. RPS supports 2–10 seats; Spy supports 5/7/9; Chess supports 2; Battle
   Royale supports 2–30 (default 4). Each game has one implementation; unavailable
   revisions fail, so records made under an earlier revision render from their
@@ -433,8 +433,10 @@ States and semantics:
   (`plugin.fullView`) is the complete-info projection recorded as `fullFrames`: the
   folded view carries `Scores`, the whole `Map`, `Units` (every living unit, camouflaged
   included, with `hiddenUntil`), `Loot`, `Orders` (every turn resolved so far this
-  round from `state.turns`; empty after round end), `Vision` (one `#`/`.` row per
-  living seat per map row from `visionOf`), `Recon` (active reveals), `Events` for
+  round from `state.turns`; empty after round end), one `Vision <seat>` table per
+  seat in `state.seats` order (one `#`/`.` row per map row from `visionOf` while the seat
+  lives, no rows after elimination; the fixed block set keeps frame deltas to the seats
+  whose vision changed), `Recon` (active reveals), `Events` for
   `state.lastRound` under entry `history.length − 1` then `state.events` under
   `history.length`, and the whole chat, with `Teams` (status `N units, <turn status>`),
   `Round`, `Turn order`, `Eliminations`, `progress` and `result` identical to the public
