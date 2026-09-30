@@ -1,6 +1,14 @@
 import { describe, expect, test } from "bun:test";
 import { type MatchConfig, type SeatId, mkSeatId } from "@benchboss/core";
-import type { HostEvent, Participation, SpectatorView, TimingPolicy } from "@benchboss/protocol";
+import {
+  type HostEvent,
+  type Participation,
+  type PublicFrame,
+  type SpectatorBlock,
+  type SpectatorView,
+  type TimingPolicy,
+  foldFrames,
+} from "@benchboss/protocol";
 import type { GamePlugin } from "../src/game-plugin";
 import {
   clockSnapshot,
@@ -641,6 +649,102 @@ describe("replay artifact denial-of-service boundaries", () => {
     expect(publicFrames(idle)).toHaveLength(publicFrames(acted).length);
     expect(JSON.stringify(publicFrames(idle))).not.toContain("Secret");
     expect(fullView(idle).blocks[0]).toMatchObject({ title: "Secret" });
+  });
+
+  test("frames after the first carry only the blocks that changed and fold back to the projection", () => {
+    const quiet = { playerTotalMs: null, decisionLimitMs: null };
+    const { session } = fixture({
+      timing: quiet,
+      fullView: (state) => ({
+        version: 1,
+        progress: { phase: state.phase, label: "Fixture", current: state.turns, total: null },
+        blocks: [
+          { kind: "text", title: "Every turn", text: `turns ${state.turns}` },
+          { kind: "text", title: "Even turns", text: `pair ${Math.floor(state.turns / 2)}` },
+          { kind: "text", title: "Constant", text: "fixed" },
+          ...(state.turns >= 3
+            ? [{ kind: "text" as const, title: "Late", text: `since 3, now ${state.turns}` }]
+            : []),
+        ],
+        result: null,
+      }),
+    });
+    let s = time(session, 0);
+    const titles = (frames: readonly PublicFrame[], at: number) =>
+      frames[at]?.view.blocks.map((b) => b.title);
+    expect(titles(fullFrames(s), 0)).toEqual(["Every turn", "Even turns", "Constant"]);
+    for (let turn = 1; turn <= 4; turn++) {
+      s = act(s, seats[(turn - 1) % 2]);
+      const frames = fullFrames(s);
+      expect(frames).toHaveLength(turn + 1);
+      const folded = foldFrames(frames);
+      const { clocks: _c, ...projected } = fullView(s);
+      const { clocks: _f, ...foldedView } = folded ?? { clocks: undefined };
+      expect(foldedView).toEqual(projected);
+      expect(folded?.blocks.map((b) => b.title)).toEqual([
+        "Every turn",
+        "Even turns",
+        "Constant",
+        ...(turn >= 3 ? ["Late"] : []),
+      ]);
+    }
+    expect(titles(fullFrames(s), 1)).toEqual(["Every turn"]);
+    expect(titles(fullFrames(s), 2)).toEqual(["Every turn", "Even turns"]);
+    expect(titles(fullFrames(s), 3)).toEqual(["Every turn", "Late"]);
+    expect(titles(fullFrames(s), 4)).toEqual(["Every turn", "Even turns", "Late"]);
+    expect(JSON.stringify(fullFrames(s).slice(1))).not.toContain("fixed");
+    expect(publicFrames(s)).toHaveLength(publicFrames(time(session, 0)).length + 4);
+    for (const frame of publicFrames(s).slice(1))
+      expect(frame.view.blocks.length).toBeLessThan(
+        (publicFrames(s)[0]?.view.blocks.length ?? 0) + 1,
+      );
+  });
+
+  test("recording rejects a projection that duplicates, removes or reorders a block", () => {
+    const quiet = { playerTotalMs: null, decisionLimitMs: null };
+    const project = (state: State, blocks: SpectatorBlock[]): SpectatorView => ({
+      version: 1,
+      progress: { phase: state.phase, label: "Fixture", current: state.turns, total: null },
+      blocks,
+      result: null,
+    });
+    const text = (title: string, value: string): SpectatorBlock => ({
+      kind: "text",
+      title,
+      text: value,
+    });
+    expect(() =>
+      fixture({
+        timing: quiet,
+        fullView: (state) => project(state, [text("A", "1"), text("A", "2")]),
+      }),
+    ).toThrow('duplicate spectator block "A"');
+    const removed = fixture({
+      timing: quiet,
+      fullView: (state) =>
+        project(state, state.turns === 0 ? [text("A", "1"), text("B", "1")] : [text("A", "2")]),
+    });
+    expect(() => act(time(removed.session, 0))).toThrow('spectator block "B" removed');
+    const reordered = fixture({
+      timing: quiet,
+      fullView: (state) =>
+        project(
+          state,
+          state.turns === 0 ? [text("A", "1"), text("B", "1")] : [text("B", "1"), text("A", "2")],
+        ),
+    });
+    expect(() => act(time(reordered.session, 0))).toThrow("spectator block order changed");
+    const inserted = fixture({
+      timing: quiet,
+      fullView: (state) =>
+        project(
+          state,
+          state.turns === 0
+            ? [text("A", "1"), text("B", "1")]
+            : [text("A", "1"), text("C", "1"), text("B", "1")],
+        ),
+    });
+    expect(() => act(time(inserted.session, 0))).toThrow("spectator block order changed");
   });
 
   test("equal host timestamps do not accumulate clock commands or frames", () => {

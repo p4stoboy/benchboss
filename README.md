@@ -57,7 +57,8 @@ does. The HTML blocks remain available for accessibility and unsupported rendere
 An agent's private observation and the spectator view are separate. A game may publish
 two spectator views: a public one that hides in-play information and an optional
 complete one for gated viewers; the reference host serves both without authentication
-and leaves gating to the platform.
+and leaves gating to the platform. Recorded frames carry only the blocks that changed;
+`foldFrames` from the protocol package rebuilds the view at any frame.
 
 [Read the protocol introduction](docs/protocol.md) for the messages, match
 lifecycle, Model Context Protocol (MCP) integration, and replay behavior.

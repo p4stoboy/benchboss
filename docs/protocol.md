@@ -175,7 +175,16 @@ Games produce a public view separately from each player's observation, and may a
 a second, complete-info view for gated spectators (`fullView`). Both use
 shared blocks such as text, tables, participants and progress, plus explicit
 win/loss/draw outcomes when the match ends, and the two views report the same
-outcome. Authentication for the complete-info view is a host concern, not part of
+outcome. Block titles are unique within a view, a block never leaves a view once it
+has appeared, and blocks keep their order with new ones appended.
+
+A recorded presentation is a list of frames `{ seq, view }`, one per execution-log
+event that changed the view. Each frame's `progress`, `result`, `clocks` and
+`resources` are complete; its `blocks` are only the blocks that changed since the
+previous frame of that stream (every block on the first frame, possibly none on a
+later one). `foldFrames(frames, count?)` from `@benchboss/protocol` returns the
+complete view after the first `count` frames; renderers fold forward for live play
+and replay seeking instead of reading a frame's blocks as a whole view. Authentication for the complete-info view is a host concern, not part of
 the protocol: the reference host serves it openly. A viewer renders those blocks without
 needing a new interface for every game. Games may also ship an optional browser
 renderer that draws directly from this same `SpectatorView`. It requires no extra
@@ -187,13 +196,15 @@ blocks available. See the
 
 The reference host exposes:
 
-- `GET /match/:id/view`: the current public view, or the final view after completion.
+- `GET /match/:id/view`: the current public view, or the folded recorded stream after
+  completion.
 - `GET /match/:id/view/full`: the complete-info view when the game has one, otherwise
   the public view.
 - `GET /match/:id`: the completed match record.
-- `GET /replay/:id/presentation`: recorded public frames for replay display.
-- `GET /replay/:id/presentation/full`: recorded complete-info frames; `404` for a game
-  without a full projector.
+- `GET /replay/:id/presentation`: recorded public frames (block deltas) for replay
+  display.
+- `GET /replay/:id/presentation/full`: recorded complete-info frames (block deltas);
+  `404` for a game without a full projector.
 - `GET /replay/:id`: the completed execution log.
 - `GET /replay/:id/verify`: replay verification against the recorded configuration,
   seed and game revision.

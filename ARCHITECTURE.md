@@ -96,10 +96,12 @@ States and semantics:
   results stay in the acting agent's observation/result path.
 - `packages/referee/src/conformance.ts`: reusable seeded acceptance checks
   for every advertised seat count, defaults/generated actions, bounded progress,
-  explicit outcomes, replay, deterministic public and full frames, and (for games
-  with `fullView`) a full-view `result` canonically equal to the public one at every
-  step. Game privacy scenarios remain game-owned; the helper imports no official
-  package or test framework.
+  explicit outcomes, replay, deterministic public and full frames, each recorded
+  stream folding to its projection at the end of a run, and (for games with
+  `fullView`) a full-view `result` canonically equal to the public one at every step.
+  A projection that breaks the frame-stream contract (duplicate, removed or reordered
+  block) surfaces as the referee's recording error. Game privacy scenarios remain
+  game-owned; the helper imports no official package or test framework.
 
 States and semantics:
 
@@ -119,6 +121,17 @@ States and semantics:
 - Allowances use safe integer units and explicit match/phase/decision reset scopes.
   Public clock/balance metadata appears only under declared visibility; projector
   output cannot override runtime privacy.
+- Frame streams are block deltas. `PublicFrame.view.progress`, `result`, `clocks` and
+  `resources` are complete on every frame; `view.blocks` holds the blocks whose
+  content differs from the stream's folded view at the previous frame (all blocks on
+  the first frame, possibly none later). Blocks are identified by `title`, unique
+  within a view; a block once present stays present in every later folded view (a
+  projector empties a block rather than dropping it); blocks already in the stream
+  keep their order and new blocks follow them, so folded order equals projected
+  order. Recording throws `duplicate spectator block "T"`, `spectator block "T"
+  removed` or `spectator block order changed` when a projection violates this, and
+  the host aborts the match as a game error. A stream of complete frames folds to
+  each frame's own view, so `foldFrames` reads every recorded presentation.
 - Session bindings require `defaultAction` with exact tool/input, sourced from
   the plugin safe default. Invalid or ambiguous defaults fail without changing state.
 - Accepted actions advance only that seat's decision counter. Phase resolution
@@ -131,19 +144,22 @@ States and semantics:
   terminal resolution both append seed reveal, resolved config, score and result
   exactly once; terminal matches reject further commands.
 - Projectors snapshot initial state and actual transitions into frames, the public
-  projector into `frames` and the full projector into `fullFrames`, each stream
-  appending only when its view differs from that stream's last frame apart from
-  clocks. Both projections receive the same runtime clock/resource metadata. Readers
-  clone frame/view data. A session without a public projector has no public view;
-  host bindings always provide one. A session without a full projector has an empty
-  `fullFrames` and `fullView` throws.
+  projector into `frames` and the full projector into `fullFrames`. `frameTips`
+  holds each stream's folded view; `recordFrame` appends only when the projection
+  differs from the tip apart from clocks, and the appended frame carries only the
+  blocks that changed (`changedBlocks`), every block on a stream's first frame. Both
+  projections receive the same runtime clock/resource metadata. Readers clone
+  frame/view data and fold a stream with `foldFrames` from
+  `packages/protocol/src/frames.ts`. A session without a public projector has no
+  public view; host bindings always provide one. A session without a full projector
+  has an empty `fullFrames` and `fullView` throws.
 
 ```mermaid
 flowchart LR
   command[Agent action or default] --> validate[Seat and schema validation]
   validate --> submit[Game submission]
   submit --> resolve[Resolve when ready]
-  resolve --> frame[Public frame and decision update]
+  resolve --> frame[Changed-block frame per stream and decision update]
   frame --> terminal[Terminal metadata when finished]
 ```
 
@@ -194,6 +210,10 @@ States and semantics:
   or excess resident memory cancels that match. Workers receive only an explicit
   environment; service credentials stay in the parent. This is fault containment,
   not an OS sandbox for untrusted code. Imports still come from approved packages.
+- The worker waits for each reply to finish writing, then invokes the optional
+  `afterReply` cleanup hook before the next command, including error replies. The
+  default performs no explicit collection; embedding hosts own GC policy. Temporary
+  command/serialization values leave scope before the hook; live history remains retained.
 - Execution commands default to 2s, 256 MiB RSS and 8 MiB messages. Agent decision
   windows and parent persistence are outside the execution watchdog. RSS uses
   Linux `/proc` or a parent-side `ps` query on other supported systems.
@@ -217,7 +237,8 @@ States and semantics:
 - Public endpoints include `/games`, `/capabilities`, `/match/:id/view`, terminal
   `/match/:id` and `/replay/:id` with `/presentation` and `/verify` variants.
   Complete-info variants `/match/:id/view/full` (live: the full projection, or the
-  public view when the game has none; after completion: the last full frame) and
+  public view when the game has none; after completion: the recorded full stream
+  folded with `foldFrames`; `/match/:id/view` likewise folds the public stream) and
   `/replay/:id/presentation/full` (`record.fullPresentation`; 404 when the game has no
   full projector). The reference host gates nothing; the platform mints keys for the
   full variants. Full execution artifacts and seed are terminal-only; live views use
@@ -365,8 +386,8 @@ States and semantics:
   `h * kinds + kindIndex` from `tileCode` in `games/battle-royale/src/map.ts`), counts,
   zone, eliminations and the 50 most recent chat lines and are independent of
   positions, loot and rosters. The terminal view shows the whole map. `brFullView`
-  (`plugin.fullView`) is the complete-info projection recorded as `fullFrames`: every
-  frame carries `Scores`, the whole `Map`, `Units` (every living unit, camouflaged
+  (`plugin.fullView`) is the complete-info projection recorded as `fullFrames`: the
+  folded view carries `Scores`, the whole `Map`, `Units` (every living unit, camouflaged
   included, with `hiddenUntil`), `Loot`, `Orders` (accepted so far this round; empty
   after resolution), `Vision` (one `#`/`.` row per living seat per map row from
   `visionOf`), `Recon` (active reveals), `Events` for `state.lastRound` and the whole
