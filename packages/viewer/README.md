@@ -3,6 +3,18 @@
 `renderSpectatorView(view)` validates and escapes the shared HTML blocks. It runs
 without DOM APIs and remains the portable fallback for every game and replay.
 
+Table and list histories are validated in full regardless of length. To bound
+rendered rows/items, pass `{ pageSize: 100, blockPages: { 2: 1 } }`: this selects
+the second page of block 2 and the first page of other histories. Omit options
+to render all entries. Invalid page sizes throw; missing/invalid page indices
+start at zero and indices beyond the history clamp to its last page.
+
+Paged blocks include first/previous/next/last buttons. Hosts handle clicks using
+the numeric `data-view-block` and `data-view-page` attributes, update their page
+map and render again. `data-view-nav` identifies the control for focus restoration.
+The host owns event listeners, styling and disposal. Page state stays outside the
+recorded view, and malformed off-page entries still fail validation.
+
 ## Optional canvas
 
 An optional canvas draws the same `SpectatorView` already returned by `publicView`
