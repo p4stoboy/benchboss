@@ -46,8 +46,16 @@ export interface WorkerReply {
   result?: SubmitEnvelope;
 }
 
+export interface MatchWorkerOptions {
+  /** Runs after each reply is flushed and before the next command. Host-owned cleanup. */
+  afterReply?: () => void;
+}
+
 // Invoked only in the child entry point. The parent owns all durable side effects.
-export async function runMatchWorker(registry: GameRegistry): Promise<void> {
+export async function runMatchWorker(
+  registry: GameRegistry,
+  options: MatchWorkerOptions = {},
+): Promise<void> {
   let spec: MatchSpec | undefined;
   let sampledAt = monotonicEpochMs();
   let artifact: MatchArtifact | undefined;
@@ -130,7 +138,7 @@ export async function runMatchWorker(registry: GameRegistry): Promise<void> {
   for await (const line of createInterface({ input: process.stdin })) {
     await writeReply(line);
     // Command/snapshot/serialization temporaries have left scope and stdout has
-    // released its buffer. Retain match state, collect garbage before more work.
-    Bun.gc(true);
+    // released its buffer. The embedding host owns any cleanup policy.
+    options.afterReply?.();
   }
 }
