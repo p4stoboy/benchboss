@@ -165,17 +165,19 @@ function assertFullView(state: BrState): void {
   );
   expect(rowsOf(view, "Loot").map((r) => [r[0], r[1]])).toEqual(state.items.map((i) => [i.x, i.y]));
   expect(rowsOf(view, "Orders")).toHaveLength(state.turns.reduce((n, t) => n + t.orders.length, 0));
-  const vision = rowsOf(view, "Vision");
+  expect(view.blocks.filter((b) => b.title.startsWith("Vision ")).map((b) => b.title)).toEqual(
+    state.seats.map((seat) => `Vision ${seat}`),
+  );
   for (const seat of state.seats) {
-    const mine = vision.filter((r) => r[0] === seat);
+    const mine = rowsOf(view, `Vision ${seat}`);
     if (state.teams[seat]?.placement !== null) {
       expect(mine).toEqual([]);
       continue;
     }
     const seen = visionOf(state, seat);
-    expect(mine.map((r) => r[1])).toEqual(state.map.tiles.map((_, y) => y));
+    expect(mine.map((r) => r[0])).toEqual(state.map.tiles.map((_, y) => y));
     for (const r of mine)
-      [...String(r[2])].forEach((ch, x) => expect(ch === "#").toBe(seen.has(`${x},${r[1]}`)));
+      [...String(r[1])].forEach((ch, x) => expect(ch === "#").toBe(seen.has(`${x},${r[0]}`)));
   }
   expect(rowsOf(view, "Recon").map((r) => [r[0], r[1], r[2], r[3], r[4]])).toEqual(
     state.reveals
