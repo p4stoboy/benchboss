@@ -402,6 +402,14 @@ States and semantics:
   Optional runtime clocks and public named balances use generic presentation.
   Unsupported versions/kinds or malformed metadata fail rendering validation.
   Viewers have no seat controls.
+- Table rows and list items are validated in full without a history-length cap;
+  structural metadata retains its existing bounds. `renderSpectatorView` renders
+  all entries by default. Optional `pageSize` is a positive safe integer and
+  `blockPages` selects zero-based pages per block index. Missing/invalid indices
+  start at zero; oversized indices clamp to the last page. Pagination emits
+  escaped HTML and first/previous/next/last buttons with `data-view-block`,
+  `data-view-page` and `data-view-nav`; hosts own handlers and page state.
+  Rendering never changes recorded views, and off-page malformed data still fails.
 - Canvas is an optional browser renderer of the existing `SpectatorView`, with no
   additional wire fields, generic state schema or renderer version. `GameCanvasRenderer`
   declares an existing `GameRevision`, positive finite aspect ratio and synchronous

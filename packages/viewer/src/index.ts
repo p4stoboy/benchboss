@@ -27,6 +27,8 @@ const isNumber = (value: unknown): value is number =>
 const isScalar = (value: unknown): value is string | number => isText(value) || isNumber(value);
 const isArrayOf = <T>(value: unknown, guard: (item: unknown) => item is T): value is T[] =>
   Array.isArray(value) && value.length <= MAX_ITEMS && value.every(guard);
+const isHistoryOf = <T>(value: unknown, guard: (item: unknown) => item is T): value is T[] =>
+  Array.isArray(value) && value.every(guard);
 
 const isResult = (value: unknown): value is GameResult | null =>
   value === null ||
@@ -66,13 +68,13 @@ const isBlock = (value: unknown): value is SpectatorBlock => {
     return isNumber(value.current) && (value.total === null || isNumber(value.total));
   if (value.kind === "table" && isArrayOf(value.columns, isText)) {
     const columns = value.columns;
-    return isArrayOf(
+    return isHistoryOf(
       value.rows,
       (row): row is (string | number)[] =>
         isArrayOf(row, isScalar) && row.length === columns.length,
     );
   }
-  if (value.kind === "list") return isArrayOf(value.items, isText);
+  if (value.kind === "list") return isHistoryOf(value.items, isText);
   return false;
 };
 
@@ -104,7 +106,34 @@ export const isSpectatorView = (value: unknown): value is SpectatorView =>
           ),
       )));
 
-const renderBlock = (block: SpectatorBlock): string => {
+export interface SpectatorRenderOptions {
+  pageSize?: number;
+  blockPages?: Readonly<Record<number, number>>;
+}
+
+const historyPage = <T>(
+  items: T[],
+  blockIndex: number,
+  title: string,
+  options: SpectatorRenderOptions,
+): { items: T[]; controls: string } => {
+  const size = options.pageSize;
+  if (size === undefined || items.length <= size) return { items, controls: "" };
+  const last = Math.ceil(items.length / size) - 1;
+  const requested = options.blockPages?.[blockIndex] ?? 0;
+  const page = Number.isSafeInteger(requested) && requested >= 0 ? Math.min(requested, last) : 0;
+  const start = page * size;
+  const button = (label: string, nav: string, target: number, disabled: boolean) =>
+    `<button type="button" data-view-block="${blockIndex}" data-view-page="${target}" data-view-nav="${nav}"${disabled ? " disabled" : ""}>${label}</button>`;
+  const controls = `<nav class="bb-view-pagination" aria-label="${escapeHtml(title)} pages">${button("First", "first", 0, page === 0)}${button("Previous", "previous", Math.max(0, page - 1), page === 0)}<span role="status">${start + 1}–${Math.min(start + size, items.length)} of ${items.length}</span>${button("Next", "next", Math.min(last, page + 1), page === last)}${button("Last", "last", last, page === last)}</nav>`;
+  return { items: items.slice(start, start + size), controls };
+};
+
+const renderBlock = (
+  block: SpectatorBlock,
+  index: number,
+  options: SpectatorRenderOptions,
+): string => {
   const title = `<h3 class="bb-view-title">${escapeHtml(block.title)}</h3>`;
   if (block.kind === "text")
     return `<section class="bb-view-block">${title}<p>${escapeHtml(block.text)}</p></section>`;
@@ -117,16 +146,27 @@ const renderBlock = (block: SpectatorBlock): string => {
       return `<section class="bb-view-block">${title}<span class="bb-view-count">${escapeHtml(block.current)}</span></section>`;
     return `<section class="bb-view-block">${title}<progress value="${escapeHtml(block.current)}" max="${escapeHtml(block.total)}"></progress></section>`;
   }
-  if (block.kind === "table")
-    return `<section class="bb-view-block">${title}<table><thead><tr>${block.columns.map((cell) => `<th>${escapeHtml(cell)}</th>`).join("")}</tr></thead><tbody>${block.rows.map((row) => `<tr>${row.map((cell) => `<td>${escapeHtml(cell)}</td>`).join("")}</tr>`).join("")}</tbody></table></section>`;
-  return `<section class="bb-view-block">${title}<ul>${block.items.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul></section>`;
+  if (block.kind === "table") {
+    const page = historyPage(block.rows, index, block.title, options);
+    return `<section class="bb-view-block">${title}${page.controls}<table><thead><tr>${block.columns.map((cell) => `<th>${escapeHtml(cell)}</th>`).join("")}</tr></thead><tbody>${page.items.map((row) => `<tr>${row.map((cell) => `<td>${escapeHtml(cell)}</td>`).join("")}</tr>`).join("")}</tbody></table></section>`;
+  }
+  const page = historyPage(block.items, index, block.title, options);
+  return `<section class="bb-view-block">${title}${page.controls}<ul>${page.items.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul></section>`;
 };
 
 const renderClock = (seat: string, clock: ClockSnapshot): string =>
   `<tr><th>${escapeHtml(seat)}</th><td>${clock.remainingMs === null ? "Unlimited" : `${escapeHtml(clock.remainingMs)} ms`}</td><td>${clock.running ? "running" : "paused"}</td><td>${clock.deadline === null ? "None" : escapeHtml(clock.deadline)}</td></tr>`;
 
-export const renderSpectatorView = (view: SpectatorView): string => {
+export const renderSpectatorView = (
+  view: SpectatorView,
+  options: SpectatorRenderOptions = {},
+): string => {
   if (!isSpectatorView(view)) throw new TypeError("Unsupported or malformed spectator view");
+  if (
+    options.pageSize !== undefined &&
+    (!Number.isSafeInteger(options.pageSize) || options.pageSize <= 0)
+  )
+    throw new RangeError("pageSize must be a positive safe integer");
   const clocks = view.clocks
     ? `<section class="bb-view-block"><h3 class="bb-view-title">Clocks</h3><table><thead><tr><th>Seat</th><th>Remaining</th><th>Status</th><th>Deadline</th></tr></thead><tbody>${Object.entries(
         view.clocks,
@@ -150,5 +190,5 @@ export const renderSpectatorView = (view: SpectatorView): string => {
     view.result === null
       ? ""
       : `<footer class="bb-view-result"><strong>Result</strong> ${escapeHtml(view.result.summary)}</footer>`;
-  return `<div class="bb-spectator-view" data-view-version="1"><header class="bb-view-header"><span>${escapeHtml(view.progress.label)}</span><span>${escapeHtml(view.progress.phase)}</span></header>${view.blocks.map(renderBlock).join("")}${clocks}${resources}${result}</div>`;
+  return `<div class="bb-spectator-view" data-view-version="1"><header class="bb-view-header"><span>${escapeHtml(view.progress.label)}</span><span>${escapeHtml(view.progress.phase)}</span></header>${view.blocks.map((block, index) => renderBlock(block, index, options)).join("")}${clocks}${resources}${result}</div>`;
 };
