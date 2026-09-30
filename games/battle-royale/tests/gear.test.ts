@@ -13,7 +13,7 @@ import { LOOT_SPAWN_GAP, itemAt, scatterLoot } from "../src/loot";
 import { chebyshev, key, tileAt } from "../src/map";
 import { plugin } from "../src/plugin";
 import type { BrState, Item } from "../src/types";
-import { flatRows, game, newMatch, scenario, submitAll, unit } from "./helpers";
+import { flatRows, game, newMatch, reachCosts, scenario, submitAll, unit } from "./helpers";
 
 const s0 = mkSeatId(0);
 const s1 = mkSeatId(1);
@@ -111,7 +111,7 @@ test("a weapon pickup swaps the unit's weapon, leaves the old one behind and cha
     [{ x: 1, y: 0, kind: "weapon", weapon: "railgun" }],
   );
   const before = game.observe(state, s0).privateState.units[0];
-  expect(before?.reach.split(" ")).toContain("1,0");
+  expect(reachCosts(before?.reach).get("1,0")).toBe(1);
   expect(before?.shots).toEqual({});
   const armed = submitAll(state, {
     [s0]: { orders: [{ unit: "seat:0/0", moveTo: { x: 1, y: 0 }, action: { kind: "pickup" } }] },
@@ -399,8 +399,8 @@ test("a team learns of an item when it sees the tile, remembers it out of sight 
   expect(seat1Knows).toEqual([]);
 });
 
-test("a pickup ordered onto a fogged tile is rejected identically whether or not an item lies there", () => {
-  // The wall hides (6,0) and (6,1) from the grunt at (10,2); both stay reachable around it.
+test("a fogged tile is unreachable and rejected identically whether or not an item lies there", () => {
+  // The wall hides (6,0) and (6,1) from the grunt at (10,2); both are within its move points.
   const fog = scenario(
     ["00000000000", "0000000#000", "0000000#000"],
     [
@@ -415,10 +415,15 @@ test("a pickup ordered onto a fogged tile is rejected identically whether or not
     orders(fog, s1, [
       { unit: "seat:1/0", moveTo: { x, y }, ...(pickup ? { action: { kind: "pickup" } } : {}) },
     ]);
-  expect(order(6, 1, false).accepted).toBe(true);
-  expect(order(6, 0, false).accepted).toBe(true);
-  const withItem = order(6, 1, true);
-  const without = order(6, 0, true);
-  expect(withItem.accepted).toBe(false);
-  expect(withItem.reason.replace("6,1", "")).toBe(without.reason.replace("6,0", ""));
+  const reach = reachCosts(game.observe(fog, s1).privateState.units[0]?.reach);
+  expect(reach.has("8,0")).toBe(true);
+  expect(reach.has("6,0")).toBe(false);
+  expect(reach.has("6,1")).toBe(false);
+  for (const pickup of [false, true]) {
+    const withItem = order(6, 1, pickup);
+    const without = order(6, 0, pickup);
+    expect(withItem.accepted).toBe(false);
+    expect(withItem.reason.replace("6,1", "")).toBe(without.reason.replace("6,0", ""));
+  }
+  expect(order(8, 0, false).accepted).toBe(true);
 });

@@ -42,6 +42,9 @@ Rule object (all fields optional):
   expected to remember them. Only the map size and the zone centre are public.
 - Eight-way movement. A step onto a tile one level higher costs 2 move points,
   any other step costs 1, walls and height differences of 2 or more are impassable.
+  Movement is planned over the tiles the team can see now: fog is impassable
+  until seen, so a unit never walks or routes through ground nobody of yours has
+  in sight this round.
 - Line of sight runs from eye height (tile height + 0.5) to eye height. A wall or
   a tile whose surface rises above that line blocks it. Cover never blocks sight.
 - Vision radius is the class vision plus the observer's tile height, limited by
@@ -133,7 +136,7 @@ Every living team submits `match.orders` with at most one order per unit:
 ```json
 {
   "orders": [
-    { "unit": "seat:2/0", "moveTo": { "x": 7, "y": 4 }, "action": { "kind": "attack", "target": "seat:5/1" } },
+    { "unit": "seat:2/0", "moveTo": { "x": 7, "y": 4 }, "action": { "kind": "attack", "target": "seat:5/1" }, "thenTo": { "x": 6, "y": 5 } },
     { "unit": "seat:2/1", "action": { "kind": "ability", "target": "seat:2/0" } },
     { "unit": "seat:2/2", "moveTo": { "x": 9, "y": 5 }, "action": { "kind": "pickup" } }
   ],
@@ -141,14 +144,21 @@ Every living team submits `match.orders` with at most one order per unit:
 }
 ```
 
-- `moveTo` must appear in that unit's `reach` string from the observation.
-  Units may cross allies but not stop on them; visible enemies block.
+- `moveTo` must be a digit tile in that unit's `reach` grid from the
+  observation; the digit is the move points it spends. Units may cross allies
+  but not stop on them; visible enemies block.
 - One action per unit: `attack` (a target visible now and listed under `shots`
   for the chosen destination), `ability` (the class ability when ready, with
   `at` for grenade, `target` for volley and heal, nothing otherwise), `pickup`
   (your `items` list must show one on the destination; a fogged tile is rejected
   the same way whether or not anything lies there) or `hold`. Omitted actions
   and omitted units hold.
+- `thenTo` is a second destination walked after the action with the points the
+  first leg left over (`move` minus the digit). It must differ from the
+  destination, be affordable from it under the same step costs, and be visible
+  now; the unit's own starting tile counts as free. The observation does not
+  list second-leg costs; work them out from the view. An unaffordable or unseen
+  `thenTo` is rejected like any other illegal order.
 - Orders that break these rules are rejected with a reason and cost one of two
   retries per decision; exhausting them commits the safe default.
 
@@ -159,15 +169,19 @@ Resolution order:
    A unit stops in front of any occupied tile, including hidden enemies.
 2. Pickups, brace, camo and recon, in the same order. A pickup whose unit was
    stopped short of its item, or whose item is no longer there, fizzles.
-3. Attacks, grenades, volleys and heals against post-movement positions, all at
+3. Attacks, grenades, volleys and heals against first-leg positions, all at
    once. An attack whose target is dead, out of range or out of sight fizzles;
    a grenade thrown from a unit stopped out of range fizzles. Damage and
    healing are summed before anyone dies, so mutual kills are possible. Kills
    credit the last enemy to hit the victim; killing your own unit credits nobody.
-4. Storm: every unit outside the safe zone takes `1 + floor(round / 10)` damage,
-   ignoring armour. The zone is a Chebyshev square around the map centre that
-   shrinks linearly to the centre tile at three quarters of `maxRounds`.
-5. Teams with no living unit are eliminated together and share placement
+4. Second legs (`thenTo`), in the same initiative and order sequence as step 1
+   and stopping before occupied tiles the same way. A unit that died, or that
+   was stopped short of its first destination, forfeits its second leg.
+5. Storm: every unit outside the safe zone after its final movement takes
+   `1 + floor(round / 10)` damage, ignoring armour. The zone is a Chebyshev
+   square around the map centre that shrinks linearly to the centre tile at
+   three quarters of `maxRounds`.
+6. Teams with no living unit are eliminated together and share placement
    `1 + teams still alive`.
 
 The match ends when at most one team remains or after `maxRounds`. Survivors at
@@ -213,8 +227,10 @@ team can see now as `{x, y, terrain, heights}` where `terrain` and `heights` are
 one string per row from that origin, `.`/`+`/`#` for open/cover/wall and a digit
 for height, with `?` on tiles outside your vision (null when you see nothing);
 your `units` with hit points, armour, weapon (id, range, damage), `ability`
-(`id`, `ready`, `readyRound`), `hiddenUntil`, `reach` (every tile the unit may
-end on, its own included, as space-separated `x,y`) and `shots` (destinations
+(`id`, `ready`, `readyRound`), `hiddenUntil`, `reach` (`{x, y, rows}`: the
+bounding box of every tile the unit may end its first leg on, one character per
+tile from that origin, a digit for the move points that tile costs, `0` on its
+own tile and `.` where it cannot end this round) and `shots` (destinations
 with at least one attackable visible enemy, keyed `x,y`, each listing the
 attackable ids for the unit's current weapon); `visibleEnemies` with their
 armour and weapon; `lastSeen` memories of enemies no longer in view; `items` you

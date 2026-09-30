@@ -85,6 +85,7 @@ export function plans(state: BrState, seat: SeatId): UnitPlan[] {
   return computed;
 }
 
+/** Movement is planned over the tiles the team can see now: fog is impassable until seen. */
 function computePlans(state: BrState, seat: SeatId): UnitPlan[] {
   const seen = visionOf(state, seat);
   const enemies = visibleEnemies(state, seat, seen);
@@ -95,7 +96,7 @@ function computePlans(state: BrState, seat: SeatId): UnitPlan[] {
     unit,
     reaches: [
       { x: unit.x, y: unit.y, cost: 0, path: [] },
-      ...reachableTiles(state.map, unit, CLASSES[unit.cls].move, blocked, passable),
+      ...reachableTiles(state.map, unit, CLASSES[unit.cls].move, blocked, passable, seen),
     ].map((reach) => ({
       ...reach,
       targets: enemies
@@ -103,6 +104,20 @@ function computePlans(state: BrState, seat: SeatId): UnitPlan[] {
         .map((enemy) => enemy.id),
     })),
   }));
+}
+
+/** Where a unit can still walk after acting at `from`, with the points its first leg left. */
+export function continuations(state: BrState, seat: SeatId, unit: Unit, from: Reach): Reach[] {
+  const seen = visionOf(state, seat);
+  const blocked = new Set(visibleEnemies(state, seat, seen).map(key));
+  // The unit vacates its own tile on the first leg, so it may end the second leg there.
+  const passable = new Set(
+    ownUnits(state, seat)
+      .filter((u) => u.id !== unit.id)
+      .map(key),
+  );
+  const remaining = CLASSES[unit.cls].move - from.cost;
+  return remaining > 0 ? reachableTiles(state.map, from, remaining, blocked, passable, seen) : [];
 }
 
 /** Items a seat knows about: everything last seen on a tile it could see. */

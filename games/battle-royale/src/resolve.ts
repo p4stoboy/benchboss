@@ -33,14 +33,19 @@ const occupied = (units: readonly Unit[], p: { x: number; y: number }): boolean 
   units.some((u) => u.alive && u.x === p.x && u.y === p.y);
 const at = (u: Point): Point => ({ x: u.x, y: u.y });
 
-function moveUnits(state: BrState, events: RoundEvent[]): Unit[] {
-  const units = state.units.map((u) => ({ ...u }));
+/**
+ * One movement leg in initiative order. A unit whose earlier leg stopped short no longer stands
+ * where this leg's path begins, so it forfeits the leg; a dead unit walks nowhere.
+ */
+function moveUnits(state: BrState, units: Unit[], leg: number, events: RoundEvent[]): void {
   for (const seat of initiative(state))
     for (const order of state.orders[seat]?.orders ?? []) {
-      const path = state.paths[seat]?.[order.unit];
+      const path = state.paths[seat]?.[order.unit]?.[leg];
       const unit = units.find((u) => u.id === order.unit);
       if (!path?.length || !unit?.alive) continue;
       const from = at(unit);
+      const start = leg === 0 ? from : (state.paths[seat]?.[order.unit]?.[leg - 1]?.at(-1) ?? from);
+      if (start.x !== from.x || start.y !== from.y) continue;
       const walked: Point[] = [];
       let blocked = false;
       for (const step of path) {
@@ -54,7 +59,6 @@ function moveUnits(state: BrState, events: RoundEvent[]): Unit[] {
       }
       events.push({ kind: "move", unit: unit.id, from, to: at(unit), path: walked, blocked });
     }
-  return units;
 }
 
 /** Pickups and self-targeted abilities land before any damage, in initiative order. */
@@ -322,12 +326,14 @@ export function finishIfDecided(state: BrState): BrState {
 
 export function resolveRound(state: BrState): BrState {
   const events: RoundEvent[] = [];
-  const units = moveUnits(state, events);
+  const units = state.units.map((u) => ({ ...u }));
+  moveUnits(state, units, 0, events);
   const items = state.items.map((item) => ({ ...item }));
   // Reveals that outlive this round stay; anything older is dropped here.
   const reveals = state.reveals.filter((r) => r.untilRound > state.round);
   applyPickupsAndBuffs(state, units, items, reveals, events);
   const { kills, damageDealt } = applyCombat(state, units, events);
+  moveUnits(state, units, 1, events);
   applyStorm(state, units, events);
   const teams = { ...state.teams };
   for (const seat of state.seats) {

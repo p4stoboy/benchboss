@@ -30,6 +30,7 @@ import {
   zoneCenter,
   zoneRadius,
 } from "./map";
+import type { Reach } from "./path";
 import { resolveRound, snapshot } from "./resolve";
 import {
   CHAT_MAX_LENGTH,
@@ -41,6 +42,7 @@ import {
 import {
   abilityReady,
   aliveSeats,
+  continuations,
   initiative,
   isEliminated,
   knownItemAt,
@@ -142,8 +144,11 @@ export interface BrObservation {
       damage: number;
       ability: { id: AbilityId; ready: boolean; readyRound: number };
       hiddenUntil: number;
-      /** Every tile the unit may end on, its own included, as space-separated `x,y`. */
-      reach: string;
+      /**
+       * Move cost to every tile the unit may end its first leg on, as a digit per tile in row
+       * strings from the box origin; `.` is unreachable this round. Its own tile is `0`.
+       */
+      reach: { x: number; y: number; rows: string[] };
       /** Destinations with at least one attackable enemy, keyed `x,y`. */
       shots: Record<string, string[]>;
     }[];
@@ -186,6 +191,22 @@ export const chatFor = (state: BrState, seat: SeatId): ChatMessage[] =>
     : [];
 
 const TERRAIN_CHAR: Record<TileKind, string> = { open: ".", cover: "+", wall: "#" };
+
+/** Bounding box of a unit's reaches with one cost digit per tile and `.` where it cannot end. */
+export function costGrid(reaches: readonly Reach[]): { x: number; y: number; rows: string[] } {
+  const x0 = Math.min(...reaches.map((r) => r.x));
+  const y0 = Math.min(...reaches.map((r) => r.y));
+  const x1 = Math.max(...reaches.map((r) => r.x));
+  const y1 = Math.max(...reaches.map((r) => r.y));
+  const cost = new Map(reaches.map((r) => [key(r), r.cost]));
+  const rows: string[] = [];
+  for (let y = y0; y <= y1; y++) {
+    let row = "";
+    for (let x = x0; x <= x1; x++) row += cost.get(`${x},${y}`)?.toString() ?? ".";
+    rows.push(row);
+  }
+  return { x: x0, y: y0, rows };
+}
 
 /** Bounding box of the seat's visible tiles rendered as row strings; null when nothing is seen. */
 export function viewFor(state: BrState, seen: ReadonlySet<string>): BrView | null {
@@ -296,10 +317,10 @@ function validateOrders(
   state: BrState,
   seat: SeatId,
   orders: Orders,
-): { ok: true; paths: Record<string, Point[]> } | { ok: false; reason: string } {
+): { ok: true; paths: Record<string, Point[][]> } | { ok: false; reason: string } {
   const planned = plans(state, seat);
   const enemies = new Set(visibleEnemies(state, seat).map((u) => u.id));
-  const paths: Record<string, Point[]> = {};
+  const paths: Record<string, Point[][]> = {};
   const used = new Set<string>();
   const fail = (reason: string) => ({ ok: false as const, reason });
   for (const order of orders.orders) {
@@ -310,7 +331,19 @@ function validateOrders(
     const destination = order.moveTo ?? plan.unit;
     const reach = plan.reaches.find((r) => samePoint(r, destination));
     if (!reach) return fail(`${order.unit} cannot reach ${destination.x},${destination.y}`);
-    paths[order.unit] = reach.path;
+    paths[order.unit] = [reach.path];
+    if (order.thenTo) {
+      if (samePoint(order.thenTo, reach))
+        return fail(`${order.unit} thenTo must differ from its destination`);
+      const onward = continuations(state, seat, plan.unit, reach).find((r) =>
+        samePoint(r, order.thenTo as Point),
+      );
+      if (!onward)
+        return fail(
+          `${order.unit} cannot continue to ${order.thenTo.x},${order.thenTo.y} from ${reach.x},${reach.y} with ${CLASSES[plan.unit.cls].move - reach.cost} move points left`,
+        );
+      paths[order.unit] = [reach.path, onward.path];
+    }
     const action = order.action;
     if (!action || action.kind === "hold") continue;
     if (action.kind === "attack") {
@@ -505,7 +538,7 @@ export function makeBattleRoyale(): GameModule<BrState, unknown, BrObservation, 
               readyRound: unit.readyRound,
             },
             hiddenUntil: unit.hiddenUntil,
-            reach: reaches.map((r) => `${r.x},${r.y}`).join(" "),
+            reach: costGrid(reaches),
             shots: Object.fromEntries(
               reaches.filter((r) => r.targets.length).map((r) => [key(r), [...r.targets]]),
             ),
@@ -544,7 +577,7 @@ export function makeBattleRoyale(): GameModule<BrState, unknown, BrObservation, 
           {
             tool: "match.orders",
             phase: "orders",
-            description: `Order your living units: an optional moveTo from the unit's reach and one optional action: attack (a target in shots for that destination), ability (when ready; grenade takes at, volley and heal take target, others nothing), pickup (an item you have seen on the destination) or hold. Orders resolve together: movement in initiative order, pickups and self-abilities, then attacks, blasts and heals at once, then the storm. Optional chat (up to ${CHAT_MAX_LENGTH} characters).`,
+            description: `Order your living units: an optional moveTo (a digit tile in the unit's reach grid; the digit is its move cost), one optional action there: attack (a target in shots for that destination), ability (when ready; grenade takes at, volley and heal take target, others nothing), pickup (an item you have seen on the destination) or hold, and an optional thenTo walked afterwards with the points left (move minus the digit; a step up one level costs 2, any other step 1; only tiles you can see now). Orders resolve together: first legs in initiative order, pickups and self-abilities, attacks, blasts and heals at once, second legs, then the storm. Optional chat (up to ${CHAT_MAX_LENGTH} characters).`,
             jsonSchema: ORDERS_INPUT_SCHEMA,
           },
         ];

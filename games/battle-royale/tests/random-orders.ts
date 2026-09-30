@@ -1,7 +1,7 @@
 import type { Rng, SeatId } from "@benchboss/core";
 import { ABILITIES, CLASSES } from "../src/classes";
 import { inBounds } from "../src/map";
-import { abilityReady, knownItemAt, plans } from "../src/state";
+import { abilityReady, continuations, knownItemAt, plans } from "../src/state";
 import type { Action, BrState, Orders, UnitOrder } from "../src/types";
 
 /** Uniformly random legal orders, used by generated conformance and privacy runs. */
@@ -36,6 +36,11 @@ export function randomOrders(state: BrState, seat: SeatId, rng: Rng): Orders & {
     }
     if (choices.length && rng.int(5) > 0) order.action = rng.pick(choices);
     else if (rng.int(3) === 0) order.action = { kind: "hold" };
+    const onward = continuations(state, seat, unit, reach);
+    if (onward.length && rng.int(2) === 0) {
+      const next = rng.pick(onward);
+      order.thenTo = { x: next.x, y: next.y };
+    }
     orders.push(order);
   }
   const chat = rng.int(4) === 0 ? { chat: `r${state.round} ${seat} ${rng.int(1000)}` } : {};

@@ -292,7 +292,10 @@ States and semantics:
   round; every visible tile is refreshed each round (deleted when empty) and unseen
   tiles keep their last sighting.
   Orders: at most one order per living own unit with optional `moveTo` (must be in
-  that unit's reach computed against own units and visible enemies) and one
+  that unit's reach: Dijkstra over currently visible tiles only, against own units
+  and visible enemies), optional `thenTo` (a second leg from `moveTo` with the
+  points left, same visibility and blocking rules, the unit's own tile free, must
+  differ from `moveTo`; `state.paths[seat][unit]` holds one path per leg) and one
   optional action: attack (visible target listed for the destination), ability (must
   be ready; recon/brace/camo take nothing, grenade takes `at` within 4 of the
   destination, volley a listed target, heal another own unit), pickup (the seat's item
@@ -305,15 +308,17 @@ States and semantics:
   is the number of kills the seat scored in the round just resolved (rebuilt every
   resolution, cleared by a host forfeit); a seat reads chat only while it is > 0,
   and then only lines with `round < state.round`, windowed to 50.
-- Battle Royale resolution: movement by rotating seat initiative then order sequence,
-  stopping before any occupied tile (hidden enemies included); then pickups (health,
+- Battle Royale resolution: first-leg movement by rotating seat initiative then order
+  sequence, stopping before any occupied tile (hidden enemies included); then pickups (health,
   armour, or weapon swap leaving the old weapon on the tile; fizzles when the unit
   stopped short), brace (+4 armour), camo (`hiddenUntil = round + 2`) and recon
   (reveal disc radius 6 until `round + 1`); then attacks, grenades (3 damage to every
   unit within 1 of the tile, own included, no sight needed), volleys (weapon damage to
-  the target and adjacent enemies) and heals against final positions with damage summed,
+  the target and adjacent enemies) and heals against first-leg positions with damage summed,
   absorbed by armour first, and healing applied before deaths; kills credit the last
-  enemy hitter only; an attack or damaging ability ends the unit's camouflage; storm
+  enemy hitter only; an attack or damaging ability ends the unit's camouflage; then
+  second legs in the same order (a dead unit or one stopped short of its first
+  destination forfeits its second leg); storm
   damage `1 + floor(round/10)` ignoring armour outside a Chebyshev zone that shrinks
   linearly to the centre tile at `floor(3·maxRounds/4)`; teams with no living unit
   finish together with placement `1 + teams alive`. Terminal at ≤ 1 team or past `maxRounds`; survivors rank by units,
@@ -331,7 +336,8 @@ States and semantics:
   or the seat's loadout/orders for the current phase are recorded; a committed
   observation keeps `loadout` and the public state and empties everything else, so
   submit echoes and waiting polls cost nothing. Uncommitted observations carry own
-  units with weapon, armour, ability readiness, `reach` (space-separated `x,y`) and
+  units with weapon, armour, ability readiness, `reach` (`{x, y, rows}` cost grid: a
+  digit per first-leg destination, `.` elsewhere, bounded by the visible reach) and
   `shots` (destination key → attackable ids), visible enemies (with armour and
   weapon), remembered last sightings, the seat's item memory, last-round events only
   for own units or positions currently visible (ability events by origin tile, blasts

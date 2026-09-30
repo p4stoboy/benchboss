@@ -5,7 +5,7 @@ import { type TileKind, key } from "../src/map";
 import { plugin } from "../src/plugin";
 import { visionOf } from "../src/state";
 import type { BrState } from "../src/types";
-import { flatRows, game, newMatch, scenario, submitAll } from "./helpers";
+import { flatRows, game, newMatch, reachCosts, scenario, submitAll } from "./helpers";
 import { randomOrders } from "./random-orders";
 
 const s0 = mkSeatId(0);
@@ -15,6 +15,12 @@ const TERRAIN_CHAR: Record<TileKind, string> = { open: ".", cover: "+", wall: "#
 /** Every position a seat learns about belongs to its own units or lies inside its current vision. */
 function assertObservationPrivacy(state: BrState, seat: ReturnType<typeof mkSeatId>): void {
   const observation = game.observe(state, seat);
+  if (observation.privateState.committed) {
+    expect(observation.privateState.view).toBeNull();
+    expect(observation.privateState.units).toEqual([]);
+    expect(observation.privateState.visibleEnemies).toEqual([]);
+    return;
+  }
   const seen = visionOf(state, seat);
   const own = new Set(state.units.filter((u) => u.seat === seat).map((u) => u.id));
   const mine = state.units.filter((u) => u.seat === seat && u.alive);
@@ -34,7 +40,10 @@ function assertObservationPrivacy(state: BrState, seat: ReturnType<typeof mkSeat
       ).toBe(true);
   }
   for (const unit of observation.privateState.units) {
-    const reach = new Set(unit.reach.split(" "));
+    const costs = reachCosts(unit.reach);
+    expect(costs.get(`${unit.x},${unit.y}`)).toBe(0);
+    for (const tile of costs.keys()) expect(seen.has(tile)).toBe(true);
+    const reach = new Set(costs.keys());
     for (const [tile, targets] of Object.entries(unit.shots)) {
       expect(reach.has(tile)).toBe(true);
       for (const target of targets)
@@ -146,7 +155,10 @@ test("the live spectator map reveals tiles as teams see them and stays revealed;
         .filter((u) => u.seat === s0)
         .map((u) => {
           const plan = game.observe(state, s0).privateState.units.find((p) => p.id === u.id);
-          const far = plan?.reach.split(" ").at(-1)?.split(",").map(Number) ?? [u.x, u.y];
+          const far = [...reachCosts(plan?.reach).keys()].at(-1)?.split(",").map(Number) ?? [
+            u.x,
+            u.y,
+          ];
           return { unit: u.id, moveTo: { x: far[0], y: far[1] } };
         }),
     },

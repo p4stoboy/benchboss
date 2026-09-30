@@ -13,7 +13,16 @@ import {
 } from "../src/classes";
 import { plugin } from "../src/plugin";
 import { initiative } from "../src/state";
-import { flatRows, game, newMatch, scenario, seatsOf, submitAll, unit } from "./helpers";
+import {
+  flatRows,
+  game,
+  newMatch,
+  reachCosts,
+  scenario,
+  seatsOf,
+  submitAll,
+  unit,
+} from "./helpers";
 
 const s0 = mkSeatId(0);
 const s1 = mkSeatId(1);
@@ -466,11 +475,109 @@ test("observations show only the tiles the team can see, as a row-string window"
     heights: ["00", "00", "0?", "2?"],
   });
   expect(mine.privateState.visibleEnemies).toEqual([]);
-  const reach = mine.privateState.units[0]?.reach.split(" ") ?? [];
-  expect(reach).toContain("0,0");
-  expect(reach).toContain("1,3");
-  expect(reach).not.toContain("1,0");
+  const reach = reachCosts(mine.privateState.units[0]?.reach);
+  expect(reach.get("0,0")).toBe(0);
+  expect(reach.get("0,2")).toBe(2);
+  // (1,3) is affordable but out of sight, so it is not offered.
+  expect(reach.has("1,3")).toBe(false);
+  expect(reach.has("1,0")).toBe(false);
   expect(mine.privateState.units[0]?.shots).toEqual({});
+});
+
+test("the reach grid carries move costs and stops at the fog edge", () => {
+  // grunt: move 6, vision 5, so (6,0) is affordable but unseen.
+  const state = scenario(flatRows(10, 1), [{ seat: 0, cls: "grunt", x: 0, y: 0 }]);
+  expect(game.observe(state, s0).privateState.units[0]?.reach).toEqual({
+    x: 0,
+    y: 0,
+    rows: ["012345"],
+  });
+  // A step up one level costs 2; the bump then hides everything behind it.
+  const bump = scenario(["0100"], [{ seat: 0, cls: "grunt", x: 0, y: 0 }]);
+  expect(game.observe(bump, s0).privateState.units[0]?.reach).toEqual({ x: 0, y: 0, rows: ["02"] });
+  const tooFar = game.submit(
+    state,
+    s0,
+    { orders: [{ unit: "seat:0/0", moveTo: { x: 6, y: 0 } }] },
+    "match.orders",
+  );
+  expect(tooFar.accepted).toBe(false);
+});
+
+test("a unit may move, act and move again within its points; the storm reads the final tile", () => {
+  const state = scenario(flatRows(12, 3), [
+    { seat: 0, cls: "grunt", x: 0, y: 1 },
+    { seat: 1, cls: "grunt", x: 3, y: 1, hp: 1 },
+    { seat: 1, cls: "grunt", x: 11, y: 2 },
+  ]);
+  const shot = submitAll(state, {
+    [s0]: {
+      orders: [
+        {
+          unit: "seat:0/0",
+          moveTo: { x: 1, y: 1 },
+          action: { kind: "attack", target: "seat:1/0" },
+          thenTo: { x: 5, y: 0 },
+        },
+      ],
+    },
+  });
+  expect(unit(shot, "seat:0/0")).toMatchObject({ x: 5, y: 0 });
+  expect(unit(shot, "seat:1/0").alive).toBe(false);
+  const moves = shot.lastRound.filter((e) => e.kind === "move" && e.unit === "seat:0/0");
+  expect(moves.map((e) => (e.kind === "move" ? [e.from, e.to] : null))).toEqual([
+    [
+      { x: 0, y: 1 },
+      { x: 1, y: 1 },
+    ],
+    [
+      { x: 1, y: 1 },
+      { x: 5, y: 0 },
+    ],
+  ]);
+  const attack = shot.lastRound.find((e) => e.kind === "attack");
+  expect(attack && attack.kind === "attack" ? attack.from : null).toEqual({ x: 1, y: 1 });
+  expect(shot.lastRound.indexOf(attack as never)).toBeLessThan(
+    shot.lastRound.indexOf(moves[1] as never),
+  );
+});
+
+test("a second leg is rejected when it repeats the destination, exceeds the points left or enters fog", () => {
+  const state = scenario(flatRows(14, 1), [
+    { seat: 0, cls: "grunt", x: 0, y: 0 },
+    { seat: 1, cls: "grunt", x: 13, y: 0 },
+  ]);
+  const attempt = (order: Record<string, unknown>) =>
+    game.submit(state, s0, { orders: [{ unit: "seat:0/0", ...order }] }, "match.orders");
+  expect(attempt({ moveTo: { x: 2, y: 0 }, thenTo: { x: 2, y: 0 } }).accepted).toBe(false);
+  expect(attempt({ moveTo: { x: 4, y: 0 }, thenTo: { x: 7, y: 0 } }).accepted).toBe(false);
+  expect(attempt({ thenTo: { x: 6, y: 0 } }).accepted).toBe(false);
+  expect(attempt({ moveTo: { x: 4, y: 0 }, thenTo: { x: 5, y: 0 } }).accepted).toBe(true);
+  expect(attempt({ moveTo: { x: 2, y: 0 }, thenTo: { x: 0, y: 0 } }).accepted).toBe(true);
+  expect(attempt({ thenTo: { x: 5, y: 0 } }).accepted).toBe(true);
+});
+
+test("a unit stopped short on its first leg forfeits the second", () => {
+  const state = scenario(flatRows(8, 1), [
+    { seat: 0, cls: "grunt", x: 0, y: 0 },
+    { seat: 1, cls: "sniper", x: 2, y: 0, hiddenUntil: 9 },
+    { seat: 1, cls: "grunt", x: 7, y: 0 },
+  ]);
+  const blocked = submitAll(state, {
+    [s0]: { orders: [{ unit: "seat:0/0", moveTo: { x: 3, y: 0 }, thenTo: { x: 5, y: 0 } }] },
+  });
+  expect(unit(blocked, "seat:0/0")).toMatchObject({ x: 1, y: 0 });
+  const moves = blocked.lastRound.filter((e) => e.kind === "move" && e.unit === "seat:0/0");
+  expect(moves).toEqual([
+    {
+      kind: "move",
+      unit: "seat:0/0",
+      from: { x: 0, y: 0 },
+      to: { x: 1, y: 0 },
+      path: [{ x: 1, y: 0 }],
+      blocked: true,
+    },
+  ]);
 });
 
 test("a committed seat gets a trimmed observation until the round resolves", () => {
