@@ -337,7 +337,7 @@ layout for the previous round (under its history entry number) followed by
 this round so far (under the entry it will become); `Eliminations` (as public);
 and the whole `Chat` log. A frame is recorded after every command that changes
 any of this, so a full replay has a frame per turn carrying the blocks that
-turn moved, and one more when the round ends.
+turn moved; the last turn's frame also carries the round end.
 The terminal frame appends the public history tables as `Loadouts`, `Rounds`,
 `Units by entry`, `Loot by entry` and `Events by entry`, so the two terminal views
 disclose the same information.
