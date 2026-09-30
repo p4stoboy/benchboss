@@ -745,7 +745,6 @@ test("a committed seat gets a trimmed observation until the round resolves", () 
     view: null,
     units: [],
     visibleEnemies: [],
-    lastSeen: [],
     items: [],
     lastRound: [],
     chat: [],

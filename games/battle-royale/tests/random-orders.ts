@@ -1,7 +1,7 @@
 import type { Rng, SeatId } from "@benchboss/core";
 import { ABILITIES, CLASSES } from "../src/classes";
 import { inBounds } from "../src/map";
-import { abilityReady, continuations, knownItemAt, plans } from "../src/state";
+import { abilityReady, continuations, plans, samePoint } from "../src/state";
 import type { Action, BrState, Orders, UnitOrder } from "../src/types";
 
 /** Uniformly random legal orders, used by generated conformance and privacy runs. */
@@ -16,7 +16,7 @@ export function randomOrders(state: BrState, seat: SeatId, rng: Rng): Orders & {
     const ability = ABILITIES[CLASSES[unit.cls].ability];
     const choices: Action[] = [];
     if (reach.targets.length) choices.push({ kind: "attack", target: rng.pick(reach.targets) });
-    if (knownItemAt(state, seat, reach)) choices.push({ kind: "pickup" });
+    if (state.items.some((item) => samePoint(item, reach))) choices.push({ kind: "pickup" });
     if (abilityReady(state, unit)) {
       if (ability.target === "none") choices.push({ kind: "ability" });
       if (ability.target === "enemy" && reach.targets.length)

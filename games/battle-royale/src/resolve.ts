@@ -2,7 +2,7 @@ import type { SeatId } from "@benchboss/core";
 import { ABILITIES, ARMOUR_PICKUP, CLASSES, HEALTH_PICKUP, MAX_ARMOUR } from "./classes";
 import { attackBlocker, damageFor } from "./combat";
 import { chebyshev, inZone, key, stormDamage, zoneRadius } from "./map";
-import { aliveSeats, initiative, isEliminated, maxHp, rememberSightings, unitById } from "./state";
+import { aliveSeats, initiative, isEliminated, markExplored, maxHp, unitById } from "./state";
 import type { BrState, Item, Point, Reveal, RoundEvent, RoundSnapshot, Unit } from "./types";
 
 /** History entry for `round` from the given living units and the events that produced them. */
@@ -359,7 +359,7 @@ export function resolveRound(state: BrState): BrState {
     paths: {},
     round: next.round + 1,
   };
-  next = rememberSightings(next);
+  next = markExplored(next);
   return finishIfDecided(next);
 }
 

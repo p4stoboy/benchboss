@@ -5,7 +5,6 @@ import { makeBattleRoyale } from "../src/game";
 import type { GameMap, Tile, TileKind } from "../src/map";
 import { plugin } from "../src/plugin";
 import { snapshot } from "../src/resolve";
-import { rememberItems } from "../src/state";
 import type { BrState, Item, Unit } from "../src/types";
 
 export const game = makeBattleRoyale();
@@ -89,11 +88,10 @@ export function scenario(
     units,
     items,
     reveals: [],
-    itemMemory: {},
     recentKills: {},
     explored: {},
   };
-  return rememberItems({ ...built, history: [snapshot(built, 0, [])], ...overrides });
+  return { ...built, history: [snapshot(built, 0, [])], ...overrides };
 }
 
 /** Tile key → move cost for every reachable tile in an observation's reach grid. */

@@ -23,6 +23,7 @@ test("acceptance checks reject invalid outcomes and impure public projections", 
   const invalid = clockGame();
   const view = invalid.plugin.publicView;
   invalid.plugin.publicView = (state) => ({ ...view(state), result: null });
+  invalid.plugin.fullView = undefined;
   expect(checkGameConformance(invalid.plugin, { seeds: ["fixture"] })[0]?.detail).toContain(
     "terminal outcomes",
   );
@@ -34,8 +35,33 @@ test("acceptance checks reject invalid outcomes and impure public projections", 
     blocks: [{ kind: "text", title: "counter", text: String(calls++) }],
   });
   expect(checkGameConformance(impure.plugin, { seeds: ["fixture"] })[0]?.detail).toContain(
-    "different logs or public frames",
+    "different logs or spectator frames",
   );
+});
+
+test("acceptance checks hold the full projection to the public result and to determinism", () => {
+  const disagreeing = clockGame();
+  const full = disagreeing.plugin.fullView;
+  if (!full) throw Error("fixture has no full view");
+  disagreeing.plugin.fullView = (state) => {
+    const view = full(state);
+    return view.result ? { ...view, result: { ...view.result, summary: "Secret winner" } } : view;
+  };
+  expect(checkGameConformance(disagreeing.plugin, { seeds: ["fixture"] })[0]?.detail).toContain(
+    "full view result differs from public view result",
+  );
+  const impure = clockGame();
+  let calls = 0;
+  impure.plugin.fullView = (state) => ({
+    ...full(state),
+    blocks: [{ kind: "text", title: "counter", text: String(calls++) }],
+  });
+  expect(checkGameConformance(impure.plugin, { seeds: ["fixture"] })[0]?.detail).toContain(
+    "different logs or spectator frames",
+  );
+  const absent = clockGame();
+  absent.plugin.fullView = undefined;
+  expect(checkGameConformance(absent.plugin, { seeds: ["fixture"] }).every((r) => r.ok)).toBe(true);
 });
 
 test("replay verification rejects tampered log and published outcomes even when scores agree", async () => {

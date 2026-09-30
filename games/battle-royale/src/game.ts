@@ -45,27 +45,17 @@ import {
   continuations,
   initiative,
   isEliminated,
-  knownItemAt,
-  knownItems,
+  markExplored,
   maxHp,
   ownUnits,
   plans,
-  rememberSightings,
   samePoint,
   unitById,
   visibleEnemies,
+  visibleItems,
   visionOf,
 } from "./state";
-import type {
-  BrState,
-  ChatMessage,
-  Orders,
-  Point,
-  RoundEvent,
-  SeenItem,
-  SeenUnit,
-  Unit,
-} from "./types";
+import type { BrState, ChatMessage, Item, Orders, Point, RoundEvent, Unit } from "./types";
 
 export const BR_GAME_ID = "battle-royale";
 export const MIN_SEATS = 2;
@@ -163,9 +153,8 @@ export interface BrObservation {
       armour: number;
       weapon: WeaponId;
     }[];
-    lastSeen: SeenUnit[];
-    /** Items on tiles this team has seen, as of the round it last saw each tile. */
-    items: SeenItem[];
+    /** Items on tiles this team sees now. Nothing is remembered for the team. */
+    items: Item[];
     lastRound: RoundEvent[];
     /** Previous rounds' lines, only in the turn after this seat scored a kill. */
     chat: ChatMessage[];
@@ -312,7 +301,7 @@ function spawn(state: BrState): BrState {
     });
   });
   const spawned: BrState = { ...state, phase: "orders", round: 1, units };
-  return rememberSightings({ ...spawned, history: [snapshot(spawned, 0, [])] });
+  return markExplored({ ...spawned, history: [snapshot(spawned, 0, [])] });
 }
 
 export function isReady(state: BrState): boolean {
@@ -365,7 +354,7 @@ function validateOrders(
       continue;
     }
     if (action.kind === "pickup") {
-      if (!knownItemAt(state, seat, reach))
+      if (!state.items.some((item) => samePoint(item, reach)))
         return fail(`no known item to pick up at ${reach.x},${reach.y}`);
       continue;
     }
@@ -440,13 +429,11 @@ export function makeBattleRoyale(): GameModule<BrState, unknown, BrObservation, 
         units: [],
         items: scatterLoot(createRng(seed).fork("loot"), map),
         reveals: [],
-        itemMemory: {},
         orders: {},
         paths: {},
         teams,
         recentKills: {},
         explored: {},
-        memory: {},
         lastRound: [],
         history: [],
         chat: [],
@@ -506,7 +493,6 @@ export function makeBattleRoyale(): GameModule<BrState, unknown, BrObservation, 
             view: null,
             units: [],
             visibleEnemies: [],
-            lastSeen: [],
             items: [],
             lastRound: [],
             chat: [],
@@ -515,9 +501,6 @@ export function makeBattleRoyale(): GameModule<BrState, unknown, BrObservation, 
         };
       const seen = visionOf(state, seat);
       const enemies = visibleEnemies(state, seat, seen);
-      const remembered = Object.values(state.memory[seat] ?? {}).filter(
-        (entry) => !enemies.some((enemy) => enemy.id === entry.id),
-      );
       const planned = state.phase === "orders" ? plans(state, seat) : [];
       return {
         matchId: state.matchId,
@@ -566,8 +549,7 @@ export function makeBattleRoyale(): GameModule<BrState, unknown, BrObservation, 
             armour: u.armour,
             weapon: u.weapon,
           })),
-          lastSeen: remembered.map((entry) => ({ ...entry })),
-          items: knownItems(state, seat).map((item) => ({ ...item })),
+          items: visibleItems(state, seat, seen).map((item) => ({ ...item })),
           lastRound: eventsFor(state, seat),
           chat: chatFor(state, seat),
         },

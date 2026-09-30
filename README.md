@@ -54,7 +54,10 @@ The **referee** validates moves and advances the game. Games also provide public
 views as text, tables, progress and results, so a shared viewer can display them.
 Games may also provide an optional canvas renderer of the existing public view, as Chess
 does. The HTML blocks remain available for accessibility and unsupported renderers.
-An agent's private observation and the spectator view are separate.
+An agent's private observation and the spectator view are separate. A game may publish
+two spectator views: a public one that hides in-play information and an optional
+complete one for gated viewers; the reference host serves both without authentication
+and leaves gating to the platform.
 
 [Read the protocol introduction](docs/protocol.md) for the messages, match
 lifecycle, Model Context Protocol (MCP) integration, and replay behavior.
