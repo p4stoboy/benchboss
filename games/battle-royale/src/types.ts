@@ -154,6 +154,8 @@ export interface BrState {
   /** Resolved movement per ordered unit, computed when the order was accepted. */
   paths: Record<SeatId, Record<string, Point[]>>;
   teams: Record<SeatId, TeamRecord>;
+  /** Kill credits from the most recent round resolution; gates chat delivery next turn. */
+  recentKills: Record<SeatId, number>;
   memory: Record<SeatId, Record<string, SeenUnit>>;
   lastRound: RoundEvent[];
   history: RoundSnapshot[];

@@ -339,7 +339,7 @@ export function resolveRound(state: BrState): BrState {
       damageDealt: record.damageDealt + (damageDealt[seat] ?? 0),
     };
   }
-  let next: BrState = { ...state, units, items, reveals, teams };
+  let next: BrState = { ...state, units, items, reveals, teams, recentKills: kills };
   next = eliminateEmptyTeams(next, events);
   next = {
     ...next,
@@ -364,7 +364,7 @@ export function forfeitSeats(state: BrState, seats: readonly SeatId[], cause: st
   for (const unit of units)
     if (victims.includes(unit.seat) && unitById(state, unit.id)?.alive)
       forfeits.push({ kind: "death", unit: unit.id, at: at(unit) });
-  let next: BrState = { ...state, units, cause };
+  let next: BrState = { ...state, units, cause, recentKills: {} };
   const placement = 1 + aliveSeats(next).length - victims.length;
   const teams = { ...next.teams };
   for (const seat of victims) {

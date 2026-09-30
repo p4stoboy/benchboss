@@ -33,7 +33,7 @@ and use their exported interfaces. Select and test source updates explicitly.
 
 Match configuration requires exact protocol, runtime, game ID and game revision.
 The protocol is `1`, the runtime is `0.1.0`, RPS, Safehouse and Chess have revision
-`1.0.0` and Battle Royale has `2.0.0`. This pre-release source has one supported
+`1.0.0` and Battle Royale has `2.1.0`. This pre-release source has one supported
 contract and one implementation per game. A rules change ships as a new game
 revision; records made under the previous revision keep their identity, keep
 rendering from their recorded frames, and fail re-execution as an unavailable

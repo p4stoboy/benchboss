@@ -1,6 +1,16 @@
 import { expect, test } from "bun:test";
 import { mkSeatId } from "@benchboss/core";
-import { ABILITIES, CLASSES, type ClassId, TEAM_BUDGET, WEAPONS } from "../src/classes";
+import {
+  ABILITIES,
+  CLASSES,
+  CLASS_IDS,
+  type ClassId,
+  MAX_ARMOUR,
+  TEAM_BUDGET,
+  TEAM_SIZE,
+  WEAPONS,
+  isAffordable,
+} from "../src/classes";
 import { plugin } from "../src/plugin";
 import { initiative } from "../src/state";
 import { flatRows, game, newMatch, scenario, seatsOf, submitAll, unit } from "./helpers";
@@ -82,7 +92,16 @@ test("loadouts must be three affordable classes and every team spawns on its own
     expect(cluster).toBeDefined();
     expect(own.every((u) => cluster?.some((t) => t.x === u.x && t.y === u.y))).toBe(true);
   }
-  expect(CLASSES.sniper.cost + CLASSES.scout.cost * 2).toBeLessThanOrEqual(TEAM_BUDGET);
+});
+
+test("every class fits in some affordable roster of three", () => {
+  const rosters = CLASS_IDS.flatMap((a) =>
+    CLASS_IDS.flatMap((b) => CLASS_IDS.map((c): ClassId[] => [a, b, c])),
+  );
+  for (const cls of CLASS_IDS)
+    expect(rosters.some((roster) => roster.includes(cls) && isAffordable(roster))).toBe(true);
+  expect(rosters.filter(isAffordable).every((roster) => roster.length === TEAM_SIZE)).toBe(true);
+  expect(isAffordable(Array.from({ length: TEAM_SIZE }, () => "sniper"))).toBe(false);
 });
 
 test("orders are rejected for foreign, unknown or duplicate units, unreachable tiles and unseen targets", () => {
@@ -353,8 +372,10 @@ test("chat rides on accepted envelopes only and reaches every seat and spectator
   expect(state.chat).toHaveLength(3);
   expect(state.chat[2]).toEqual({ round: 1, seat: s1, text: "truce?" });
   expect(state.orders[s1]).toEqual({ orders: [] });
-  for (const seat of state.seats)
-    expect(game.observe(state, seat).publicState.chat).toEqual(state.chat);
+  for (const seat of state.seats) {
+    expect(game.observe(state, seat).privateState.chat).toEqual([]);
+    expect(JSON.stringify(game.observe(state, seat))).not.toContain("hello all");
+  }
   const chatBlock = plugin
     .publicView(state)
     .blocks.find((block) => block.kind === "list" && block.title === "Chat");
@@ -366,20 +387,21 @@ test("chat rides on accepted envelopes only and reaches every seat and spectator
   expect(plugin.safeDefault(state, s0).input).not.toHaveProperty("chat");
 });
 
-test("live chat is windowed to the most recent lines while the terminal view carries all of it", () => {
-  const flood = Array.from({ length: 60 }, (_, i) => ({ round: 1, seat: s0, text: `m${i}` }));
+test("a killer reads previous rounds' chat once, windowed, while the terminal view carries all of it", () => {
+  const flood = Array.from({ length: 60 }, (_, i) => ({ round: 0, seat: s0, text: `m${i}` }));
   const state = scenario(
     flatRows(5, 1),
     [
       { seat: 0, cls: "grunt", x: 0, y: 0 },
       { seat: 1, cls: "grunt", x: 4, y: 0 },
     ],
-    { chat: flood },
+    { chat: [...flood, { round: 1, seat: s0, text: "this round" }], recentKills: { [s1]: 1 } },
   );
-  const live = game.observe(state, s1).publicState.chat;
+  const live = game.observe(state, s1).privateState.chat;
   expect(live).toHaveLength(50);
   expect(live[0]?.text).toBe("m10");
   expect(live.at(-1)?.text).toBe("m59");
+  expect(game.observe(state, s0).privateState.chat).toEqual([]);
   const liveBlock = plugin
     .publicView(state)
     .blocks.find((block) => block.kind === "list" && block.title === "Chat");
@@ -393,30 +415,106 @@ test("live chat is windowed to the most recent lines while the terminal view car
   const terminalBlock = plugin
     .publicView(terminal)
     .blocks.find((block) => block.kind === "list" && block.title === "Chat");
-  expect(terminalBlock && "items" in terminalBlock ? terminalBlock.items : []).toHaveLength(60);
+  expect(terminalBlock && "items" in terminalBlock ? terminalBlock.items : []).toHaveLength(61);
 });
 
-test("observations carry the map as row-major grids", () => {
+test("chat opens for exactly the turn after a seat scores a kill", () => {
   const state = scenario(
-    ["01#", "2+0"],
+    flatRows(12, 1),
     [
       { seat: 0, cls: "grunt", x: 0, y: 0 },
-      { seat: 1, cls: "grunt", x: 2, y: 1 },
+      { seat: 1, cls: "grunt", x: 3, y: 0, hp: 1 },
+      { seat: 1, cls: "grunt", x: 11, y: 0 },
+    ],
+    { chat: [{ round: 0, seat: s1, text: "loadout banter" }] },
+  );
+  const shot = submitAll(state, {
+    [s0]: {
+      orders: [{ unit: "seat:0/0", action: { kind: "attack", target: "seat:1/0" } }],
+      chat: "got one",
+    },
+    [s1]: { orders: [], chat: "careful" },
+  });
+  expect(shot.recentKills).toEqual({ [s0]: 1 });
+  expect(game.observe(shot, s0).privateState.chat).toEqual([
+    { round: 0, seat: s1, text: "loadout banter" },
+    { round: 1, seat: s0, text: "got one" },
+    { round: 1, seat: s1, text: "careful" },
+  ]);
+  expect(game.observe(shot, s1).privateState.chat).toEqual([]);
+  const quiet = submitAll(shot, { [s1]: { orders: [], chat: "still here" } });
+  expect(quiet.recentKills).toEqual({});
+  expect(game.observe(quiet, s0).privateState.chat).toEqual([]);
+  expect(JSON.stringify(game.observe(quiet, s0))).not.toContain("still here");
+});
+
+test("observations show only the tiles the team can see, as a row-string window", () => {
+  const state = scenario(
+    ["0#00", "0#00", "0#00", "2+00"],
+    [
+      { seat: 0, cls: "grunt", x: 0, y: 0 },
+      { seat: 1, cls: "grunt", x: 3, y: 0 },
     ],
   );
-  const { map } = game.observe(state, s0).publicState;
-  expect(map).toEqual({
-    width: 3,
-    height: 2,
-    heights: [
-      [0, 1, 0],
-      [2, 0, 0],
-    ],
-    terrain: [
-      ["open", "open", "wall"],
-      ["open", "cover", "open"],
-    ],
+  const mine = game.observe(state, s0);
+  expect(mine.publicState.map).toEqual({ width: 4, height: 4 });
+  expect(JSON.stringify(mine.publicState)).not.toContain("tiles");
+  expect(mine.privateState.view).toEqual({
+    x: 0,
+    y: 0,
+    terrain: [".#", ".#", ".?", ".?"],
+    heights: ["00", "00", "0?", "2?"],
   });
+  expect(mine.privateState.visibleEnemies).toEqual([]);
+  const reach = mine.privateState.units[0]?.reach.split(" ") ?? [];
+  expect(reach).toContain("0,0");
+  expect(reach).toContain("1,3");
+  expect(reach).not.toContain("1,0");
+  expect(mine.privateState.units[0]?.shots).toEqual({});
+});
+
+test("a committed seat gets a trimmed observation until the round resolves", () => {
+  let state = newMatch(2);
+  const fresh = game.observe(state, s0);
+  expect(fresh.privateState.committed).toBe(false);
+  expect(fresh.publicState.catalog).toEqual({
+    classes: CLASSES,
+    weapons: WEAPONS,
+    abilities: ABILITIES,
+    maxArmour: MAX_ARMOUR,
+    budget: TEAM_BUDGET,
+    teamSize: TEAM_SIZE,
+  });
+  state = game.submit(state, s0, { actors: ["grunt", "grunt", "grunt"] }, "match.loadout").state;
+  const chosen = game.observe(state, s0);
+  expect(chosen.privateState.committed).toBe(true);
+  expect(chosen.privateState.loadout).toEqual(["grunt", "grunt", "grunt"]);
+  expect(chosen.privateState.view).toBeNull();
+  expect(chosen.publicState.catalog).toBeDefined();
+  expect(game.observe(state, s1).privateState.committed).toBe(false);
+  state = game.submit(state, s1, { actors: ["scout", "scout", "sniper"] }, "match.loadout").state;
+  state = game.step(state);
+  const open = game.observe(state, s0);
+  expect(open.privateState.committed).toBe(false);
+  expect(open.publicState.catalog).toBeUndefined();
+  expect(open.privateState.view).not.toBeNull();
+  expect(open.privateState.units).toHaveLength(3);
+  state = game.submit(state, s0, { orders: [] }, "match.orders").state;
+  const waiting = game.observe(state, s0);
+  expect(waiting.privateState).toEqual({
+    committed: true,
+    loadout: ["grunt", "grunt", "grunt"],
+    view: null,
+    units: [],
+    visibleEnemies: [],
+    lastSeen: [],
+    items: [],
+    lastRound: [],
+    chat: [],
+  });
+  expect(waiting.legalTools).toEqual([]);
+  expect(waiting.publicState.map).toEqual({ width: state.map.width, height: state.map.height });
+  expect(game.observe(state, s1).privateState.units).toHaveLength(3);
 });
 
 test("the terminal view carries every history entry as scalar tables a broadcaster can replay", () => {

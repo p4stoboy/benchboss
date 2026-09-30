@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { createRng, mkSeatId } from "@benchboss/core";
 import { renderSpectatorView } from "@benchboss/viewer";
-import { key } from "../src/map";
+import { type TileKind, key } from "../src/map";
 import { plugin } from "../src/plugin";
 import { visionOf } from "../src/state";
 import type { BrState } from "../src/types";
@@ -10,6 +10,7 @@ import { randomOrders } from "./random-orders";
 
 const s0 = mkSeatId(0);
 const s1 = mkSeatId(1);
+const TERRAIN_CHAR: Record<TileKind, string> = { open: ".", cover: "+", wall: "#" };
 
 /** Every position a seat learns about belongs to its own units or lies inside its current vision. */
 function assertObservationPrivacy(state: BrState, seat: ReturnType<typeof mkSeatId>): void {
@@ -32,10 +33,40 @@ function assertObservationPrivacy(state: BrState, seat: ReturnType<typeof mkSeat
           ),
       ).toBe(true);
   }
-  for (const unit of observation.privateState.units)
-    for (const reach of unit.reachable)
-      for (const target of reach.targets)
+  for (const unit of observation.privateState.units) {
+    const reach = new Set(unit.reach.split(" "));
+    for (const [tile, targets] of Object.entries(unit.shots)) {
+      expect(reach.has(tile)).toBe(true);
+      for (const target of targets)
         expect(seen.has(key(state.units.find((u) => u.id === target) as never))).toBe(true);
+    }
+  }
+  const view = observation.privateState.view;
+  expect(view === null).toBe(seen.size === 0);
+  if (view) {
+    expect(view.terrain.length).toBe(view.heights.length);
+    view.terrain.forEach((row, dy) => {
+      expect(row.length).toBe(view.heights[dy]?.length ?? -1);
+      [...row].forEach((ch, dx) => {
+        const at = { x: view.x + dx, y: view.y + dy };
+        const tile = state.map.tiles[at.y]?.[at.x];
+        const shown = view.heights[dy]?.[dx];
+        if (!seen.has(key(at))) {
+          expect(ch).toBe("?");
+          expect(shown).toBe("?");
+          return;
+        }
+        expect(ch).toBe(TERRAIN_CHAR[tile?.kind ?? "open"]);
+        expect(shown).toBe(String(tile?.h));
+      });
+    });
+    for (const tile of seen) {
+      const [x, y] = tile.split(",").map(Number);
+      expect(view.terrain[(y ?? 0) - view.y]?.[(x ?? 0) - view.x]).not.toBe("?");
+    }
+  }
+  expect(JSON.stringify(observation.publicState)).not.toContain('"tiles"');
+  expect(JSON.stringify(observation.publicState)).not.toContain('"terrain"');
   for (const remembered of observation.privateState.lastSeen) {
     const memory = state.memory[seat]?.[remembered.id];
     expect(memory).toEqual(remembered);
@@ -75,7 +106,7 @@ test("a wall hides an enemy from observation, attacks and memory until it is see
   const hidden = game.observe(state, s0);
   expect(hidden.privateState.visibleEnemies).toEqual([]);
   expect(hidden.privateState.lastSeen).toEqual([]);
-  expect(hidden.privateState.units[0]?.reachable.every((r) => r.targets.length === 0)).toBe(true);
+  expect(hidden.privateState.units[0]?.shots).toEqual({});
   expect(JSON.stringify(hidden)).not.toContain("seat:1/0");
   const open = scenario(
     ["000"],
