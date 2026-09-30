@@ -284,13 +284,18 @@ export function publicView<State>(session: MatchSession<State>): SpectatorView {
       : {}),
   };
 }
+/** Frames are spectator-visible changes only: a command that alters nothing but the clocks records none. */
 function recordFrame<State>(session: MatchSession<State>): MatchSession<State> {
-  return session.projectPublic
-    ? {
-        ...session,
-        frames: [...session.frames, { seq: session.log.length - 1, view: publicView(session) }],
-      }
-    : session;
+  if (!session.projectPublic) return session;
+  const view = publicView(session);
+  const last = session.frames.at(-1);
+  if (last && sameView(last.view, view)) return session;
+  return { ...session, frames: [...session.frames, { seq: session.log.length - 1, view }] };
+}
+function sameView(a: SpectatorView, b: SpectatorView): boolean {
+  const { clocks: _a, ...restA } = a as SpectatorView & { clocks?: unknown };
+  const { clocks: _b, ...restB } = b as SpectatorView & { clocks?: unknown };
+  return JSON.stringify(restA) === JSON.stringify(restB);
 }
 function resetDecision<State>(session: MatchSession<State>, seat: SeatId): MatchSession<State> {
   return {

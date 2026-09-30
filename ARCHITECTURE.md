@@ -127,7 +127,8 @@ States and semantics:
 - Accepted actions/defaults retain tool identity in logs. Terminal submission and
   terminal resolution both append seed reveal, resolved config, score and result
   exactly once; terminal matches reject further commands.
-- Projectors snapshot initial state and actual transitions into public frames.
+- Projectors snapshot initial state and actual transitions into public frames; a
+  command whose view equals the last frame's apart from clocks records no frame.
   Readers clone frame/view data. A low-level session without a projector has no
   public view; host bindings always provide one.
 
@@ -349,7 +350,9 @@ States and semantics:
   and pickups by their tile; a fizzle whose target is an enemy carries reason `missed`
   in place of the stored reason), and `chat` per the kill gate above. `state.explored` is
   the union of every seat's vision at spawn and after each resolution (never cleared);
-  live public views carry height/terrain tables with `?` on unexplored tiles, counts,
+  live public views carry a `Terrain kinds` legend list (`TILE_KINDS` order, append-only)
+  and a `Map` table with one integer per tile (`-1` unexplored, else
+  `h * kinds + kindIndex` from `tileCode` in `games/battle-royale/src/map.ts`), counts,
   zone, eliminations and the 50 most recent chat lines and are independent of
   positions, loot, rosters and memory. The terminal view shows the whole map. History is an ordered list of entries
   (spawn, each resolved round, each in-round host forfeit) with zone radius, storm

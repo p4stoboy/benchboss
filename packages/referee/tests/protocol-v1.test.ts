@@ -594,6 +594,18 @@ describe("replay artifact denial-of-service boundaries", () => {
     ).toEqual({ ok: true });
   });
 
+  test("a clock advance that changes nothing spectators see records a command but no frame", () => {
+    const { session } = fixture({ timing: { playerTotalMs: null, decisionLimitMs: null } });
+    const started = time(session, 0);
+    const later = time(started, 1000);
+    expect(later.state.phase).toBe(started.state.phase);
+    expect(later.log.length).toBeGreaterThan(started.log.length);
+    expect(later.frames).toHaveLength(started.frames.length);
+    const acted = act(later);
+    expect(acted.frames.length).toBe(started.frames.length + 1);
+    expect(acted.frames.at(-1)?.seq).toBe(acted.log.length - 1);
+  });
+
   test("equal host timestamps do not accumulate clock commands or frames", () => {
     const { session } = fixture();
     const started = time(session, 0);
