@@ -29,22 +29,30 @@ export function snapshot(state: BrState, round: number, events: RoundEvent[]): R
   };
 }
 
-const occupied = (units: readonly Unit[], p: { x: number; y: number }): boolean =>
-  units.some((u) => u.alive && u.x === p.x && u.y === p.y);
+const occupied = (units: readonly Unit[], p: Point, passable?: SeatId): boolean =>
+  units.some((u) => u.alive && u.seat !== passable && u.x === p.x && u.y === p.y);
 const at = (u: Point): Point => ({ x: u.x, y: u.y });
 
-function moveUnits(state: BrState, events: RoundEvent[]): Unit[] {
-  const units = state.units.map((u) => ({ ...u }));
+/**
+ * One movement leg in initiative order. Allies are walked through but never stopped on; any
+ * unit, hidden or not, blocks the step onto its tile otherwise. A unit whose earlier leg stopped
+ * short no longer stands where this leg's path begins, so it forfeits the leg; a dead unit walks
+ * nowhere.
+ */
+function moveUnits(state: BrState, units: Unit[], leg: number, events: RoundEvent[]): void {
   for (const seat of initiative(state))
     for (const order of state.orders[seat]?.orders ?? []) {
-      const path = state.paths[seat]?.[order.unit];
+      const path = state.paths[seat]?.[order.unit]?.[leg];
       const unit = units.find((u) => u.id === order.unit);
       if (!path?.length || !unit?.alive) continue;
       const from = at(unit);
+      const start = leg === 0 ? from : (state.paths[seat]?.[order.unit]?.[leg - 1]?.at(-1) ?? from);
+      if (start.x !== from.x || start.y !== from.y) continue;
       const walked: Point[] = [];
       let blocked = false;
-      for (const step of path) {
-        if (occupied(units, step)) {
+      for (const [index, step] of path.entries()) {
+        const last = index === path.length - 1;
+        if (occupied(units, step, last ? undefined : seat)) {
           blocked = true;
           break;
         }
@@ -54,7 +62,6 @@ function moveUnits(state: BrState, events: RoundEvent[]): Unit[] {
       }
       events.push({ kind: "move", unit: unit.id, from, to: at(unit), path: walked, blocked });
     }
-  return units;
 }
 
 /** Pickups and self-targeted abilities land before any damage, in initiative order. */
@@ -132,7 +139,8 @@ function applyCombat(state: BrState, units: Unit[], events: RoundEvent[]): Appli
   const kills: Record<SeatId, number> = {};
   const hit = (seat: SeatId, target: Unit, amount: number): void => {
     damage[target.id] = (damage[target.id] ?? 0) + amount;
-    if (target.seat !== seat) lastHitter[target.id] = seat;
+    if (target.seat === seat) return;
+    lastHitter[target.id] = seat;
     damageDealt[seat] = (damageDealt[seat] ?? 0) + amount;
   };
   const fizzle = (unit: Unit, target: string, reason: string): void => {
@@ -322,12 +330,14 @@ export function finishIfDecided(state: BrState): BrState {
 
 export function resolveRound(state: BrState): BrState {
   const events: RoundEvent[] = [];
-  const units = moveUnits(state, events);
+  const units = state.units.map((u) => ({ ...u }));
+  moveUnits(state, units, 0, events);
   const items = state.items.map((item) => ({ ...item }));
   // Reveals that outlive this round stay; anything older is dropped here.
   const reveals = state.reveals.filter((r) => r.untilRound > state.round);
   applyPickupsAndBuffs(state, units, items, reveals, events);
   const { kills, damageDealt } = applyCombat(state, units, events);
+  moveUnits(state, units, 1, events);
   applyStorm(state, units, events);
   const teams = { ...state.teams };
   for (const seat of state.seats) {
@@ -339,7 +349,7 @@ export function resolveRound(state: BrState): BrState {
       damageDealt: record.damageDealt + (damageDealt[seat] ?? 0),
     };
   }
-  let next: BrState = { ...state, units, items, reveals, teams };
+  let next: BrState = { ...state, units, items, reveals, teams, recentKills: kills };
   next = eliminateEmptyTeams(next, events);
   next = {
     ...next,
@@ -364,7 +374,7 @@ export function forfeitSeats(state: BrState, seats: readonly SeatId[], cause: st
   for (const unit of units)
     if (victims.includes(unit.seat) && unitById(state, unit.id)?.alive)
       forfeits.push({ kind: "death", unit: unit.id, at: at(unit) });
-  let next: BrState = { ...state, units, cause };
+  let next: BrState = { ...state, units, cause, recentKills: {} };
   const placement = 1 + aliveSeats(next).length - victims.length;
   const teams = { ...next.teams };
   for (const seat of victims) {

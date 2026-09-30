@@ -24,14 +24,13 @@ import { scatterLoot } from "./loot";
 import {
   type TileKind,
   chebyshev,
-  heightGrid,
   inBounds,
   key,
   stormDamage,
-  terrainGrid,
   zoneCenter,
   zoneRadius,
 } from "./map";
+import type { Reach } from "./path";
 import { resolveRound, snapshot } from "./resolve";
 import {
   CHAT_MAX_LENGTH,
@@ -43,6 +42,7 @@ import {
 import {
   abilityReady,
   aliveSeats,
+  continuations,
   initiative,
   isEliminated,
   knownItemAt,
@@ -70,12 +70,12 @@ import type {
 export const BR_GAME_ID = "battle-royale";
 export const MIN_SEATS = 2;
 export const MAX_SEATS = 30;
-export const BR_DEFAULT_RULES = { maxRounds: 40, tilesPerSeat: 150 };
+export const BR_DEFAULT_RULES = { maxRounds: 40, tilesPerSeat: 300 };
 export const BR_RULES_SCHEMA = {
   type: "object",
   properties: {
     maxRounds: { type: "integer", minimum: 4, maximum: 200 },
-    tilesPerSeat: { type: "integer", minimum: 9, maximum: 300 },
+    tilesPerSeat: { type: "integer", minimum: 9, maximum: 600 },
   },
   additionalProperties: false,
 };
@@ -87,6 +87,23 @@ export const BR_PHASE_TOOLS = {
   terminal: [],
 } satisfies Record<string, string[]>;
 
+export interface BrCatalog {
+  classes: typeof CLASSES;
+  weapons: typeof WEAPONS;
+  abilities: typeof ABILITIES;
+  maxArmour: number;
+  budget: number;
+  teamSize: number;
+}
+
+/** The tiles a team can see now, as one string per row from the box origin; `?` is unseen. */
+export interface BrView {
+  x: number;
+  y: number;
+  terrain: string[];
+  heights: string[];
+}
+
 export interface BrObservation {
   matchId: string;
   phase: string;
@@ -94,8 +111,7 @@ export interface BrObservation {
   publicState: {
     round: number;
     maxRounds: number;
-    /** Row-major grids: heights[y][x], terrain[y][x]. */
-    map: { width: number; height: number; heights: number[][]; terrain: TileKind[][] };
+    map: { width: number; height: number };
     zone: {
       center: Point;
       radius: number;
@@ -105,16 +121,14 @@ export interface BrObservation {
     };
     teams: { seat: SeatId; unitsAlive: number; placement: number | null }[];
     initiative: SeatId[];
-    classes: typeof CLASSES;
-    weapons: typeof WEAPONS;
-    abilities: typeof ABILITIES;
-    maxArmour: number;
-    budget: number;
-    teamSize: number;
-    chat: ChatMessage[];
+    /** Sent during the loadout phase only; agents keep it. */
+    catalog?: BrCatalog;
   };
   privateState: {
+    /** True once this seat has submitted for the current phase; everything below is then empty. */
+    committed: boolean;
     loadout: ClassId[] | null;
+    view: BrView | null;
     units: {
       id: string;
       cls: ClassId;
@@ -130,7 +144,13 @@ export interface BrObservation {
       damage: number;
       ability: { id: AbilityId; ready: boolean; readyRound: number };
       hiddenUntil: number;
-      reachable: { x: number; y: number; cost: number; targets: string[] }[];
+      /**
+       * Move cost to every tile the unit may end its first leg on, as a digit per tile in row
+       * strings from the box origin; `.` is unreachable this round. Its own tile is `0`.
+       */
+      reach: { x: number; y: number; rows: string[] };
+      /** Destinations with at least one attackable enemy, keyed `x,y`. */
+      shots: Record<string, string[]>;
     }[];
     visibleEnemies: {
       id: string;
@@ -147,6 +167,8 @@ export interface BrObservation {
     /** Items on tiles this team has seen, as of the round it last saw each tile. */
     items: SeenItem[];
     lastRound: RoundEvent[];
+    /** Previous rounds' lines, only in the turn after this seat scored a kill. */
+    chat: ChatMessage[];
   };
   legalTools: string[];
 }
@@ -159,17 +181,85 @@ const canOrder = (state: BrState, seat: SeatId): boolean =>
 export const recentChat = (state: BrState): ChatMessage[] =>
   state.chat.slice(-CHAT_WINDOW).map((line) => ({ ...line }));
 
+/** A seat reads previous rounds' chat only in the turn after it scored a kill. */
+export const chatFor = (state: BrState, seat: SeatId): ChatMessage[] =>
+  (state.recentKills[seat] ?? 0) > 0
+    ? state.chat
+        .filter((line) => line.round < state.round)
+        .slice(-CHAT_WINDOW)
+        .map((line) => ({ ...line }))
+    : [];
+
+const TERRAIN_CHAR: Record<TileKind, string> = { open: ".", cover: "+", wall: "#" };
+
+/** Bounding box of a unit's reaches with one cost digit per tile and `.` where it cannot end. */
+export function costGrid(reaches: readonly Reach[]): { x: number; y: number; rows: string[] } {
+  if (reaches.length === 0) return { x: 0, y: 0, rows: [] };
+  const x0 = Math.min(...reaches.map((r) => r.x));
+  const y0 = Math.min(...reaches.map((r) => r.y));
+  const x1 = Math.max(...reaches.map((r) => r.x));
+  const y1 = Math.max(...reaches.map((r) => r.y));
+  const cost = new Map(reaches.map((r) => [key(r), r.cost]));
+  const rows: string[] = [];
+  for (let y = y0; y <= y1; y++) {
+    let row = "";
+    for (let x = x0; x <= x1; x++) row += cost.get(`${x},${y}`)?.toString() ?? ".";
+    rows.push(row);
+  }
+  return { x: x0, y: y0, rows };
+}
+
+/** Bounding box of the seat's visible tiles rendered as row strings; null when nothing is seen. */
+export function viewFor(state: BrState, seen: ReadonlySet<string>): BrView | null {
+  if (seen.size === 0) return null;
+  let x0 = state.map.width;
+  let y0 = state.map.height;
+  let x1 = -1;
+  let y1 = -1;
+  for (const tile of seen) {
+    const [x, y] = tile.split(",").map(Number) as [number, number];
+    x0 = Math.min(x0, x);
+    y0 = Math.min(y0, y);
+    x1 = Math.max(x1, x);
+    y1 = Math.max(y1, y);
+  }
+  const terrain: string[] = [];
+  const heights: string[] = [];
+  for (let y = y0; y <= y1; y++) {
+    let t = "";
+    let h = "";
+    for (let x = x0; x <= x1; x++) {
+      const tile = state.map.tiles[y]?.[x];
+      const visible = tile !== undefined && seen.has(key({ x, y }));
+      t += visible ? TERRAIN_CHAR[tile.kind] : "?";
+      h += visible ? String(tile.h) : "?";
+    }
+    terrain.push(t);
+    heights.push(h);
+  }
+  return { x: x0, y: y0, terrain, heights };
+}
+
 const withChat = (state: BrState, seat: SeatId, text: string | undefined): BrState =>
   text === undefined
     ? state
     : { ...state, chat: [...state.chat, { round: state.round, seat, text }] };
 
-/** Events a seat may learn about: its own units, or positions its units can see now. */
+/**
+ * Events a seat may learn about: its own units, or positions its units can see now. A fizzle
+ * against an enemy reads only "missed": the true reason would tell where the target went or what
+ * stood between.
+ */
 export function eventsFor(state: BrState, seat: SeatId): RoundEvent[] {
   const seen = visionOf(state, seat);
   const own = (id: string): boolean => unitById(state, id)?.seat === seat;
   const visible = (p: Point): boolean => seen.has(key(p));
-  return state.lastRound.filter((event) => {
+  const disclosed = state.lastRound.map((event) =>
+    event.kind === "fizzle" && event.target !== "" && !own(event.target)
+      ? { ...event, reason: "missed" }
+      : event,
+  );
+  return disclosed.filter((event) => {
     switch (event.kind) {
       case "move":
         return own(event.unit) || visible(event.to);
@@ -237,25 +327,39 @@ function validateOrders(
   state: BrState,
   seat: SeatId,
   orders: Orders,
-): { ok: true; paths: Record<string, Point[]> } | { ok: false; reason: string } {
+): { ok: true; paths: Record<string, Point[][]> } | { ok: false; reason: string } {
   const planned = plans(state, seat);
   const enemies = new Set(visibleEnemies(state, seat).map((u) => u.id));
-  const paths: Record<string, Point[]> = {};
+  const paths: Record<string, Point[][]> = {};
   const used = new Set<string>();
   const fail = (reason: string) => ({ ok: false as const, reason });
-  for (const order of orders.orders) {
+  // Reasons name only ids the state vouches for; unknown ids are never echoed.
+  for (const [index, order] of orders.orders.entries()) {
+    const plan = planned.find((p) => p.unit.id === order.unit);
+    if (!plan) return fail(`order ${index} names no living unit of yours`);
     if (used.has(order.unit)) return fail(`duplicate order for ${order.unit}`);
     used.add(order.unit);
-    const plan = planned.find((p) => p.unit.id === order.unit);
-    if (!plan) return fail(`${order.unit} is not one of your living units`);
     const destination = order.moveTo ?? plan.unit;
     const reach = plan.reaches.find((r) => samePoint(r, destination));
     if (!reach) return fail(`${order.unit} cannot reach ${destination.x},${destination.y}`);
-    paths[order.unit] = reach.path;
+    paths[order.unit] = [reach.path];
+    if (order.thenTo) {
+      if (samePoint(order.thenTo, reach))
+        return fail(`${order.unit} thenTo must differ from its destination`);
+      const onward = continuations(state, seat, plan.unit, reach).find((r) =>
+        samePoint(r, order.thenTo as Point),
+      );
+      if (!onward)
+        return fail(
+          `${order.unit} cannot continue to ${order.thenTo.x},${order.thenTo.y} from ${reach.x},${reach.y} with ${CLASSES[plan.unit.cls].move - reach.cost} move points left`,
+        );
+      paths[order.unit] = [reach.path, onward.path];
+    }
     const action = order.action;
     if (!action || action.kind === "hold") continue;
     if (action.kind === "attack") {
-      if (!enemies.has(action.target)) return fail(`${action.target} is not a visible enemy`);
+      if (!enemies.has(action.target))
+        return fail(`${order.unit} attack target is not a visible enemy`);
       if (!reach.targets.includes(action.target))
         return fail(`${order.unit} cannot attack ${action.target} from ${reach.x},${reach.y}`);
       continue;
@@ -284,14 +388,14 @@ function validateOrders(
     }
     if (!action.target || action.at !== undefined) return fail(`${ability} needs a target unit`);
     if (spec.target === "enemy") {
-      if (!enemies.has(action.target)) return fail(`${action.target} is not a visible enemy`);
+      if (!enemies.has(action.target)) return fail(`${ability} target is not a visible enemy`);
       if (!reach.targets.includes(action.target))
         return fail(`${order.unit} cannot attack ${action.target} from ${reach.x},${reach.y}`);
       continue;
     }
     const ally = unitById(state, action.target);
     if (!ally?.alive || ally.seat !== seat || ally.id === order.unit)
-      return fail(`${action.target} is not another living unit of yours`);
+      return fail(`${ability} target is not another living unit of yours`);
   }
   return { ok: true, paths };
 }
@@ -340,6 +444,8 @@ export function makeBattleRoyale(): GameModule<BrState, unknown, BrObservation, 
         orders: {},
         paths: {},
         teams,
+        recentKills: {},
+        explored: {},
         memory: {},
         lastRound: [],
         history: [],
@@ -348,50 +454,80 @@ export function makeBattleRoyale(): GameModule<BrState, unknown, BrObservation, 
       };
     },
     observe(state, seat): BrObservation {
-      const seen = visionOf(state, seat);
-      const enemies = visibleEnemies(state, seat, seen);
-      const remembered = Object.values(state.memory[seat] ?? {}).filter(
-        (entry) => !enemies.some((enemy) => enemy.id === entry.id),
-      );
-      const planned =
-        state.phase === "orders" && !isEliminated(state, seat) ? plans(state, seat) : [];
+      const committed =
+        isEliminated(state, seat) ||
+        (state.phase === "loadout" && state.loadouts[seat] !== undefined) ||
+        (state.phase === "orders" && state.orders[seat] !== undefined) ||
+        state.phase === "terminal";
       const center = zoneCenter(state.map);
-      return {
-        matchId: state.matchId,
-        phase: state.phase,
-        seat,
-        publicState: {
-          round: state.round,
-          maxRounds: state.rules.maxRounds,
-          map: {
-            width: state.map.width,
-            height: state.map.height,
-            heights: heightGrid(state.map),
-            terrain: terrainGrid(state.map),
-          },
-          zone: {
-            center,
-            radius: zoneRadius(state.map, state.rules.maxRounds, Math.max(1, state.round)),
-            nextRadius: zoneRadius(state.map, state.rules.maxRounds, Math.max(1, state.round) + 1),
-            stormDamage: stormDamage(Math.max(1, state.round)),
-            nextStormDamage: stormDamage(Math.max(1, state.round) + 1),
-          },
-          teams: state.seats.map((s) => ({
-            seat: s,
-            unitsAlive: ownUnits(state, s).length,
-            placement: state.teams[s]?.placement ?? null,
-          })),
-          initiative: state.phase === "orders" ? initiative(state) : [],
+      const round = Math.max(1, state.round);
+      const publicState: BrObservation["publicState"] = {
+        round: state.round,
+        maxRounds: state.rules.maxRounds,
+        map: { width: state.map.width, height: state.map.height },
+        zone: {
+          center,
+          radius: zoneRadius(state.map, state.rules.maxRounds, round),
+          nextRadius: zoneRadius(state.map, state.rules.maxRounds, round + 1),
+          stormDamage: stormDamage(round),
+          nextStormDamage: stormDamage(round + 1),
+        },
+        teams: state.seats.map((s) => ({
+          seat: s,
+          unitsAlive: ownUnits(state, s).length,
+          placement: state.teams[s]?.placement ?? null,
+        })),
+        initiative: state.phase === "orders" ? initiative(state) : [],
+      };
+      if (state.phase === "loadout")
+        publicState.catalog = {
           classes: CLASSES,
           weapons: WEAPONS,
           abilities: ABILITIES,
           maxArmour: MAX_ARMOUR,
           budget: TEAM_BUDGET,
           teamSize: TEAM_SIZE,
-          chat: recentChat(state),
-        },
+        };
+      const loadout = state.loadouts[seat] ? [...(state.loadouts[seat] as ClassId[])] : null;
+      const legalTools = canLoadout(state, seat)
+        ? [...BR_PHASE_TOOLS.loadout]
+        : canOrder(state, seat)
+          ? [...BR_PHASE_TOOLS.orders]
+          : [];
+      if (committed)
+        return {
+          matchId: state.matchId,
+          phase: state.phase,
+          seat,
+          publicState,
+          privateState: {
+            committed: true,
+            loadout,
+            view: null,
+            units: [],
+            visibleEnemies: [],
+            lastSeen: [],
+            items: [],
+            lastRound: [],
+            chat: [],
+          },
+          legalTools,
+        };
+      const seen = visionOf(state, seat);
+      const enemies = visibleEnemies(state, seat, seen);
+      const remembered = Object.values(state.memory[seat] ?? {}).filter(
+        (entry) => !enemies.some((enemy) => enemy.id === entry.id),
+      );
+      const planned = state.phase === "orders" ? plans(state, seat) : [];
+      return {
+        matchId: state.matchId,
+        phase: state.phase,
+        seat,
+        publicState,
         privateState: {
-          loadout: state.loadouts[seat] ? [...(state.loadouts[seat] as ClassId[])] : null,
+          committed: false,
+          loadout,
+          view: viewFor(state, seen),
           units: (planned.length
             ? planned
             : ownUnits(state, seat).map((unit) => ({ unit, reaches: [] }))
@@ -414,12 +550,10 @@ export function makeBattleRoyale(): GameModule<BrState, unknown, BrObservation, 
               readyRound: unit.readyRound,
             },
             hiddenUntil: unit.hiddenUntil,
-            reachable: reaches.map((r) => ({
-              x: r.x,
-              y: r.y,
-              cost: r.cost,
-              targets: [...r.targets],
-            })),
+            reach: costGrid(reaches),
+            shots: Object.fromEntries(
+              reaches.filter((r) => r.targets.length).map((r) => [key(r), [...r.targets]]),
+            ),
           })),
           visibleEnemies: enemies.map((u) => ({
             id: u.id,
@@ -435,12 +569,9 @@ export function makeBattleRoyale(): GameModule<BrState, unknown, BrObservation, 
           lastSeen: remembered.map((entry) => ({ ...entry })),
           items: knownItems(state, seat).map((item) => ({ ...item })),
           lastRound: eventsFor(state, seat),
+          chat: chatFor(state, seat),
         },
-        legalTools: canLoadout(state, seat)
-          ? [...BR_PHASE_TOOLS.loadout]
-          : canOrder(state, seat)
-            ? [...BR_PHASE_TOOLS.orders]
-            : [],
+        legalTools,
       };
     },
     legalActions(state, seat): LegalActionSpec[] {
@@ -449,7 +580,7 @@ export function makeBattleRoyale(): GameModule<BrState, unknown, BrObservation, 
           {
             tool: "match.loadout",
             phase: "loadout",
-            description: `Choose ${TEAM_SIZE} actor classes (${CLASS_IDS.join(", ")}) whose costs total at most ${TEAM_BUDGET}. Duplicates are allowed. Optional chat (up to ${CHAT_MAX_LENGTH} characters) posts to the public all-chat every team and spectator can read.`,
+            description: `Choose ${TEAM_SIZE} actor classes (${CLASS_IDS.join(", ")}) whose costs total at most ${TEAM_BUDGET}. Duplicates are allowed. Keep the catalog and map size from this observation; later turns show only what your units can see. Optional chat (up to ${CHAT_MAX_LENGTH} characters) posts to the public all-chat; you read it only in the turn after you score a kill.`,
             jsonSchema: LOADOUT_INPUT_SCHEMA,
           },
         ];
@@ -458,7 +589,7 @@ export function makeBattleRoyale(): GameModule<BrState, unknown, BrObservation, 
           {
             tool: "match.orders",
             phase: "orders",
-            description: `Order your living units for this round: an optional moveTo from the unit's reachable list and one optional action: attack (a target listed for that destination), ability (the unit's class ability when ready: recon, brace and camo take nothing; grenade takes a tile "at" within ${ABILITIES.grenade.range}; volley takes a listed target; heal takes another of your units that will be adjacent), pickup (an item you have seen on the destination tile) or hold. Omitted units hold. All teams' orders resolve together: movement in initiative order, then pickups and self-abilities, then attacks, blasts and heals simultaneously, then storm damage outside the zone. Optional chat (up to ${CHAT_MAX_LENGTH} characters) posts to the public all-chat every team and spectator can read.`,
+            description: `Order your living units: an optional moveTo (a digit tile in the unit's reach grid; the digit is its move cost), one optional action there: attack (a target in shots for that destination), ability (when ready; grenade takes at, volley and heal take target, others nothing), pickup (an item you have seen on the destination) or hold, and an optional thenTo walked afterwards with the points left (move minus the digit; a step up one level costs 2, any other step 1; only tiles you can see now). Orders resolve together: first legs in initiative order, pickups and self-abilities, attacks, blasts and heals at once, second legs, then the storm. Optional chat (up to ${CHAT_MAX_LENGTH} characters).`,
             jsonSchema: ORDERS_INPUT_SCHEMA,
           },
         ];

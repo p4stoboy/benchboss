@@ -25,7 +25,12 @@ export const ordersSchema = z
     orders: z
       .array(
         z
-          .object({ unit: z.string(), moveTo: point.optional(), action: action.optional() })
+          .object({
+            unit: z.string(),
+            moveTo: point.optional(),
+            action: action.optional(),
+            thenTo: point.optional(),
+          })
           .strict(),
       )
       .max(TEAM_SIZE),

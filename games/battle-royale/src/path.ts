@@ -10,8 +10,9 @@ export interface Reach {
 }
 
 /**
- * Deterministic Dijkstra within `budget` move points. `blocked` tiles cannot be entered;
- * `passable` tiles can be crossed but not ended on (allies). The origin is never returned.
+ * Deterministic Dijkstra within `budget` move points over `visible` tiles only. `blocked` tiles
+ * cannot be entered; `passable` tiles can be crossed but not ended on (allies). The origin is
+ * never returned.
  */
 export function reachableTiles(
   map: GameMap,
@@ -19,6 +20,7 @@ export function reachableTiles(
   budget: number,
   blocked: ReadonlySet<string>,
   passable: ReadonlySet<string>,
+  visible: ReadonlySet<string>,
 ): Reach[] {
   const best = new Map<string, Reach>();
   const frontier: Reach[] = [{ ...origin, cost: 0, path: [] }];
@@ -32,7 +34,7 @@ export function reachableTiles(
     if (current.cost > (best.get(key(current))?.cost ?? Number.POSITIVE_INFINITY)) continue;
     for (const d of NEIGHBOURS) {
       const next = { x: current.x + d.x, y: current.y + d.y };
-      if (!inBounds(map, next) || blocked.has(key(next))) continue;
+      if (!inBounds(map, next) || !visible.has(key(next)) || blocked.has(key(next))) continue;
       const step = stepCost(map, current, next);
       if (step === null) continue;
       const cost = current.cost + step;

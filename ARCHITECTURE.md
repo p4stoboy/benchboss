@@ -232,7 +232,7 @@ States and semantics:
   deterministic Dijkstra reachability and per-team vision unions.
 - `games/battle-royale/src/{classes,combat,loot,state,resolve}.ts`: class, weapon
   and ability catalogs and budget, weapon range/damage modifiers, seeded loot
-  scatter, planning (reachable tiles with attackable targets) from a seat's own
+  scatter, planning (reach and attackable targets per destination) from a seat's own
   knowledge including recon reveals and camouflage, sighting memory, and WeGo round
   resolution: initiative-ordered movement, pickups and self-abilities, simultaneous
   attacks/blasts/heals with armour, storm, elimination, ranking and host-forced
@@ -247,7 +247,7 @@ States and semantics:
 
 States and semantics:
 
-- Catalog revisions are `1.0.0` for RPS, Spy and Chess and `2.0.0` for Battle
+- Catalog revisions are `1.0.0` for RPS, Spy and Chess and `2.1.0` for Battle
   Royale. RPS supports 2–10 seats; Spy supports 5/7/9; Chess supports 2; Battle
   Royale supports 2–30 (default 4). Each game has one implementation; unavailable
   revisions fail, so records made under an earlier revision render from their
@@ -263,7 +263,7 @@ States and semantics:
   call spends an action) and two retries per decision. Names are game-owned and generic
   metering references them; runtime code contains no game-specific allowance names.
 - Battle Royale defaults to 60 seconds per decision and no player total. Rules
-  `maxRounds` (4..200, default 40) and `tilesPerSeat` (9..300, default 150); unknown
+  `maxRounds` (4..200, default 40) and `tilesPerSeat` (9..600, default 300); unknown
   keys fail. Phases: `loadout` (every seat acts once), repeated `orders` (every
   non-eliminated seat acts once per round), `terminal`. Both phases resolve when the
   last acting seat has committed; decision expiry commits the safe default.
@@ -276,7 +276,7 @@ States and semantics:
   mutually reachable, hidden from every other team, at least `MIN_SPAWN_GAP` = 4 apart
   and at least 5% of tiles are non-open; after 24 attempts a flat open map with spread
   spawns is used. The default allowance is the smallest at which 30 seats reliably pass.
-  Spawn clusters are assigned to seats by a seeded shuffle. Terrain is public. Steps: +1 level costs 2, otherwise 1, |Δh| ≥ 2 or wall
+  Spawn clusters are assigned to seats by a seeded shuffle. Steps: +1 level costs 2, otherwise 1, |Δh| ≥ 2 or wall
   impassable. Line of sight is symmetric; walls and surfaces above the eye-to-eye line
   block; cover does not. Vision = class vision + observer height.
 - Battle Royale loadout: exactly three classes from scout/grunt/vanguard/ranger/medic/
@@ -292,8 +292,13 @@ States and semantics:
   round; every visible tile is refreshed each round (deleted when empty) and unseen
   tiles keep their last sighting.
   Orders: at most one order per living own unit with optional `moveTo` (must be in
-  that unit's reachable set computed against own units and visible enemies) and one
-  optional action: attack (visible target listed for the destination), ability (must
+  that unit's reach: Dijkstra over currently visible tiles only, against own units
+  and visible enemies), optional `thenTo` (a second leg from `moveTo` with the
+  points left, same visibility and blocking rules, the unit's own tile free, must
+  differ from `moveTo`; `state.paths[seat][unit]` holds one path per leg) and one
+  optional action: attack (visible target listed for the destination; the listing checks
+  the sight line against seen tiles only, unseen tiles assumed clear, so a listed shot
+  can still fizzle), ability (must
   be ready; recon/brace/camo take nothing, grenade takes `at` within 4 of the
   destination, volley a listed target, heal another own unit), pickup (the seat's item
   memory must hold one on the destination, so a fogged tile rejects identically with or
@@ -301,16 +306,23 @@ States and semantics:
   default (move each unit to the reachable tile least exposed to next round's zone,
   no action). Both envelopes take optional `chat` (1..280 chars) appended as
   `{round, seat, text}` to a global public log only when the envelope is accepted;
-  defaults never post; eliminated seats have no envelope.
-- Battle Royale resolution: movement by rotating seat initiative then order sequence,
-  stopping before any occupied tile (hidden enemies included); then pickups (health,
+  defaults never post; eliminated seats have no envelope. `state.recentKills[seat]`
+  is the number of kills the seat scored in the round just resolved (rebuilt every
+  resolution, cleared by a host forfeit); a seat reads chat only while it is > 0,
+  and then only lines with `round < state.round`, windowed to 50.
+- Battle Royale resolution: first-leg movement by rotating seat initiative then order
+  sequence, walking through own units but stopping before any enemy tile (hidden enemies
+  included) and before an occupied final tile; then pickups (health,
   armour, or weapon swap leaving the old weapon on the tile; fizzles when the unit
   stopped short), brace (+4 armour), camo (`hiddenUntil = round + 2`) and recon
   (reveal disc radius 6 until `round + 1`); then attacks, grenades (3 damage to every
   unit within 1 of the tile, own included, no sight needed), volleys (weapon damage to
-  the target and adjacent enemies) and heals against final positions with damage summed,
+  the target and adjacent enemies) and heals against first-leg positions with damage summed,
   absorbed by armour first, and healing applied before deaths; kills credit the last
-  enemy hitter only; an attack or damaging ability ends the unit's camouflage; storm
+  enemy hitter only and `damageDealt` counts hits on enemies only; an attack or damaging
+  ability ends the unit's camouflage; then
+  second legs in the same order (a dead unit or one stopped short of its first
+  destination forfeits its second leg); storm
   damage `1 + floor(round/10)` ignoring armour outside a Chebyshev zone that shrinks
   linearly to the centre tile at `floor(3·maxRounds/4)`; teams with no living unit
   finish together with placement `1 + teams alive`. Terminal at ≤ 1 team or past `maxRounds`; survivors rank by units,
@@ -318,15 +330,28 @@ States and semantics:
   averaged across tied placements. `player_time_exhausted` forfeits the batch; other host
   events leave state unchanged so the runtime commits the default.
 - Battle Royale privacy: vision is the line-of-sight union of own units plus active
-  recon discs; a camouflaged enemy is visible only when adjacent to an own unit or
-  inside an own recon disc. Observations carry own units with weapon, armour, ability
-  readiness and reachable/target lists, visible enemies (with armour and weapon),
-  remembered last sightings, the seat's item memory, and last-round events only for own
-  units or positions currently visible (ability events by origin tile, blasts and
-  pickups by their tile), plus the 50 most recent chat lines; the map is row-major
-  `heights[y][x]` and `terrain[y][x]` grids. Live public views carry height/terrain
-  tables, counts, zone, eliminations and the same chat window and are independent of
-  positions, loot, rosters and memory. History is an ordered list of entries
+  recon discs (a recon disc is full vision: terrain, loot, reach and enemies through
+  walls); a camouflaged enemy is visible only when adjacent to an own unit or
+  inside an own recon disc. The map is never sent whole: `publicState.map` is width
+  and height, the zone centre is public, and `privateState.view` is the bounding box
+  of the tiles visible now as row strings (`.`/`+`/`#` terrain, digit heights, `?`
+  unseen; null with no vision). The catalog (classes, weapons, abilities, armour cap,
+  budget, team size) rides in `publicState.catalog` during `loadout` only.
+  `privateState.committed` is true when the seat is eliminated, the match is terminal,
+  or the seat's loadout/orders for the current phase are recorded; a committed
+  observation keeps `loadout` and the public state and empties everything else, so
+  submit echoes and waiting polls cost nothing. Uncommitted observations carry own
+  units with weapon, armour, ability readiness, `reach` (`{x, y, rows}` cost grid: a
+  digit per first-leg destination, `.` elsewhere, bounded by the visible reach) and
+  `shots` (destination key → attackable ids), visible enemies (with armour and
+  weapon), remembered last sightings, the seat's item memory, last-round events only
+  for own units or positions currently visible (ability events by origin tile, blasts
+  and pickups by their tile; a fizzle whose target is an enemy carries reason `missed`
+  in place of the stored reason), and `chat` per the kill gate above. `state.explored` is
+  the union of every seat's vision at spawn and after each resolution (never cleared);
+  live public views carry height/terrain tables with `?` on unexplored tiles, counts,
+  zone, eliminations and the 50 most recent chat lines and are independent of
+  positions, loot, rosters and memory. The terminal view shows the whole map. History is an ordered list of entries
   (spawn, each resolved round, each in-round host forfeit) with zone radius, storm
   damage, living units (position, hp, armour, weapon, ready round, hidden until),
   remaining items and events (moves carry the walked tile path); the terminal view
