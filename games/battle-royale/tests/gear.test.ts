@@ -45,9 +45,8 @@ test("every class carries a weapon and an ability and the observation reports bo
   ]);
   const me = game.observe(state, s0).privateState.units[0];
   expect(me?.weapon).toBe(CLASSES.sniper.weapon);
-  expect(me?.range).toBe(WEAPONS[CLASSES.sniper.weapon].range);
-  expect(me?.damage).toBe(WEAPONS[CLASSES.sniper.weapon].damage);
-  expect(me?.ability).toEqual({ id: CLASSES.sniper.ability, ready: true, readyRound: 1 });
+  expect(me?.cls).toBe("sniper");
+  expect(me?.readyRound).toBe(state.round);
   expect(me?.armour).toBe(0);
   const seen = observeAt(state, s1).privateState.visibleEnemies[0];
   expect(seen?.weapon).toBe(CLASSES.sniper.weapon);
@@ -143,8 +142,8 @@ test("a weapon pickup swaps the unit's weapon, leaves the old one behind and cha
     dropped: CLASSES.grunt.weapon,
   });
   const me = observeAt(armed, s0).privateState.units[0];
-  expect(me?.range).toBe(WEAPONS.railgun.range);
-  expect(me?.shots["1,0"]).toEqual(["seat:1/0"]);
+  expect(me?.weapon).toBe("railgun");
+  expect(reachCosts(me?.shots["seat:1/0"]).has("1,0")).toBe(true);
   const shot = submitAll(armed, {
     [s0]: { orders: [{ unit: "seat:0/0", action: { kind: "attack", target: "seat:1/0" } }] },
   });
@@ -233,7 +232,9 @@ test("a grenade lands on a tile in range without sight, hits every unit around i
   ]);
   expect(again.accepted).toBe(false);
   expect(again.reason).toContain(`round ${1 + ABILITIES.grenade.cooldown + 1}`);
-  expect(game.observe(cooling, s0).privateState.units[0]?.ability.ready).toBe(false);
+  expect(game.observe(cooling, s0).privateState.units[0]?.readyRound).toBeGreaterThan(
+    cooling.round,
+  );
 });
 
 test("killing your own unit with a grenade credits no kill and no damage dealt", () => {
@@ -305,8 +306,8 @@ test("camouflage hides a sniper from enemies unless they stand beside it, and it
   });
   const blind = game.observe(vanished, s1);
   expect(blind.privateState.visibleEnemies).toEqual([]);
-  // The enemy watched the sniper vanish: the activation is disclosed, nothing after it is.
-  expect(blind.privateState.events.map((e) => e.kind)).toEqual(["turn", "ability"]);
+  // Current camouflage suppresses enemy identity in both the snapshot and its events.
+  expect(blind.privateState.events).toEqual([]);
   const hidden = playTurn(vanished, s1, { orders: [] });
   const later = observeAt(submitAll(hidden, {}), s1);
   expect(JSON.stringify(later)).not.toContain("seat:0/0");

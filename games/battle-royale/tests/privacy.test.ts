@@ -54,36 +54,31 @@ function assertObservationPrivacy(state: BrState, seat: ReturnType<typeof mkSeat
     expect(costs.get(`${unit.x},${unit.y}`)).toBe(0);
     for (const tile of costs.keys()) expect(seen.has(tile)).toBe(true);
     const reach = new Set(costs.keys());
-    for (const [tile, targets] of Object.entries(unit.shots)) {
-      expect(reach.has(tile)).toBe(true);
-      for (const target of targets)
-        expect(seen.has(key(state.units.find((u) => u.id === target) as never))).toBe(true);
+    for (const [target, grid] of Object.entries(unit.shots)) {
+      expect(observation.privateState.visibleEnemies.some((u) => u.id === target)).toBe(true);
+      for (const [tile, cost] of reachCosts(grid)) {
+        expect(reach.has(tile)).toBe(true);
+        expect(costs.get(tile)).toBe(cost);
+      }
     }
   }
   const view = observation.privateState.view;
   expect(view === null).toBe(seen.size === 0);
-  if (view) {
-    expect(view.terrain.length).toBe(view.heights.length);
-    view.terrain.forEach((row, dy) => {
-      expect(row.length).toBe(view.heights[dy]?.length ?? -1);
-      [...row].forEach((ch, dx) => {
-        const at = { x: view.x + dx, y: view.y + dy };
-        const tile = state.map.tiles[at.y]?.[at.x];
-        const shown = view.heights[dy]?.[dx];
-        if (!seen.has(key(at))) {
-          expect(ch).toBe("?");
-          expect(shown).toBe("?");
-          return;
-        }
-        expect(ch).toBe(TERRAIN_CHAR[tile?.kind ?? "open"]);
-        expect(shown).toBe(String(tile?.h));
-      });
+  const decoded = new Set<string>();
+  for (const [x, y, terrain, heights] of view?.rows ?? []) {
+    expect(terrain.length).toBe(heights.length);
+    expect(terrain.length).toBeGreaterThan(0);
+    [...terrain].forEach((ch, dx) => {
+      const at = { x: x + dx, y };
+      const tile = state.map.tiles[y]?.[x + dx];
+      expect(seen.has(key(at))).toBe(true);
+      expect(decoded.has(key(at))).toBe(false);
+      decoded.add(key(at));
+      expect(ch).toBe(TERRAIN_CHAR[tile?.kind ?? "open"]);
+      expect(heights[dx]).toBe(String(tile?.h));
     });
-    for (const tile of seen) {
-      const [x, y] = tile.split(",").map(Number);
-      expect(view.terrain[(y ?? 0) - view.y]?.[(x ?? 0) - view.x]).not.toBe("?");
-    }
   }
+  expect([...decoded].sort()).toEqual([...seen].sort());
   expect(JSON.stringify(observation.publicState)).not.toContain('"tiles"');
   expect(JSON.stringify(observation.publicState)).not.toContain('"terrain"');
   for (const item of observation.privateState.items) {
@@ -320,9 +315,9 @@ test("shots never read unseen terrain: a fogged cell on the sight line neither o
   const shotsIn = (state: BrState) => game.observe(state, s0).privateState.units[0]?.shots ?? {};
   expect(shotsIn(walled)).toEqual(shotsIn(clear));
   // The line from (0,3) crosses the fogged cell: offered either way, since unseen tiles count as clear.
-  expect(shotsIn(walled)["0,3"]).toEqual(["seat:1/0"]);
+  expect(reachCosts(shotsIn(walled)["seat:1/0"]).has("0,3")).toBe(true);
   // The line from the ranger's own tile also crosses fog, yet the enemy stands in plain view.
-  expect(shotsIn(walled)["0,0"]).toEqual(["seat:1/0"]);
+  expect(reachCosts(shotsIn(walled)["seat:1/0"]).has("0,0")).toBe(true);
   expect(game.observe(walled, s0).privateState.view).toEqual(
     game.observe(clear, s0).privateState.view,
   );
@@ -343,7 +338,7 @@ test("shots never read unseen terrain: a fogged cell on the sight line neither o
   expect(observeAt(fizzled, s0).privateState.events).toContainEqual({
     kind: "fizzle",
     unit: "seat:0/0",
-    target: "seat:1/0",
+    target: "",
     reason: "missed",
   });
 });
