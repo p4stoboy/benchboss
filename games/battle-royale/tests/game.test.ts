@@ -185,7 +185,7 @@ test("seats act one at a time in rotating initiative and each plans against the 
   expect(initiative(state)).toEqual([s0, s1]);
   expect(initiative({ ...state, round: 2 })).toEqual([s1, s0]);
   expect(actingSeat(state)).toBe(s0);
-  expect(game.observe(state, s0).publicState.turnOrder).toEqual([
+  expect(turnOrder(state)).toEqual([
     { seat: s0, status: "acting" },
     { seat: s1, status: "waiting" },
   ]);
@@ -212,17 +212,8 @@ test("seats act one at a time in rotating initiative and each plans against the 
   ]);
   const seen = game.observe(mid, s1);
   expect(seen.privateState.visibleEnemies.map((u) => [u.id, u.x])).toEqual([["seat:0/0", 4]]);
-  expect(seen.privateState.events).toEqual([
-    { kind: "turn", seat: s0 },
-    {
-      kind: "move",
-      unit: "seat:0/0",
-      from: { x: 0, y: 0 },
-      to: { x: 4, y: 0 },
-      path: [1, 2, 3, 4].map((x) => ({ x, y: 0 })),
-      blocked: false,
-    },
-  ]);
+  // Its approach began outside vision: no hidden starting point or path is disclosed.
+  expect(seen.privateState.events).toEqual([]);
   expect(
     game.submit(mid, s1, { orders: [{ unit: "seat:1/0", moveTo: { x: 3, y: 0 } }] }, "match.orders")
       .accepted,
@@ -347,12 +338,12 @@ test("a team whose last unit falls before its turn is skipped and eliminated at 
   });
   expect(shot.round).toBe(1);
   expect(shot.teams[s1]?.placement).toBeNull();
-  expect(game.observe(shot, s2).publicState.turnOrder).toEqual([
+  expect(turnOrder(shot)).toEqual([
     { seat: s0, status: "acted" },
     { seat: s1, status: "skipped" },
     { seat: s2, status: "acting" },
   ]);
-  expect(game.observe(shot, s2).publicState.teams.find((t) => t.seat === s1)?.unitsAlive).toBe(0);
+  expect(shot.units.filter((u) => u.seat === s1 && u.alive)).toHaveLength(0);
   expect(plugin.participation?.(shot, s1)).toEqual({ status: "waiting" });
   const ended = playTurn(shot, s2, { orders: [] });
   expect(ended.round).toBe(2);
@@ -646,7 +637,7 @@ test("chat opens for exactly the turn after a seat scores a kill", () => {
   expect(JSON.stringify(observeAt(quiet, s0))).not.toContain("still here");
 });
 
-test("observations show only the tiles the team can see, as a row-string window", () => {
+test("observations show only the tiles the team can see, as visible row segments", () => {
   const state = scenario(
     ["0#00", "0#00", "0#00", "2+00"],
     [
@@ -658,10 +649,12 @@ test("observations show only the tiles the team can see, as a row-string window"
   expect(mine.publicState.map).toEqual({ width: 4, height: 4 });
   expect(JSON.stringify(mine.publicState)).not.toContain("tiles");
   expect(mine.privateState.view).toEqual({
-    x: 0,
-    y: 0,
-    terrain: [".#", ".#", ".?", ".?"],
-    heights: ["00", "00", "0?", "2?"],
+    rows: [
+      [0, 0, ".#", "00"],
+      [0, 1, ".#", "00"],
+      [0, 2, ".", "0"],
+      [0, 3, ".", "2"],
+    ],
   });
   expect(mine.privateState.visibleEnemies).toEqual([]);
   const reach = reachCosts(mine.privateState.units[0]?.reach);
@@ -824,9 +817,9 @@ test("only the acting seat gets a full observation; the rest are trimmed until t
   state = game.submit(state, s0, { actors: ["grunt", "grunt", "grunt"] }, "match.loadout").state;
   const chosen = game.observe(state, s0);
   expect(chosen.privateState.committed).toBe(true);
-  expect(chosen.privateState.loadout).toEqual(["grunt", "grunt", "grunt"]);
+  expect(chosen.privateState.loadout).toBeNull();
   expect(chosen.privateState.view).toBeNull();
-  expect(chosen.publicState.catalog).toBeDefined();
+  expect(chosen.publicState).toEqual({});
   expect(game.observe(state, s1).privateState.committed).toBe(false);
   state = game.submit(state, s1, { actors: ["scout", "scout", "sniper"] }, "match.loadout").state;
   state = game.step(state);
@@ -838,7 +831,7 @@ test("only the acting seat gets a full observation; the rest are trimmed until t
   expect(open.legalTools).toEqual(["match.orders"]);
   const trimmed = {
     committed: true,
-    loadout: ["scout", "scout", "sniper"] as ClassId[],
+    loadout: null,
     view: null,
     units: [],
     visibleEnemies: [],
@@ -849,15 +842,12 @@ test("only the acting seat gets a full observation; the rest are trimmed until t
   const waitingTurn = game.observe(state, s1);
   expect(waitingTurn.privateState).toEqual(trimmed);
   expect(waitingTurn.legalTools).toEqual([]);
-  expect(waitingTurn.publicState.turnOrder).toEqual([
-    { seat: s0, status: "acting" },
-    { seat: s1, status: "waiting" },
-  ]);
+  expect(waitingTurn.publicState).toEqual({});
   state = game.submit(state, s0, { orders: [] }, "match.orders").state;
   const waiting = game.observe(state, s0);
-  expect(waiting.privateState).toEqual({ ...trimmed, loadout: ["grunt", "grunt", "grunt"] });
+  expect(waiting.privateState).toEqual(trimmed);
   expect(waiting.legalTools).toEqual([]);
-  expect(waiting.publicState.map).toEqual({ width: state.map.width, height: state.map.height });
+  expect(waiting.publicState).toEqual({});
   state = game.step(state);
   expect(game.observe(state, s0).privateState.committed).toBe(true);
   const turn = game.observe(state, s1);
@@ -961,7 +951,7 @@ test("the terminal view carries every history entry as scalar tables a broadcast
       for (const row of block.rows) expect(row).toHaveLength(block.columns.length);
 });
 
-test("a seat's observation carries every event since its previous turn, that turn included, and nothing older", () => {
+test("a seat's observation carries observable events since its previous turn, without foreign turn markers", () => {
   const state = scenario(flatRows(20, 3), [
     { seat: 0, cls: "grunt", x: 0, y: 0 },
     { seat: 1, cls: "grunt", x: 0, y: 1 },
@@ -978,14 +968,12 @@ test("a seat's observation carries every event since its previous turn, that tur
   expect(kinds(game.observe(round2, s1).privateState.events)).toEqual([
     `turn:${s1}`,
     "move",
-    `turn:${s2}`,
     "move",
   ]);
   const afterSeat1 = playTurn(round2, s1, step(2)(1));
   expect(kinds(game.observe(afterSeat1, s2).privateState.events)).toEqual([
     `turn:${s2}`,
     "move",
-    `turn:${s1}`,
     "move",
   ]);
   const afterSeat2 = playTurn(afterSeat1, s2, step(2)(2));
@@ -993,13 +981,9 @@ test("a seat's observation carries every event since its previous turn, that tur
   expect(kinds(game.observe(afterSeat2, s0).privateState.events)).toEqual([
     `turn:${s0}`,
     "move",
-    `turn:${s1}`,
     "move",
-    `turn:${s2}`,
     "move",
-    `turn:${s1}`,
     "move",
-    `turn:${s2}`,
     "move",
   ]);
 });
@@ -1032,11 +1016,13 @@ test("forfeiting the acting seat drops its pending orders and hands the turn on 
     { kind: "eliminated", seat: s0, placement: 3 },
   ]);
   expect(actingSeat(forfeited)).toBe(s1);
-  expect(game.observe(forfeited, s1).publicState.turnOrder).toEqual([
+  expect(turnOrder(forfeited)).toEqual([
     { seat: s1, status: "acting" },
     { seat: s2, status: "waiting" },
   ]);
-  expect(game.observe(forfeited, s1).privateState.events).toEqual(forfeited.events);
+  expect(game.observe(forfeited, s1).privateState.events).toEqual(
+    forfeited.events.filter((event) => event.kind === "death"),
+  );
   const ended = submitAll(forfeited, {});
   expect(ended.round).toBe(2);
   expect(ended.history.map((entry) => entry.round)).toEqual([0, 1]);
@@ -1048,7 +1034,7 @@ test("forfeiting the acting seat drops its pending orders and hands the turn on 
   ]);
 });
 
-test("a loadout-phase forfeit lands in the spawn entry and is disclosed in the first turn's events", () => {
+test("a loadout-phase forfeit stays in the spawn entry without disclosing it to opponents", () => {
   let state = newMatch(3, "early-forfeit");
   state = plugin.onHostEvent?.(state, {
     kind: "player_time_exhausted",
@@ -1067,9 +1053,7 @@ test("a loadout-phase forfeit lands in the spawn entry and is disclosed in the f
   state = game.step(state);
   expect(state.history[0]?.events).toEqual([{ kind: "eliminated", seat: s2, placement: 3 }]);
   expect(state.events).toEqual([]);
-  expect(game.observe(state, s0).privateState.events).toEqual([
-    { kind: "eliminated", seat: s2, placement: 3 },
-  ]);
+  expect(game.observe(state, s0).privateState.events).toEqual([]);
   expect(advanceTo(state, s1).round).toBe(1);
 });
 

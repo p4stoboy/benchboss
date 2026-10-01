@@ -281,7 +281,7 @@ States and semantics:
 
 States and semantics:
 
-- Catalog revisions are `1.0.0` for RPS, Spy and Chess and `3.2.0` for Battle
+- Catalog revisions are `1.0.0` for RPS, Spy and Chess and `3.3.0` for Battle
   Royale. RPS supports 2–10 seats; Spy supports 5/7/9; Chess supports 2; Battle
   Royale supports 2–30 (default 4). Each game has one implementation; unavailable
   revisions fail, so records made under an earlier revision render from their
@@ -404,26 +404,38 @@ States and semantics:
   recon discs (a recon disc is full vision: terrain, loot, reach and enemies through
   walls); a camouflaged enemy is visible only when adjacent to an own unit or
   inside an own recon disc. The map is never sent whole: `publicState.map` is width
-  and height, the zone centre is public, and `privateState.view` is the bounding box
-  of the tiles visible now as row strings (`.`/`+`/`#` terrain, digit heights, `?`
-  unseen; null with no vision). The catalog (classes, weapons, abilities, armour cap,
-  budget, team size) rides in `publicState.catalog` during `loadout` only.
-  `publicState.turnOrder` lists every living seat in initiative order with its turn
-  status. `privateState.committed` is true when the seat is eliminated, the match is
-  terminal, the seat's loadout is recorded, or in orders whenever `canOrder` is false
-  (another seat is acting, or its own orders are pending); a committed observation
-  keeps `loadout` and the public state and empties everything else, so submit echoes
-  and waiting polls cost nothing. Uncommitted observations carry own
-  units with weapon, armour, ability readiness, `reach` (`{x, y, rows}` cost grid: a
-  digit per first-leg destination, `.` elsewhere, bounded by the visible reach) and
-  `shots` (destination key → attackable ids), visible enemies (with armour and
-  weapon), items on tiles seen now, `events` (`sinceLastTurn`: `lastRound` from the
-  seat's own most recent `turn` marker onward, or all of it when it has none, then this
-  round's `events`) filtered to own units or positions currently visible (`turn` and
-  `eliminated` always; ability events by origin tile, blasts and pickups by their tile;
-  a fizzle whose target is an enemy carries reason `missed` in place of the stored
-  reason), and `chat` per the kill gate above. `state.explored` is the union of every
-  seat's vision at spawn and after each turn (never cleared);
+  and height, the zone centre is public, and `privateState.view` holds sorted
+  horizontal runs `{rows: [[x, y, terrain, heights], ...]}` of exactly visible cells
+  (`.`/`+`/`#` terrain, digit heights; null with no vision), with no hidden padding.
+  The catalog (classes, weapons, abilities, armour cap, budget, team size) and
+  detailed rules are supplied while the seat chooses its loadout; agents keep them.
+  Agent observations contain no team lists, alive counts, placements or turn order.
+  `privateState.committed` is true when the seat is eliminated, the match is
+  terminal, the seat's loadout is recorded, or in orders whenever `canOrder` is false.
+  Committed observations return before projecting any game state: public state is
+  `{}`, loadout/view are null and all private arrays empty. Runtime lifecycle,
+  decision, clock and resources remain seat-scoped. Active observations are full
+  dynamic snapshots, so repeated polls need no delivery cursor. Successful submit
+  echoes use the resolved state's same gate and can include a full snapshot when
+  the submitting seat immediately acts again; delivery is turn-gated, not next-only.
+  Own units carry
+  class, position, hp, armour, weapon, `readyRound`, `hiddenUntil`, `reach`
+  (`{x, y, rows}` cost grid: a digit per first-leg destination, `.` elsewhere) and
+  `shots` (visible target id -> cost grid of destinations offering that shot).
+  Max hp, movement, base vision, ability and weapon stats come from the catalog;
+  the ability is usable at `round >= readyRound`. Enemies carry only currently
+  visible living units with their class, position, hp, armour and weapon; items
+  are those on tiles seen now. `eventsFor` filters `sinceLastTurn` (`lastRound`
+  from the seat's latest turn marker, or all of it if absent, then current events):
+  own turn/elimination markers only; every foreign unit reference must be visible
+  now, including visible corpses for death reports, with camouflage detection
+  still enforced; enemy coordinates and every path tile must be visible. Own
+  paths/submitted destinations remain available, but hidden enemy targets and
+  damage to them are omitted. Own hp reflects hits from unseen actors. Enemy
+  fizzles carry reason `missed` and an empty target when unseen. Global chat after
+  a kill is the explicit exception to fog and retains unseen senders.
+  `state.explored` is the union of every seat's vision at spawn and after each turn
+  (never cleared);
   live public views carry a `Terrain kinds` legend list (`TILE_KINDS` order, append-only)
   and a `Map` table with one integer per tile (`-1` unexplored, else
   `h * kinds + kindIndex` from `tileCode` in `games/battle-royale/src/map.ts`), counts,
