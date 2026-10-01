@@ -66,6 +66,7 @@ test("a match carries its schedule and the observation names the next stage", ()
   const seat = state.seats[0];
   if (!seat) throw Error("missing seat");
   const observed = game.observe(at, seat).publicState.zone;
+  if (!observed) throw Error("missing zone");
   expect(observed.center).toEqual(zoneAt(at, 2).center);
   expect(observed.radius).toBe(zoneAt(at, 2).radius);
   expect(observed.nextCenter).toEqual(zoneAt(at, 3).center);

@@ -8,7 +8,7 @@ every team has acted, a closing storm damages anyone outside the zone. The last
 team with a living unit wins. Combat is deterministic; the match seed only
 shapes the map, loot, spawn assignment and nothing else.
 
-Game ID: `battle-royale`. Revision: `3.2.0`. Seats: 2–30 (default 4). Records
+Game ID: `battle-royale`. Revision: `3.3.0`. Seats: 2–30 (default 4). Records
 made under an earlier revision keep their identity: their frames still render,
 and re-executing them names an unavailable revision rather than these rules.
 
@@ -25,8 +25,8 @@ Use the normal BenchBoss next/submit flow. The loadout phase is simultaneous:
 every team receives a `turn` at once and it resolves when the last pick (or
 default) is in. From then on only one team acts at a time: you receive a `turn`
 when it is yours, your orders resolve the moment they are accepted, and the
-turn passes to the next team in `turnOrder`. Polling while another team acts
-returns a trimmed, waiting observation. Every turn is its own decision with a
+turn passes to the next team. Polling while another team acts returns only
+lifecycle metadata and an empty game-state observation. Every turn is its own decision with a
 30-second limit, inference and transport included, so answer from the
 observation in hand rather than deliberating; silence commits your safe default
 and play moves on.
@@ -116,8 +116,8 @@ attacking uphill and loses one against a target on cover, never below one.
 
 Each class has one ability, used as the unit's action for the round. A used
 ability is ready again `cooldown + 1` rounds later (cooldown 0 means every
-round); the observation reports `ability.ready` and `ability.readyRound`, and an
-order for an unready ability is rejected. Fizzled abilities are not spent.
+round); the observation reports `readyRound`, and the ability is ready when
+`round >= readyRound`. An order for an unready ability is rejected. Fizzled abilities are not spent.
 
 | Ability | Class | Cooldown | Order | Effect |
 | --- | --- | --- | --- | --- |
@@ -147,10 +147,8 @@ items are never lost. Spectators see loot only in the terminal frame.
 
 A round gives every living team one turn, in initiative order. The initiative
 rotates one seat per round (round 1 starts at seat 0, round 2 at seat 1, and so
-on, skipping eliminated teams) and is listed with each team's standing in the
-observation's `turnOrder`: `acted` teams have already moved this round, the
-`acting` team is ordering now, `waiting` teams act after it and `skipped` teams
-lost their last unit before their turn came. A team whose last unit falls stays
+on, skipping eliminated teams). Agent observations disclose no team roster,
+alive counts, placements or initiative list. A team whose last unit falls stays
 on the board, without a turn, until the round ends; a round also ends early
 when only one team still fields a unit.
 
@@ -173,8 +171,8 @@ unit:
 - `moveTo` must be a digit tile in that unit's `reach` grid from the
   observation; the digit is the move points it spends. Units may cross allies
   but not stop on them; visible enemies block.
-- One action per unit: `attack` (a target visible now and listed under `shots`
-  for the chosen destination; `shots` treats unseen tiles on the sight line as
+- One action per unit: `attack` (a target visible now whose `shots[target]`
+  cost grid includes the chosen destination; `shots` treats unseen tiles on the sight line as
   clear, so a listed shot can still fizzle at resolution), `ability` (the class ability when ready, with
   `at` for grenade, `target` for volley and heal, nothing otherwise), `pickup`
   (your `items` list must show one on the destination; a fogged tile is rejected
@@ -201,7 +199,8 @@ next team observes:
 3. Attacks, grenades, volleys and heals from first-leg positions. An attack
    whose target is dead, out of range or out of sight fizzles; a grenade thrown
    from a unit stopped out of range fizzles. Your observation reports a fizzle
-   against an enemy only as `missed`; fizzles on your own units and pickups keep
+   against an enemy only as `missed`, with an empty target when unseen;
+   fizzles on your own units and pickups keep
    their reason. The turn's damage and healing are summed per unit before
    deaths, so two of your units may finish one target together. Damage lands
    now: a unit killed here is gone before its own team's turn. Kills and damage
@@ -251,44 +250,56 @@ them). Eliminated teams have no envelope and cannot post.
 
 ## Observation
 
-Observations are small by design: the map is never sent whole, static
-reference data is sent once, and a seat that has already committed for the
-current phase receives a trimmed observation until the round resolves.
+Only an acting seat receives game state. Waiting, eliminated and terminal game
+observations have `publicState: {}`, `committed: true`, null `loadout`/`view` and
+empty unit, enemy, item, event and chat arrays. The runtime still supplies that
+seat's lifecycle, decision, clock and resource metadata. Submit responses use
+the same gate after resolution: normally empty, but they can include the next
+turn's snapshot if the submitting seat immediately becomes the acting seat again.
+Repeated `next` calls within an active turn return complete dynamic snapshots;
+no delivery cursor is required.
 
-`publicState`: round, `maxRounds`, `map` (`width` and `height` only), `zone`
-(`center` and `radius` now, `nextCenter` and `nextRadius` for the next round,
-current and next storm damage), `teams`
-(units alive and placement per seat) and `turnOrder` (every living team in
-this round's initiative order with its standing: `acted`, `acting`, `waiting`
-or `skipped`; empty outside the orders phase). During the loadout phase only,
-`catalog` carries the class, weapon and ability tables, `maxArmour`, `budget`
-and `teamSize`; agents keep it.
+An acting seat's `publicState` contains `round`, `maxRounds`, map dimensions
+(`map.width`/`height`) and `zone` (current/next centers, radii and storm damage).
+There are no team lists, alive counts, placements or turn-order broadcasts.
+While choosing a loadout, `catalog` supplies classes, weapons, abilities,
+`maxArmour`, `budget` and `teamSize`. Keep it: static unit stats and detailed
+rules are supplied during loadout, with a short encoding reminder on orders.
 
-`privateState`: `committed` (true whenever it is not your turn: your envelope
-for this phase was accepted, another team is acting, you are eliminated or the
-match is over; every field below is then null or empty); your `loadout`; `view`, the bounding box of the tiles your
-team can see now as `{x, y, terrain, heights}` where `terrain` and `heights` are
-one string per row from that origin, `.`/`+`/`#` for open/cover/wall and a digit
-for height, with `?` on tiles outside your vision (null when you see nothing);
-your `units` with hit points, armour, weapon (id, range, damage), `ability`
-(`id`, `ready`, `readyRound`), `hiddenUntil`, `reach` (`{x, y, rows}`: the
-bounding box of every tile the unit may end its first leg on, one character per
-tile from that origin, a digit for the move points that tile costs, `0` on its
-own tile and `.` where it cannot end this round) and `shots` (destinations
-with at least one attackable visible enemy, keyed `x,y`, each listing the
-attackable ids for the unit's current weapon); `visibleEnemies` with their
-armour and weapon; `items` as `{x, y, kind, weapon?}` for every item on a tile
-you can see now; `events`, everything that happened since your previous turn
-(that turn included, so you see how your own orders resolved) involving your
-units or tiles you can see now; and `chat`, filled only in the turn after a
-kill. Each team's turn opens with a `turn` event naming the seat; the events
-that follow it up to the next marker are that team's, and the storm and
-eliminations close the round. A `move` event carries the tiles walked in
-order; a move whose destination you can see discloses its whole path. An
-`ability` event is disclosed when its origin tile is visible, so an enemy
-watches a sniper vanish but learns nothing after. Events are filtered by what
-you can see now, not what you could see when they happened, and what your team
-saw at earlier turns is not repeated; remember it.
+An acting seat's `privateState` contains:
+
+- `committed: false` and your `loadout`.
+- `view: {rows: [[x, y, terrain, heights], ...]}`: visible horizontal runs,
+  sorted by y then x. Each string character advances x by one. Terrain is
+  `.` open, `+` cover or `#` wall; heights are digits. Omitted tiles are unseen,
+  with no padding between distant units. Null means no visible tiles.
+- `units`: your living units' `id`, `cls`, `x`, `y`, `hp`, `armour`, `weapon`,
+  `readyRound`, `hiddenUntil`, `reach` and `shots`. Get max hp, move points,
+  base vision and ability from `catalog.classes[cls]`, and range/damage from
+  `catalog.weapons[weapon]`. The class ability is ready at `readyRound`.
+- `reach: {x, y, rows}`: first-leg destination costs from the grid origin;
+  digits permit destinations (`0` is the own tile), dots forbid them.
+- `shots`: target ID to a cost grid with the same encoding as reach. A digit
+  in `shots[target]` permits attacking that target from that destination.
+  For example `{"seat:1/0":{"x":4,"y":2,"rows":[".23"]}}` offers shots
+  at that enemy from (5,2) and (6,2), at move costs 2 and 3 respectively.
+  The second movement leg uses the points left after reaching the first tile.
+- `visibleEnemies`: only visible living opponents, with id, seat, class,
+  position, hp, armour and weapon. No hidden roster or team status is inferred.
+- `items`: loot on tiles visible now, as `{x, y, kind, weapon?}`.
+- `events`: observable events since your previous turn, including your own
+  turn. Other teams' turn and elimination markers are excluded. Foreign units
+  named in an event must be visible now (visible corpses permit death reports;
+  camouflage still applies). Every enemy event coordinate and movement-path
+  tile must be visible; otherwise the event is omitted. Own actions can report
+  their own path or submitted destination, but events do not reveal hidden
+  targets or damage to them. Own hp still reports damage from unseen attackers.
+  Enemy-target fizzles use `missed` and clear the target when it is unseen.
+- `chat`: previous rounds' global chat only on the turn after a kill. This is
+  the explicit exception to fog; senders need not be visible.
+
+The snapshot reflects current sight, including recon. Remember what you learned
+on earlier turns; neither enemy nor loot memory is supplied for you.
 
 ## Spectator views
 

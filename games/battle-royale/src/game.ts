@@ -8,7 +8,6 @@ import {
 import { validateSchema } from "@benchboss/protocol";
 import {
   ABILITIES,
-  type AbilityId,
   CLASSES,
   CLASS_IDS,
   type ClassId,
@@ -32,18 +31,16 @@ import {
   ordersSchema,
 } from "./schemas";
 import {
-  type TurnStatus,
   abilityReady,
   actingSeat,
+  activeReveals,
   aliveSeats,
   continuations,
   isEliminated,
   markExplored,
-  maxHp,
   ownUnits,
   plans,
   samePoint,
-  turnOrder,
   turnsRemain,
   unitById,
   visibleEnemies,
@@ -82,19 +79,23 @@ export interface BrCatalog {
   teamSize: number;
 }
 
-/** The tiles a team can see now, as one string per row from the box origin; `?` is unseen. */
+/** Sorted visible horizontal runs; omitted tiles are unseen, never padding. */
 export interface BrView {
+  rows: [x: number, y: number, terrain: string, heights: string][];
+}
+
+export interface BrCostGrid {
   x: number;
   y: number;
-  terrain: string[];
-  heights: string[];
+  rows: string[];
 }
 
 export interface BrObservation {
   matchId: string;
   phase: string;
   seat: SeatId;
-  publicState: {
+  /** Empty unless the seat can act. */
+  publicState: Partial<{
     round: number;
     maxRounds: number;
     map: { width: number; height: number };
@@ -106,12 +107,9 @@ export interface BrObservation {
       stormDamage: number;
       nextStormDamage: number;
     };
-    teams: { seat: SeatId; unitsAlive: number; placement: number | null }[];
-    /** Every living team in this round's initiative order with where it stands in the round. */
-    turnOrder: { seat: SeatId; status: TurnStatus }[];
     /** Sent during the loadout phase only; agents keep it. */
     catalog?: BrCatalog;
-  };
+  }>;
   privateState: {
     /** True unless this seat is the one to act now; everything below is then empty. */
     committed: boolean;
@@ -123,22 +121,18 @@ export interface BrObservation {
       x: number;
       y: number;
       hp: number;
-      maxHp: number;
       armour: number;
-      move: number;
-      vision: number;
       weapon: WeaponId;
-      range: number;
-      damage: number;
-      ability: { id: AbilityId; ready: boolean; readyRound: number };
+      /** Class ability can be used when round >= readyRound. */
+      readyRound: number;
       hiddenUntil: number;
       /**
        * Move cost to every tile the unit may end its first leg on, as a digit per tile in row
        * strings from the box origin; `.` is unreachable this round. Its own tile is `0`.
        */
-      reach: { x: number; y: number; rows: string[] };
-      /** Destinations with at least one attackable enemy, keyed `x,y`. */
-      shots: Record<string, string[]>;
+      reach: BrCostGrid;
+      /** Target id -> cost grid of first-leg destinations offering that shot. */
+      shots: Record<string, BrCostGrid>;
     }[];
     visibleEnemies: {
       id: string;
@@ -147,7 +141,6 @@ export interface BrObservation {
       x: number;
       y: number;
       hp: number;
-      maxHp: number;
       armour: number;
       weapon: WeaponId;
     }[];
@@ -182,7 +175,7 @@ export const chatFor = (state: BrState, seat: SeatId): ChatMessage[] =>
 const TERRAIN_CHAR: Record<TileKind, string> = { open: ".", cover: "+", wall: "#" };
 
 /** Bounding box of a unit's reaches with one cost digit per tile and `.` where it cannot end. */
-export function costGrid(reaches: readonly Reach[]): { x: number; y: number; rows: string[] } {
+export function costGrid(reaches: readonly Reach[]): BrCostGrid {
   if (reaches.length === 0) return { x: 0, y: 0, rows: [] };
   const x0 = Math.min(...reaches.map((r) => r.x));
   const y0 = Math.min(...reaches.map((r) => r.y));
@@ -198,35 +191,37 @@ export function costGrid(reaches: readonly Reach[]): { x: number; y: number; row
   return { x: x0, y: y0, rows };
 }
 
-/** Bounding box of the seat's visible tiles rendered as row strings; null when nothing is seen. */
+/** Group shot destinations without repeating the same target id at every tile. */
+export function shotGrids(
+  reaches: readonly (Reach & { targets: string[] })[],
+): Record<string, BrCostGrid> {
+  const targets = new Map<string, Reach[]>();
+  for (const reach of reaches)
+    for (const target of reach.targets) {
+      const cells = targets.get(target) ?? [];
+      cells.push(reach);
+      targets.set(target, cells);
+    }
+  return Object.fromEntries([...targets].map(([target, cells]) => [target, costGrid(cells)]));
+}
+
+/** Encode only visible cells, so separating a squad never transmits the fog between it. */
 export function viewFor(state: BrState, seen: ReadonlySet<string>): BrView | null {
   if (seen.size === 0) return null;
-  let x0 = state.map.width;
-  let y0 = state.map.height;
-  let x1 = -1;
-  let y1 = -1;
-  for (const tile of seen) {
-    const [x, y] = tile.split(",").map(Number) as [number, number];
-    x0 = Math.min(x0, x);
-    y0 = Math.min(y0, y);
-    x1 = Math.max(x1, x);
-    y1 = Math.max(y1, y);
+  const points = [...seen]
+    .map((tile) => tile.split(",").map(Number) as [number, number])
+    .sort(([ax, ay], [bx, by]) => ay - by || ax - bx);
+  const rows: BrView["rows"] = [];
+  for (const [x, y] of points) {
+    const tile = state.map.tiles[y]?.[x];
+    if (!tile) continue;
+    const previous = rows.at(-1);
+    if (previous && previous[1] === y && previous[0] + previous[2].length === x) {
+      previous[2] += TERRAIN_CHAR[tile.kind];
+      previous[3] += String(tile.h);
+    } else rows.push([x, y, TERRAIN_CHAR[tile.kind], String(tile.h)]);
   }
-  const terrain: string[] = [];
-  const heights: string[] = [];
-  for (let y = y0; y <= y1; y++) {
-    let t = "";
-    let h = "";
-    for (let x = x0; x <= x1; x++) {
-      const tile = state.map.tiles[y]?.[x];
-      const visible = tile !== undefined && seen.has(key({ x, y }));
-      t += visible ? TERRAIN_CHAR[tile.kind] : "?";
-      h += visible ? String(tile.h) : "?";
-    }
-    terrain.push(t);
-    heights.push(h);
-  }
-  return { x: x0, y: y0, terrain, heights };
+  return { rows };
 }
 
 const withChat = (state: BrState, seat: SeatId, text: string | undefined): BrState =>
@@ -240,41 +235,51 @@ export function sinceLastTurn(state: BrState, seat: SeatId): RoundEvent[] {
   return [...state.lastRound.slice(Math.max(0, own)), ...state.events];
 }
 
-/**
- * Events a seat may learn about: its own units, or positions its units can see now. A fizzle
- * against an enemy reads only "missed": the true reason would tell where the target went or what
- * stood between.
- */
+/** Own history and wholly observable enemy events; no off-screen identities or paths. */
 export function eventsFor(state: BrState, seat: SeatId): RoundEvent[] {
   const seen = visionOf(state, seat);
   const own = (id: string): boolean => unitById(state, id)?.seat === seat;
   const visible = (p: Point): boolean => seen.has(key(p));
+  const mine = ownUnits(state, seat);
+  const reveals = activeReveals(state, seat);
+  // Include visible corpses so witnessed deaths remain observable, but camouflage
+  // still conceals an enemy unless adjacency or recon reveals it.
+  const known = new Set(
+    state.units
+      .filter(
+        (unit) =>
+          unit.seat === seat ||
+          (visible(unit) &&
+            (state.round > unit.hiddenUntil ||
+              mine.some((u) => chebyshev(u, unit) <= 1) ||
+              reveals.some((r) => chebyshev(r.center, unit) <= r.radius))),
+      )
+      .map((unit) => unit.id),
+  );
   const disclosed = sinceLastTurn(state, seat).map((event) =>
     event.kind === "fizzle" && event.target !== "" && !own(event.target)
-      ? { ...event, reason: "missed" }
+      ? { ...event, target: known.has(event.target) ? event.target : "", reason: "missed" }
       : event,
   );
   return disclosed.filter((event) => {
-    switch (event.kind) {
-      case "move":
-        return own(event.unit) || visible(event.to);
-      case "attack":
-      case "heal":
-        return own(event.unit) || own(event.target) || (visible(event.from) && visible(event.at));
-      case "fizzle":
-        return own(event.unit);
-      case "ability":
-        return own(event.unit) || visible(event.from);
-      case "blast":
-        return own(event.unit) || own(event.target) || visible(event.at);
-      case "pickup":
-      case "storm":
-      case "death":
-        return own(event.unit) || visible(event.at);
-      case "turn":
-      case "eliminated":
-        return true;
-    }
+    if (event.kind === "turn" || event.kind === "eliminated") return event.seat === seat;
+    if (!known.has(event.unit)) return false;
+    if ("target" in event && event.target && !known.has(event.target)) return false;
+    // An own action can describe its submitted destination, but cannot disclose a
+    // remote enemy's location or damage there. Current own hp always reports hits.
+    if (own(event.unit))
+      return !(
+        "target" in event &&
+        event.target &&
+        !own(event.target) &&
+        "at" in event &&
+        event.at &&
+        !visible(event.at)
+      );
+    if ("from" in event && !visible(event.from)) return false;
+    if ("at" in event && event.at && !visible(event.at)) return false;
+    if (event.kind === "move") return visible(event.to) && event.path.every(visible);
+    return event.kind !== "fizzle";
   });
 }
 
@@ -461,6 +466,24 @@ export function makeBattleRoyale(): GameModule<BrState, unknown, BrObservation, 
         (state.phase === "loadout" && state.loadouts[seat] !== undefined) ||
         (state.phase === "orders" && !canOrder(state, seat)) ||
         state.phase === "terminal";
+      if (committed)
+        return {
+          matchId: state.matchId,
+          phase: state.phase,
+          seat,
+          publicState: {},
+          privateState: {
+            committed: true,
+            loadout: null,
+            view: null,
+            units: [],
+            visibleEnemies: [],
+            items: [],
+            events: [],
+            chat: [],
+          },
+          legalTools: [],
+        };
       const round = Math.max(1, state.round);
       const zone = zoneAt(state, round);
       const nextZone = zoneAt(state, round + 1);
@@ -476,12 +499,6 @@ export function makeBattleRoyale(): GameModule<BrState, unknown, BrObservation, 
           stormDamage: stormDamage(round),
           nextStormDamage: stormDamage(round + 1),
         },
-        teams: state.seats.map((s) => ({
-          seat: s,
-          unitsAlive: ownUnits(state, s).length,
-          placement: state.teams[s]?.placement ?? null,
-        })),
-        turnOrder: turnOrder(state),
       };
       if (state.phase === "loadout")
         publicState.catalog = {
@@ -498,24 +515,6 @@ export function makeBattleRoyale(): GameModule<BrState, unknown, BrObservation, 
         : canOrder(state, seat)
           ? [...BR_PHASE_TOOLS.orders]
           : [];
-      if (committed)
-        return {
-          matchId: state.matchId,
-          phase: state.phase,
-          seat,
-          publicState,
-          privateState: {
-            committed: true,
-            loadout,
-            view: null,
-            units: [],
-            visibleEnemies: [],
-            items: [],
-            events: [],
-            chat: [],
-          },
-          legalTools,
-        };
       const seen = visionOf(state, seat);
       const enemies = visibleEnemies(state, seat, seen);
       const planned = state.phase === "orders" ? plans(state, seat) : [];
@@ -537,23 +536,12 @@ export function makeBattleRoyale(): GameModule<BrState, unknown, BrObservation, 
             x: unit.x,
             y: unit.y,
             hp: unit.hp,
-            maxHp: maxHp(unit),
             armour: unit.armour,
-            move: CLASSES[unit.cls].move,
-            vision: CLASSES[unit.cls].vision,
             weapon: unit.weapon,
-            range: WEAPONS[unit.weapon].range,
-            damage: WEAPONS[unit.weapon].damage,
-            ability: {
-              id: CLASSES[unit.cls].ability,
-              ready: abilityReady(state, unit),
-              readyRound: unit.readyRound,
-            },
+            readyRound: unit.readyRound,
             hiddenUntil: unit.hiddenUntil,
             reach: costGrid(reaches),
-            shots: Object.fromEntries(
-              reaches.filter((r) => r.targets.length).map((r) => [key(r), [...r.targets]]),
-            ),
+            shots: shotGrids(reaches),
           })),
           visibleEnemies: enemies.map((u) => ({
             id: u.id,
@@ -562,7 +550,6 @@ export function makeBattleRoyale(): GameModule<BrState, unknown, BrObservation, 
             x: u.x,
             y: u.y,
             hp: u.hp,
-            maxHp: maxHp(u),
             armour: u.armour,
             weapon: u.weapon,
           })),
@@ -579,7 +566,7 @@ export function makeBattleRoyale(): GameModule<BrState, unknown, BrObservation, 
           {
             tool: "match.loadout",
             phase: "loadout",
-            description: `Choose ${TEAM_SIZE} actor classes (${CLASS_IDS.join(", ")}) whose costs total at most ${TEAM_BUDGET}. Duplicates are allowed. Keep the catalog and map size from this observation; later turns show only what your units can see. After loadout, teams act one at a time in the rotating order given by turnOrder, and each team's orders resolve before the next team acts. Optional chat (up to ${CHAT_MAX_LENGTH} characters) posts to the public all-chat; you read it only in the turn after you score a kill.`,
+            description: `Choose ${TEAM_SIZE} classes (${CLASS_IDS.join(", ")}), total cost <= ${TEAM_BUDGET}; duplicates allowed. Keep catalog: class stats/ability and weapon stats are not repeated. Teams act sequentially in initiative order, rotating each round. Each turn resolves first moves, pickups/self-abilities, attacks/blasts/heals and deaths, then second moves. Storm and eliminations follow the last team. Movement: 8 directions, up one level costs 2, other steps 1; walls or height differences >1 block. Use only visible tiles; pass through allies but end on a free tile. Pickups take the item at the first-leg destination. The second leg uses the points left by the first. Attacks require a shots target; unseen blockers can still make them miss. Ready abilities: grenade uses at within catalog range, volley uses a shots target, heal targets another own unit (heals within catalog radius), others take no target. Optional chat <= ${CHAT_MAX_LENGTH} chars; read previous rounds' chat only after scoring a kill.`,
             jsonSchema: LOADOUT_INPUT_SCHEMA,
           },
         ];
@@ -588,7 +575,8 @@ export function makeBattleRoyale(): GameModule<BrState, unknown, BrObservation, 
           {
             tool: "match.orders",
             phase: "orders",
-            description: `Order your living units: an optional moveTo (a digit tile in the unit's reach grid; the digit is its move cost), one optional action there: attack (a target in shots for that destination), ability (when ready; grenade takes at, volley and heal take target, others nothing), pickup (an item you have seen on the destination) or hold, and an optional thenTo walked afterwards with the points left (move minus the digit; a step up one level costs 2, any other step 1; only tiles you can see now). It is your turn: teams act one at a time in turnOrder, and your orders resolve in full before the next team acts (first legs in the order given, pickups and self-abilities, attacks, blasts and heals with immediate damage, then second legs); teams marked acted have already moved this round, teams marked waiting act after you and see the result. The storm and eliminations come once every team has acted. Optional chat (up to ${CHAT_MAX_LENGTH} characters).`,
+            description:
+              "One order/unit: moveTo -> action -> thenTo. Both legs share class move points. reach/shots[target]: {x,y,rows}, digits=cost, dots=forbidden. view.rows: [x,y,terrain,heights] (. open,+ cover,# wall). Ability ready at readyRound; use catalog rules.",
             jsonSchema: ORDERS_INPUT_SCHEMA,
           },
         ];
